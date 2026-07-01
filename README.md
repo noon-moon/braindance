@@ -15,7 +15,8 @@ bd/
 │   │   └── sys/          # Braindance lifecycle tooling
 │   │       └── sync.sh   # Installs skills into your LLM harness
 │   └── vault/            # Obsidian vault — open this directory in Obsidian
-│       └── usr/          # Your personal notes (gitignored in template)
+│       │                 # Only .obsidian/, _templates/, _meta/ are tracked;
+│       │                 # your notes are gitignored (personal, per-machine)
 └── repo/                 # Gitignored — clone the repos you're working on here
 ```
 
@@ -113,14 +114,11 @@ Skills from [mattpocock/skills](https://github.com/mattpocock/skills) by [Matt P
 
 ---
 
-## Personal content (`usr/`)
+## Personal content
 
-Two directories are gitignored in this template but intended for use in your personal fork:
+**Vault notes** — `ctx/vault/.gitignore` ignores everything in the vault except the base scaffolding (`.obsidian/`, `_templates/`, `_meta/`). Any notes you write live only on your machine; the template never tracks them, in this repo or a fork.
 
-- **`ctx/vault/usr/`** — your private vault notes. Wikilinks to template seed notes work normally since they're in the same vault.
-- **`ctx/skills/usr/`** — your personal skills. `sync.sh` picks these up automatically alongside the template skills.
-
-To track these in your fork, remove or edit `ctx/vault/.gitignore` and `ctx/skills/.gitignore`. When you pull template updates, those two small files are the only likely conflict point — resolve them in favour of your fork's version.
+**Skills** — `ctx/skills/usr/` is gitignored in this template but intended for use in your personal fork. `sync.sh` picks these up automatically alongside the template skills. To track them in your fork, remove or edit `ctx/skills/.gitignore` — when you pull template updates, that's the one likely conflict point; resolve it in favour of your fork's version.
 
 ---
 

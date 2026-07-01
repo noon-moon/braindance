@@ -1,3 +1,12 @@
-# Personal vault notes — gitignored in the template, tracked in your personal fork.
-# To commit your notes: remove or edit this file in your fork.
-usr/
+# This directory doubles as a live Obsidian vault on contributors' machines.
+# Only base scaffolding (Obsidian config + note templates) belongs to the
+# template — actual notes are personal and are never tracked here.
+*
+!.gitignore
+!.obsidian/
+!_templates/
+!_meta/
+
+# Obsidian per-machine state (not portable between installs)
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json

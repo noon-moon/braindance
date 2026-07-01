@@ -1,10 +1,6 @@
 # Working repos — cloned here locally, never tracked
 repo/
 
-# Obsidian per-machine state
-ctx/vault/.obsidian/workspace.json
-ctx/vault/.obsidian/workspace-mobile.json
-
 # Harness-generated sync targets (created by ctx/tools/sys/sync.sh)
 .claude/
 .cursor/

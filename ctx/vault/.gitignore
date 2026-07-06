@@ -4,9 +4,17 @@
 *
 !.gitignore
 !.obsidian/
+!.obsidian/**
 !_templates/
+!_templates/**
 !_meta/
+!_meta/**
+!TODO.md
 
 # Obsidian per-machine state (not portable between installs)
 .obsidian/workspace.json
 .obsidian/workspace-mobile.json
+
+# Community plugin binaries — installed per-machine via Obsidian's UI
+# (community-plugins.json is tracked, so a fresh checkout knows what to install)
+.obsidian/plugins/

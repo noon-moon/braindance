@@ -131,7 +131,9 @@ The vault uses two note types, enforced by frontmatter tags:
 - **`scope`** — a hub note (MOC) for a topic. Has `Contains` and `Contained By` frontmatter linking to related scopes. The relationship is intentionally loose — it covers "owns / owned by", "contains / contained by", and similar dual relationships.
 - **`memo`** — a standard note on a specific topic.
 
-Templates for both types live in `ctx/vault/_templates/`.
+On top of a note type, behavioural tags can stack: **`todo`** (actionable, with `status`/`due`/`completed` fields — aggregated in `TODO.md`, powered by the Dataview plugin), **`recurring`** (a standing routine tracked by a `processed` date), and **`daily`** (a dated log note in `daily/`, created via the core Daily Notes plugin). Full definitions live in `ctx/vault/_meta/Tags.md`.
+
+Templates live in `ctx/vault/_templates/`. `TODO.md` ships as scaffolding (the only tracked note); Dataview and Daily Notes are pre-enabled in the Obsidian config, but you install the Dataview community plugin yourself via Obsidian's UI.
 
 ### Companion files
 

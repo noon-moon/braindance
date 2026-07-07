@@ -1,0 +1,33 @@
+# Braindance public + admin stack. Run via ./deploy.sh (not bare
+# `docker compose`) so ${VAR} interpolation reads /srv/.env. Note the two
+# distinct env mechanisms:
+#   - ${VAR} below is *interpolation*, resolved from --env-file /srv/.env
+#     (which ./deploy.sh always passes) — NOT from `env_file:`.
+#   - `env_file:` only injects *container runtime* env (e.g. $DOMAIN for
+#     Caddy, GITHUB_TOKEN for the api).
+services:
+  caddy:
+    image: caddy:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    env_file: /srv/.env            # provides $DOMAIN to the Caddyfile
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - /srv/www:/srv/www:ro
+      - /srv/garden:/srv/garden:ro
+    restart: unless-stopped
+
+  api:
+    image: ${API_IMAGE:?set API_IMAGE in /srv/.env}
+    ports:
+      - "3000:3000"
+    env_file: /srv/.env            # GITHUB_TOKEN / GITHUB_REPO
+    volumes:
+      # Whole vault, read-only — the mobile API reads scopes/notes from here.
+      - /srv/braindance/ctx/vault:/srv/braindance/ctx/vault:ro
+    restart: unless-stopped
+
+volumes:
+  caddy_data:

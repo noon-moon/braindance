@@ -5,6 +5,13 @@ repo/
 .claude/
 .cursor/
 
+# Node
+node_modules/
+api/dist/
+
+# Host secrets — the real one lives at /srv/.env, never in the repo
+.env
+
 # OS
 .DS_Store
 Thumbs.db

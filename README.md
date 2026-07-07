@@ -17,6 +17,11 @@ bd/
 │   └── vault/            # Obsidian vault — open this directory in Obsidian
 │       │                 # Only .obsidian/, _templates/, _meta/ are tracked;
 │       │                 # your notes are gitignored (personal, per-machine)
+├── api/                  # Admin app: mobile note-capture API + vault viewer
+├── www/                  # Static homepage served at your domain
+├── Caddyfile             # Reverse proxy / TLS (uses {$DOMAIN})
+├── docker-compose.yml    # caddy + api services
+├── deploy.sh             # Compose wrapper (feeds /srv/.env interpolation)
 └── repo/                 # Gitignored — clone the repos you're working on here
 ```
 
@@ -138,6 +143,42 @@ Templates live in `ctx/vault/_templates/`. `TODO.md` ships as scaffolding (the o
 ### Companion files
 
 Some engineering skills (`diagnosing-bugs`, `tdd`, `domain-modeling`, `codebase-design`, `triage`, `improve-codebase-architecture`, `writing-great-skills`) reference companion files that don't exist in this repo. These are per-project artifacts created by `/setup-matt-pocock-skills` when you run it inside a target repo. They're not part of braindance itself.
+
+---
+
+## Admin app & serving (optional)
+
+Braindance ships an optional admin app — a mobile-friendly interface for capturing notes into your vault and browsing it — plus the static-site plumbing to serve a public homepage and a published knowledge garden. It's a stack of two Docker services:
+
+- **`caddy`** — TLS + routing for the public surface: your homepage at `/` (from `/srv/www`) and, if you publish a [Quartz](https://quartz.jzhao.xyz) garden, static output at `/garden` (from `/srv/garden`).
+- **`api`** — the admin surface (`api/`): a small Hono/Node service for on-the-go note capture and a read-only vault viewer. It reads the vault (mounted read-only) and commits captures to an `inbox` branch via the GitHub API.
+
+**Bring your own secure hosting.** The `api` service binds a plain HTTP port and has **no built-in authentication** — exposing it safely is *your* responsibility. Put it behind Tailscale/a VPN, an authenticating reverse proxy, or an SSH tunnel. Do not expose it to the public internet as-is.
+
+### Configuration
+
+All instance-specific values live in `/srv/.env` on the host (`chmod 600`, never committed). Copy [`.env.example`](.env.example) and fill it in:
+
+| Var | Used by | Purpose |
+|---|---|---|
+| `DOMAIN` | Caddy (`{$DOMAIN}`) | Public hostname for TLS + routing |
+| `API_IMAGE` | Compose interpolation | Your GHCR image, e.g. `ghcr.io/you/your-repo/api:latest` |
+| `GITHUB_REPO` | api | `owner/repo` the api commits captures to |
+| `GITHUB_TOKEN` | api | PAT with `repo` scope for inbox commits |
+
+Two different env mechanisms are in play, which is easy to trip over:
+- `${VAR}` in `docker-compose.yml` is **interpolation**, resolved from `--env-file /srv/.env`. Always run compose through **`./deploy.sh`** (which passes that flag) — bare `docker compose` won't see `/srv/.env` and will resolve those vars empty.
+- `env_file: /srv/.env` on each service injects **container runtime** env (Caddy's `$DOMAIN`, the api's `GITHUB_*`).
+
+### Deploy
+
+Expects the repo cloned to `/srv/braindance`, plus host dirs `/srv/www` and `/srv/garden`:
+
+```bash
+./deploy.sh up -d          # start the stack
+./deploy.sh config         # render the fully-resolved compose file (sanity check)
+./deploy.sh pull api && ./deploy.sh up -d api   # roll a new api image
+```
 
 ---
 

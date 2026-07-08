@@ -6,6 +6,10 @@ repo/
 ctx/inputs/*
 !ctx/inputs/README.md
 
+# Non-persisted outputs — agent work products that don't belong in the vault
+ctx/outputs/*
+!ctx/outputs/README.md
+
 # Harness-generated sync targets (created by ctx/tools/sys/sync.sh)
 .claude/
 .cursor/

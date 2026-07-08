@@ -14,6 +14,8 @@ bd/
 │   ├── tools/
 │   │   └── sys/          # Braindance lifecycle tooling
 │   │       └── sync.sh   # Installs skills into your LLM harness
+│   ├── inputs/           # Non-persisted inputs for consideration (gitignored;
+│   │   └── README.md     # drop-in files per task — screenshots, exports, clippings)
 │   └── vault/            # Obsidian vault — open this directory in Obsidian
 │       │                 # Only .obsidian/, _templates/, _meta/ are tracked;
 │       │                 # your notes are gitignored (personal, per-machine)
@@ -122,6 +124,8 @@ Skills from [mattpocock/skills](https://github.com/mattpocock/skills) by [Matt P
 ## Personal content
 
 **Vault notes** — `ctx/vault/.gitignore` ignores everything in the vault except the base scaffolding (`.obsidian/`, `_templates/`, `_meta/`). Any notes you write live only on your machine; the template never tracks them, in this repo or a fork.
+
+**Inputs** — `ctx/inputs/` is gitignored (only its `README.md` is tracked). It's a scratch drop-zone for files an agent should consider for a task; nothing there is persisted, so distill anything worth keeping into a vault note. See [`CLAUDE.md`](CLAUDE.md).
 
 **Skills** — `ctx/skills/usr/` is gitignored in this template but intended for use in your personal fork. `sync.sh` picks these up automatically alongside the template skills. To track them in your fork, remove or edit `ctx/skills/.gitignore` — when you pull template updates, that's the one likely conflict point; resolve it in favour of your fork's version.
 

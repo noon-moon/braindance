@@ -9,8 +9,7 @@ ctx/
   vault/     Obsidian vault — your knowledge base and working context (see below)
   skills/    LLM-agnostic skill prompts; installed into a harness via ctx/tools/sys/sync.sh
   tools/     Lifecycle tooling (sys/) + standalone tools (e.g. music/)
-  inputs/    Non-persisted inputs for consideration (gitignored; see below)
-  outputs/   Non-persisted outputs — disposable work products, kept out of the vault (gitignored)
+  ephemeral/ Non-persisted scratch — transient inputs & outputs, kept out of the vault (gitignored; see below)
 api/         Admin app: mobile note-capture API + read-only vault viewer (Hono/Node)
 www/         Static homepage served at your domain
 Caddyfile, docker-compose.yml, deploy.sh   Serving stack (see README "Admin app & serving")
@@ -34,14 +33,9 @@ The source of truth for how the vault is structured is **`ctx/vault/_meta/Tags.m
 
 Daily notes live in `ctx/vault/daily/` named `YYYY-MM-DD`. When a `todo` flips to `done` it stays in place (the record persists) with a `completed` wikilink to the daily note where it was finished. `TODO.md` is the aggregated master view. **Convert relative dates to absolute** (`due: 2026-08-01`, not "next month") — the views and daily-note links depend on real dates.
 
-## `ctx/inputs` & `ctx/outputs` — non-persisted scratch
+## `ctx/ephemeral` — non-persisted scratch
 
-A symmetric pair of gitignored, ephemeral drop-zones. Neither is canonical — the vault is. Each ships with a tracked `README.md` (the only tracked file) so the dir and its meaning survive a clone.
-
-- **`ctx/inputs/`** — files dropped *in* for a specific task (screenshots, exports, clippings, data). Read them as context for the work at hand, but don't rely on them persisting or treat them as canonical.
-- **`ctx/outputs/`** — disposable work products you generate *out* (draft plans, generated reports, one-off analyses, intermediate artifacts). **Write transient output here instead of cluttering the vault with it.**
-
-If anything in either dir is worth keeping, **promote it into a vault note** (`ctx/vault/`) rather than leaving it in scratch. (Both are distinct from the vault's own `assets/` and `attachments/`, which *are* persisted and are embedded in notes via `![[...]]`.)
+`ctx/ephemeral/` is the workbench for anything transient — files dropped *in* for a task (screenshots, exports, clippings, data) and work products you generate *out* (draft plans, reports, one-off analyses, intermediate artifacts) alike. It is **gitignored and ephemeral**: read and write it freely, but don't rely on anything there persisting, and never treat it as canonical. **Keep transient scratch here instead of cluttering the vault with it.** If something is worth keeping, **promote it into a vault note** (`ctx/vault/`). A tracked `README.md` (the only tracked file) carries the dir and its meaning across a clone. (Distinct from the vault's own `assets/` and `attachments/`, which *are* persisted and embedded via `![[...]]`.)
 
 ## Skills
 

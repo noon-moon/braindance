@@ -1,14 +1,10 @@
 # Working repos — cloned here locally, never tracked
 repo/
 
-# Non-persisted inputs for consideration — dropped in per task, never tracked
+# Ephemeral scratch — non-persisted things, never tracked
 # (the explanatory README is the one tracked file)
-ctx/inputs/*
-!ctx/inputs/README.md
-
-# Non-persisted outputs — agent work products that don't belong in the vault
-ctx/outputs/*
-!ctx/outputs/README.md
+ctx/ephemeral/*
+!ctx/ephemeral/README.md
 
 # Harness-generated sync targets (created by ctx/tools/sys/sync.sh)
 .claude/

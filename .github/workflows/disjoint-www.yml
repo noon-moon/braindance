@@ -1,0 +1,65 @@
+name: Disjoint ctx/www changes
+
+# Privacy enforcement point (c): every publish must be an isolated, reviewable
+# "exactly what's going public" changeset, and a vault edit must never be swept
+# into a publish. This check FAILS a PR that touches ctx/www/** AND anything
+# outside ctx/www/** in the same changeset.
+#
+# Normal publishing (running the publish tool, editing the homepage/static pages)
+# only ever touches ctx/www/** → passes. A mixed PR is almost always a mistake
+# (e.g. a vault edit committed alongside a publish). The rare legitimate case —
+# changing the Pages *infrastructure* itself (this workflow, the pub tool, docs)
+# together with ctx/www scaffolding — bypasses the check with `[www-infra]` in the
+# PR title.
+
+on:
+  pull_request:
+    branches: [master, main]
+
+permissions:
+  contents: read
+
+jobs:
+  disjoint-www:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce isolated ctx/www changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          files=$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}")
+          echo "Changed files:"; echo "${files:-<none>}"; echo
+
+          www=0; other=0; other_list=""
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              ctx/www/*) www=1 ;;
+              *) other=1; other_list="${other_list}  ${f}"$'\n' ;;
+            esac
+          done <<< "$files"
+
+          if [ "$www" = 1 ] && [ "$other" = 1 ]; then
+            if printf '%s' "$TITLE" | grep -qF '[www-infra]'; then
+              echo "Bypass: PR title contains [www-infra] — infrastructure change, allowed."
+              exit 0
+            fi
+            echo "::error::This PR changes ctx/www/** AND files outside ctx/www/**."
+            echo "A publish must be isolated to ctx/www so it stays a reviewable"
+            echo "'exactly what's going public' changeset and no vault edit is swept in."
+            echo "Split the non-www changes into a separate PR (or add [www-infra] to"
+            echo "the title if this is an intentional Pages-infrastructure change)."
+            echo
+            echo "Non-www files in this PR:"
+            printf '%s' "$other_list"
+            exit 1
+          fi
+
+          echo "OK: change set is disjoint (${www}=www-touched, ${other}=other-touched)."

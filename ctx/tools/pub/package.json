@@ -1,0 +1,19 @@
+{
+  "name": "braindance-pub",
+  "private": true,
+  "type": "module",
+  "description": "Projects publish-tagged vault notes flat into ctx/www/garden/content; verify.ts re-audits the committed projection in CI (vault-blind)",
+  "scripts": {
+    "publish": "tsx src/publish.ts",
+    "verify": "tsx src/verify.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "gray-matter": "^4.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

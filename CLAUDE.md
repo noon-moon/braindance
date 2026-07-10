@@ -13,9 +13,10 @@ ctx/
   vault/     Obsidian vault — your knowledge base and working context (see below)
     _ephemeral/  Non-persisted scratch — transient inputs & outputs; gitignored but Obsidian-visible (see below)
   skills/    LLM-agnostic skill prompts; installed into a harness via ctx/tools/sys/sync.sh
-  tools/     Lifecycle tooling (sys/), orchestration/ (multi-agent fleet helpers), + standalone tools (e.g. music/)
+  tools/     Lifecycle tooling (sys/), pub/ (vault→garden publish tool), orchestration/ (fleet helpers), + standalone tools
+  www/       Published website — homepage + static pages + Quartz garden → GitHub Pages (see below)
 api/         Admin app: mobile note-capture API + read-only vault viewer (Hono/Node)
-www/         Static homepage served at your domain
+www/         Static homepage served at your domain (advanced VPS path — distinct from ctx/www)
 Caddyfile, docker-compose.yml, deploy.sh   Serving stack (see README "Admin app & serving")
 repo/        Gitignored — target repos you're working on get cloned here
 ```
@@ -72,6 +73,18 @@ Skills are plain-markdown prompt-commands in `ctx/skills/`, grouped by area (`en
 ## Serving / deploy layer
 
 `api/`, `www/`, `Caddyfile`, `docker-compose.yml`, and `deploy.sh` are the optional admin-app + public-serving stack, not vault content. The `api` captures notes to an `inbox` branch and serves a read-only vault viewer; on a personal instance the desk-side `Process Inbox` routine triages captures onto the working branch. Full configuration, the `/srv/.env` mechanics, and `./deploy.sh` usage are documented in `README.md` — consult it before changing anything here, and note the api has **no built-in auth** (it must sit behind a VPN/tunnel).
+
+## Publishing to GitHub Pages (`ctx/www`)
+
+`ctx/www/` is the **out-of-the-box public website** — a homepage, arbitrary static pages, and a Quartz digital garden at `/garden` — deployed to **GitHub Pages** by `.github/workflows/pages.yml` (the Pages *artifact*, no `gh-pages` branch, no VPS). It sits **beside `ctx/vault`** and is the single source for the deployed site; see `ctx/www/README.md` for the layout and authoring rules (chiefly: author **relative** URLs). This is the recommended default; the `Caddyfile`/`docker-compose`/`deploy.sh` VPS stack remains an **advanced** option (server-side compute, the structural two-repo privacy model). One-time repo setup: Settings → Pages → Source = "GitHub Actions"; optional repo variable `SITE_CUSTOM_DOMAIN` for a custom domain (unset → `https://<owner>.github.io/<repo>/`).
+
+**Publishing a note is manual and local**, then committed: `npm --prefix ctx/tools/pub run publish` selects `publish: true` vault notes and projects them (gated, scrubbed, frontmatter-whitelisted) into `ctx/www/garden/content/<slug>.md` (machine-owned; delete-on-untag via a manifest). Review `git diff ctx/www/garden/content` and commit — that commit *is* the reviewable "exactly what's going public" changeset. CI only builds already-committed content.
+
+**Co-locating the vault and the published site trades a structural privacy guarantee for a procedural one, so the boundary is enforced fail-closed at three points — do not weaken any of them:**
+
+- **(a) Build-scope isolation** — `pages.yml` builds ONLY from `ctx/www` (+ the pub tool); it has **no step that reads `ctx/vault`**. The vault is never an input to the deployed artifact.
+- **(b) Fail-closed publish gate** — the projector (`ctx/tools/pub`, default `--strict`) blocks on any link **or embed/transclusion** to an unpublished note (`[[x]]` **and** `![[x]]`) and on any unresolvable asset embed; only referenced, resolvable assets are carried. `pages.yml` additionally runs `npm run verify` — a **vault-blind** re-audit of the committed `ctx/www/garden/content` that **breaks the deploy** (nonzero exit) on a leaked link/embed, a dangling asset, or a non-whitelisted frontmatter key.
+- **(c) Disjoint-`www` PR check** — `.github/workflows/disjoint-www.yml` **fails any PR that touches `ctx/www/**` AND anything outside it**, so a publish stays isolated and a vault edit can never be swept into it. The rare Pages-infrastructure PR bypasses with `[www-infra]` in the title. (Guardrail rule also stated in `AGENTS.md`.)
 
 ## Parallel work with worktrees
 

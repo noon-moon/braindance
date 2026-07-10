@@ -15,17 +15,22 @@ bd/
 │   │   ├── sys/          # Braindance lifecycle tooling
 │   │   │   ├── sync.sh   # Installs skills into your LLM harness
 │   │   │   └── wt.sh     # `bd` parallel-worktree helper (source from your shell rc)
+│   │   ├── pub/          # Publish tool: projects `publish: true` notes → ctx/www/garden
 │   │   └── orchestration/ # Multi-agent fleet helpers (rebase-open-prs, loadguard, ledger)
-│   └── vault/            # Obsidian vault — open this directory in Obsidian
-│       │                 # Only .obsidian/, _templates/, _meta/, _ephemeral/README are tracked;
-│       │                 # your notes are gitignored (personal, per-machine)
-│       └── _ephemeral/   # Non-persisted scratch (gitignored; Obsidian-visible,
-│                         # never canonical — promote keepers to real notes)
-├── api/                  # Admin app: mobile note-capture API + vault viewer
-├── www/                  # Static homepage served at your domain
-├── Caddyfile             # Reverse proxy / TLS (uses {$DOMAIN})
-├── docker-compose.yml    # caddy + api services
-├── deploy.sh             # Compose wrapper (feeds /srv/.env interpolation)
+│   ├── vault/            # Obsidian vault — open this directory in Obsidian
+│   │   │                 # Only .obsidian/, _templates/, _meta/, _ephemeral/README are tracked;
+│   │   │                 # your notes are gitignored (personal, per-machine)
+│   │   └── _ephemeral/   # Non-persisted scratch (gitignored; Obsidian-visible,
+│   │                     # never canonical — promote keepers to real notes)
+│   └── www/              # Published website → GitHub Pages (homepage + static + /garden)
+│       ├── index.html    #   your homepage (edit freely; author RELATIVE links)
+│       └── garden/       #   vendored Quartz v5 garden; content/<slug>.md is machine-owned
+├── .github/workflows/    # pages.yml (build+deploy ctx/www) · disjoint-www.yml (publish-isolation check)
+├── api/                  # Admin app: mobile note-capture API + vault viewer  (advanced/VPS)
+├── www/                  # Static homepage for the VPS path (distinct from ctx/www)  (advanced/VPS)
+├── Caddyfile             # Reverse proxy / TLS (uses {$DOMAIN})                 (advanced/VPS)
+├── docker-compose.yml    # caddy + api services                                (advanced/VPS)
+├── deploy.sh             # Compose wrapper (feeds /srv/.env interpolation)      (advanced/VPS)
 └── repo/                 # Gitignored — clone the repos you're working on here
 ```
 
@@ -152,7 +157,56 @@ Some engineering skills (`diagnosing-bugs`, `tdd`, `domain-modeling`, `codebase-
 
 ---
 
-## Admin app & serving (optional)
+## Publishing to GitHub Pages (out of the box)
+
+A fresh fork ships a complete public website in **`ctx/www/`** — a homepage, any
+static pages you drop in, and a [Quartz](https://quartz.jzhao.xyz) digital garden at
+`/garden` — deployed to **GitHub Pages** with zero servers. This is the recommended
+default; the VPS/Caddy stack below is the advanced alternative.
+
+**One-time setup:** in the repo, **Settings → Pages → Source = "GitHub Actions"**.
+That's it — push and `.github/workflows/pages.yml` builds `ctx/www` and deploys it to
+`https://<owner>.github.io/<repo>/`. For a custom domain, set the repo **variable**
+`SITE_CUSTOM_DOMAIN` (e.g. `example.com`); the workflow computes Quartz's `baseUrl` and
+emits a `CNAME` for you. (Pages auto-resolves `/about` → `/about.html`, so no rewrite
+shim is needed.)
+
+**Design your site:** edit `ctx/www/index.html`, and drop any static file/folder under
+`ctx/www/` to add a page (`ctx/www/about.html` → `/about`). The one authoring rule: use
+**relative** URLs (`./garden/`, `assets/x.png`) so pages work under both a project path
+and a custom domain. See [`ctx/www/README.md`](ctx/www/README.md).
+
+**Publish garden notes** (manual, reviewed, then committed):
+
+```bash
+npm --prefix ctx/tools/pub install          # first time
+npm --prefix ctx/tools/pub run publish -- --dry   # preview what would publish
+npm --prefix ctx/tools/pub run publish            # project publish:true notes → ctx/www/garden/content
+git diff ctx/www/garden/content                   # review exactly what's going public
+```
+
+Then commit; the Pages workflow deploys on push. Un-tag a note (`publish: false` /
+remove) and re-run to delete it.
+
+### Privacy — the vault stays private, only the built site is public
+
+The repo is **private**; only the deployed **Pages artifact** is public. Because the
+vault and the site live in one repo, the boundary is enforced fail-closed at three
+points (see [`CLAUDE.md`](CLAUDE.md) for the full rationale):
+
+1. **Build-scope isolation** — `pages.yml` builds only from `ctx/www`; **no step reads
+   `ctx/vault`**.
+2. **Fail-closed publish gate** — the publish tool blocks (nonzero exit) on any link or
+   embed/transclusion to an unpublished note and any unresolvable asset, and CI re-audits
+   the committed projection *vault-blind* (`npm run verify`) so a leak breaks the deploy.
+3. **Disjoint-`www` PR check** — `disjoint-www.yml` fails any PR that mixes `ctx/www/**`
+   with changes outside it, keeping every publish an isolated, reviewable changeset.
+
+For maximal *structural* isolation you can instead keep the garden in a **separate
+public repo** and point the tool at it (`--pub /path` or `PUB_REPO`), serving it via the
+VPS stack below — see [`ctx/tools/pub/README.md`](ctx/tools/pub/README.md).
+
+## Admin app & serving (optional, advanced — VPS path)
 
 Braindance ships an optional admin app — a mobile-friendly interface for capturing notes into your vault and browsing it — plus the static-site plumbing to serve a public homepage and a published knowledge garden. It's a stack of two Docker services:
 

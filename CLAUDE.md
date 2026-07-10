@@ -2,14 +2,18 @@
 
 braindance is a **meta-repository for agentic work**: a personal knowledge and workflow layer you carry between projects. This file orients an agent working *inside* the repo. Human-facing setup and deploy details live in [`README.md`](README.md); read that for anything this file only summarizes.
 
+**This is the canonical, fuller agent guide.** [`AGENTS.md`](AGENTS.md) at the repo root is the cross-tool entry point (the [AGENTS.md](https://agents.md) standard, read by non-Claude harnesses); it is the **canonical home of the portable multi-agent worktree discipline (R1–R7)** that reaches every tool and every target project cloned under `repo/`. This file does not restate those rules — the worktree section below covers the braindance-specific `bd` workflow and points to AGENTS.md for the discipline. Keep the two complementary, not duplicated.
+
+**Template vs. fork — where changes go.** This repo is a template. Generic changes — guidelines, conventions, tooling, skills, docs, this file, AGENTS.md — belong in the **core template repo** (`noon-moon/braindance`, branch `master`) and NEVER get committed to a personal fork/instance. A fork holds only instance-specific content (real vault notes, its own homepage/`www`, `/srv` deploy specifics) and **consumes template updates via `git merge upstream/master`**. If you find yourself about to commit a generic improvement to a fork, stop and land it on the core template instead. (See AGENTS.md for the same rule stated for every tool.)
+
 ## Layout
 
 ```
 ctx/
   vault/     Obsidian vault — your knowledge base and working context (see below)
+    _ephemeral/  Non-persisted scratch — transient inputs & outputs; gitignored but Obsidian-visible (see below)
   skills/    LLM-agnostic skill prompts; installed into a harness via ctx/tools/sys/sync.sh
-  tools/     Lifecycle tooling (sys/) + standalone tools (e.g. music/)
-  ephemeral/ Non-persisted scratch — transient inputs & outputs, kept out of the vault (gitignored; see below)
+  tools/     Lifecycle tooling (sys/), orchestration/ (multi-agent fleet helpers), + standalone tools (e.g. music/)
 api/         Admin app: mobile note-capture API + read-only vault viewer (Hono/Node)
 www/         Static homepage served at your domain
 Caddyfile, docker-compose.yml, deploy.sh   Serving stack (see README "Admin app & serving")
@@ -33,9 +37,9 @@ The source of truth for how the vault is structured is **`ctx/vault/_meta/Tags.m
 
 Daily notes live in `ctx/vault/daily/` named `YYYY-MM-DD`. When a `todo` flips to `done` it stays in place (the record persists) with a `completed` wikilink to the daily note where it was finished. `TODO.md` is the aggregated master view. **Convert relative dates to absolute** (`due: 2026-08-01`, not "next month") — the views and daily-note links depend on real dates.
 
-## `ctx/ephemeral` — non-persisted scratch
+## `ctx/vault/_ephemeral` — non-persisted scratch
 
-`ctx/ephemeral/` is the workbench for anything transient — files dropped *in* for a task (screenshots, exports, clippings, data) and work products you generate *out* (draft plans, reports, one-off analyses, intermediate artifacts) alike. It is **gitignored and ephemeral**: read and write it freely, but don't rely on anything there persisting, and never treat it as canonical. **Keep transient scratch here instead of cluttering the vault with it.** If something is worth keeping, **promote it into a vault note** (`ctx/vault/`). A tracked `README.md` (the only tracked file) carries the dir and its meaning across a clone. (Distinct from the vault's own `assets/` and `attachments/`, which *are* persisted and embedded via `![[...]]`.)
+`ctx/vault/_ephemeral/` is the workbench for anything transient — files dropped *in* for a task (screenshots, exports, clippings, data) and work products you generate *out* (draft plans, reports, one-off analyses, intermediate artifacts) alike. It is **gitignored and ephemeral**: read and write it freely, but don't rely on anything there persisting, and never treat it as canonical. It lives *inside* the vault (underscore-prefixed like `_meta`/`_templates`) so its scratch is **visible in Obsidian** without switching apps — but it is explicitly **not canonical**. **Keep transient scratch here instead of cluttering the vault with real notes.** If something is worth keeping, **promote it into a real vault note** in `ctx/vault/`. Scratch files here generally carry no frontmatter, so they stay out of Dataview queries and off to the side of the graph. A tracked `README.md` (the only tracked file — the `_ephemeral/*` contents are gitignored) carries the dir and its meaning across a clone. (Distinct from the vault's own `assets/` and `attachments/`, which *are* persisted and embedded via `![[...]]`.)
 
 ## Skills
 
@@ -57,8 +61,25 @@ Skills are plain-markdown prompt-commands in `ctx/skills/`, grouped by area (`en
 
 `api/`, `www/`, `Caddyfile`, `docker-compose.yml`, and `deploy.sh` are the optional admin-app + public-serving stack, not vault content. The `api` captures notes to an `inbox` branch and serves a read-only vault viewer; on a personal instance the desk-side `Process Inbox` routine triages captures onto the working branch. Full configuration, the `/srv/.env` mechanics, and `./deploy.sh` usage are documented in `README.md` — consult it before changing anything here, and note the api has **no built-in auth** (it must sit behind a VPN/tunnel).
 
+## Parallel work with worktrees
+
+Multiple agent sessions must **never share the one working tree** — a shared index/HEAD means one session's `git add -A` sweeps another's half-written files, commits interleave on `main`, and `index.lock` contention stalls git. The rule: **one terminal = one git worktree = one branch.** The full portable discipline (R1–R7 — read-only main checkout, fresh-base worktrees, rebase-before-push, WIP checkpoints, one-owner-per-file, post-merge sibling rebase, exclusive perf agents) is canonical in [`AGENTS.md`](AGENTS.md) and applies to any target project cloned under `repo/` too. This section is the braindance-repo operational layer:
+
+- The main tree (the braindance checkout, e.g. `~/dev/braindance-usr`) is sacred: it stays on `main`, it's the Obsidian window and the integration point. **Agents don't write here.** Occasionally `git pull --ff-only` it.
+- Agent sessions work in sibling worktrees under `~/dev/bd-wt/<task>` — **outside** the vault, so Obsidian never indexes them. Helper `bd` (in `ctx/tools/sys/wt.sh`, sourced from your shell rc):
+  - `bd new <task>` — worktree + branch `wt/<task>` off **freshly-fetched** `origin/main`, cd in
+  - `bd wip [msg]` — checkpoint uncommitted work in the worktree (a rebasable commit; squashed at land) — leave one before you yield so a stop/crash never loses work (R4)
+  - `bd land` — **re-fetch + rebase onto `origin/main` before pushing** (R2), then open + squash-merge a PR (self-land; the PR is the audit trail, `main` stays linear)
+  - `bd rm <task>` — remove the worktree + local branch
+- **Always address a worktree by its ABSOLUTE path** (`~/dev/bd-wt/<task>/…`); never rely on an ambient `cwd` or repo-relative paths that could resolve into the sacred main tree.
+- A session is: `bd new fix-tags` → work → `bd land` → `bd rm fix-tags`. Because the flat vault is file-per-note, disjoint-file sessions rebase and land with no conflict.
+- Orthogonal path: VPS/`api` writes go to the `inbox` branch (funnel-shaped, desk-triaged) — not this flow, which governs local sessions landing on `main`.
+
+**Fleets of parallel agents in a target project** (`repo/<project>`) additionally use the orchestration tooling in `ctx/tools/orchestration/` — the owner↔branch coordination ledger (`agent-ledger.md`, R7), post-merge `rebase-open-prs.sh` (R5/R6), and perf `loadguard.sh` (R3) — plus whatever local guard hooks that target repo installs (R1 blocks writes to its main checkout; R4 checkpoints worktree WIP). See `ctx/tools/orchestration/README.md`.
+
 ## Conventions
 
 - **Commits** — imperative summaries. On a personal instance, vault edits are conventionally prefixed `Vault: <summary — detail>`; keep that prefix scheme (`Skills:`, `Tools:`, `Docs:`, `Deploy:`) for other areas.
+- **Template, not fork** — generic/guideline/tooling/skill/doc changes land on the core template (`noon-moon/braindance`, `master`); a fork carries only instance-specific content and pulls the rest via `git merge upstream/master`. See the note at the top of this file.
 - **Don't touch** `.obsidian/` config unless explicitly asked (it's the Obsidian workspace, easy to corrupt).
 - **Don't** fold the flat vault into folders, mass-rewrite existing notes, or edit installed skill copies under `.claude/`.

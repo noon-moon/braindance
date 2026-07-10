@@ -22,7 +22,17 @@ repo/        Gitignored — target repos you're working on get cloned here
 
 ## Start here: `ctx/vault` is the working context
 
-The vault is the canonical knowledge base — the ontology this repo exists to hold. **Before answering a question or acting on a task, search `ctx/vault` for relevant notes** and treat what you find there as ground truth about the user's world, projects, and decisions. In a personal instance the vault is full of notes; in the bare template it's just scaffolding (`_meta/`, `_templates/`, `TODO.md`) because notes are gitignored.
+The vault is the canonical knowledge base — the ontology this repo exists to hold. It is the ground truth about the user's world, projects, and decisions, so **when a task depends on that context, search `ctx/vault` before acting and treat what you find there as authoritative.** In a personal instance the vault is full of notes; in the bare template it's just scaffolding (`_meta/`, `_templates/`, `TODO.md`) because notes are gitignored.
+
+But **don't search reflexively.** The vault runs to hundreds of notes; a speculative grep on *every* turn burns round-trips and bloats the context window, which compounds into slower responses across the whole session. Search only when the answer genuinely depends on the user's own notes — not for questions answerable from the conversation, from general knowledge, or from code already in front of you.
+
+**Triage each task before touching the vault:**
+
+1. **Does answering require user-specific context** (their projects, decisions, notes, history)? If no — general knowledge, something already in context, a self-contained coding task — **answer directly and skip the vault.**
+2. If yes, **is it about a known project or topic?** Search that term and **start from its `scope`/MOC note** — the hub that links the rest — then follow its links. Don't grep the whole vault.
+3. If the topic is fuzzy, **let `ctx/vault/_meta/Tags.md` guide your keywords**, search those, and **read only the notes that actually hit.** Pull in linked notes only as the thread demands.
+
+Keep context lean: one MOC or index note beats ten speculative reads. `TODO.md` (open work) and any `Resources`/index note are cheap, high-signal entry points — the `scope`/MOC layer *is* the vault's index, so lean on it rather than scanning notes wholesale.
 
 The source of truth for how the vault is structured is **`ctx/vault/_meta/Tags.md`** — read it before creating or restructuring notes. In brief:
 
@@ -56,6 +66,8 @@ Skills are plain-markdown prompt-commands in `ctx/skills/`, grouped by area (`en
 ## repo/
 
 `repo/` is gitignored; clone the repos you're actively working on into it so their code sits alongside this context. Each may carry its own `CLAUDE.md` — defer to it for work inside that repo.
+
+**`repo/` can be tens of GB** (full checkouts, build artifacts, worktrees). **Never run an unscoped shell search from the repo root** — no `grep -r`, `find .`, `du .`, or `ls -R` over `.` — it will crawl `repo/` and stall the session. **Scope every shell command to the path you actually mean** (`ctx/`, `api/`, …). The Grep/Glob tools are safe (they honour `.gitignore`, which excludes `repo/`); this rule is specifically about raw shell commands, which do not.
 
 ## Serving / deploy layer
 

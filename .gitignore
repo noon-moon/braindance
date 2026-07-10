@@ -9,8 +9,15 @@ ctx/vault/_ephemeral/*
 !ctx/vault/_ephemeral/README.md
 
 # Harness-generated sync targets (created by ctx/tools/sys/sync.sh)
-.claude/
+.claude/*
 .cursor/
+# ...except the canonical R1 write-guard hook + its self-test, which are real
+# source-of-truth carried by the template (not sync-generated). Consumed by a
+# fork's .claude/settings.json PreToolUse hook.
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/block-loon-main-writes.py
+!.claude/hooks/test_block_loon_main_writes.py
 
 # Node
 node_modules/

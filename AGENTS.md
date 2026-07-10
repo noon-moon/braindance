@@ -30,4 +30,11 @@ braindance is a **template**. Generic, reusable changes — guidelines, conventi
 - `ctx/tools/orchestration/` — fleet tooling for parallel agents in a target project: `rebase-open-prs.sh` (R5/R6), `loadguard.sh` (R3), `agent-ledger.md` (R7 template), and `README.md` describing the post-merge ritual and perf policy. It lives in braindance (outside `repo/`) so a target project's own write-guard never blocks the orchestrator from running or updating it.
 - A target repo's local guards (e.g. a `PreToolUse` hook blocking writes to its main checkout, or a `Stop` hook that checkpoints worktree WIP) live in that harness's config (e.g. `.claude/hooks/`) and enforce R1 / R4 mechanically.
 
+## Publish isolation — `ctx/www` is a fenced-off changeset
+
+`ctx/www/` is the public website (homepage + static pages + Quartz garden) deployed to GitHub Pages; `ctx/vault/` is the private knowledge base. They co-locate in one repo, so the privacy boundary is **procedural and fail-closed** — respect it:
+
+- **Never mix a publish with anything else in one commit/PR.** A change that touches `ctx/www/**` must touch **nothing outside** `ctx/www/**`. CI enforces this (`.github/workflows/disjoint-www.yml` fails a mixed PR); the point is that every publish is a self-contained, reviewable "exactly what's going public" changeset and **no vault edit is ever swept into a publish**. A genuine Pages-*infrastructure* change (the workflow, the pub tool, docs) bypasses with `[www-infra]` in the PR title — that is not a content publish.
+- **Publishing is manual + gated.** Project notes with `npm --prefix ctx/tools/pub run publish` (default `--strict`, fail-closed on any link/embed to an unpublished note and any unresolvable asset), review `git diff ctx/www/garden/content`, commit. The Pages workflow builds **only** `ctx/www` — it never reads `ctx/vault` — and re-audits the committed projection vault-blind (`npm run verify`) so a leak breaks the deploy. Full rationale in [`CLAUDE.md`](CLAUDE.md) ("Publishing to GitHub Pages").
+
 For everything else about this repo — the vault ontology, ephemeral scratch, skills, and the serving layer — see [`CLAUDE.md`](CLAUDE.md).

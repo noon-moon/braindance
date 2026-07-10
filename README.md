@@ -12,13 +12,15 @@ bd/
 │   │   ├── productivity/
 │   │   └── usr/          # Your personal skills (gitignored in template)
 │   ├── tools/
-│   │   └── sys/          # Braindance lifecycle tooling
-│   │       └── sync.sh   # Installs skills into your LLM harness
-│   ├── ephemeral/        # Non-persisted scratch (gitignored; transient inputs &
-│   │   └── README.md     # outputs kept out of the vault — never committed)
+│   │   ├── sys/          # Braindance lifecycle tooling
+│   │   │   ├── sync.sh   # Installs skills into your LLM harness
+│   │   │   └── wt.sh     # `bd` parallel-worktree helper (source from your shell rc)
+│   │   └── orchestration/ # Multi-agent fleet helpers (rebase-open-prs, loadguard, ledger)
 │   └── vault/            # Obsidian vault — open this directory in Obsidian
-│       │                 # Only .obsidian/, _templates/, _meta/ are tracked;
+│       │                 # Only .obsidian/, _templates/, _meta/, _ephemeral/README are tracked;
 │       │                 # your notes are gitignored (personal, per-machine)
+│       └── _ephemeral/   # Non-persisted scratch (gitignored; Obsidian-visible,
+│                         # never canonical — promote keepers to real notes)
 ├── api/                  # Admin app: mobile note-capture API + vault viewer
 ├── www/                  # Static homepage served at your domain
 ├── Caddyfile             # Reverse proxy / TLS (uses {$DOMAIN})
@@ -125,7 +127,7 @@ Skills from [mattpocock/skills](https://github.com/mattpocock/skills) by [Matt P
 
 **Vault notes** — `ctx/vault/.gitignore` ignores everything in the vault except the base scaffolding (`.obsidian/`, `_templates/`, `_meta/`). Any notes you write live only on your machine; the template never tracks them, in this repo or a fork.
 
-**Ephemeral** — `ctx/ephemeral/` is a gitignored scratch dir (only its `README.md` is tracked) for anything transient: files an agent should consider for a task and disposable work products alike. Nothing there persists, so promote anything worth keeping into a vault note. See [`CLAUDE.md`](CLAUDE.md).
+**Ephemeral** — `ctx/vault/_ephemeral/` is a gitignored scratch dir (only its `README.md` is tracked) for anything transient: files an agent should consider for a task and disposable work products alike. It sits *inside* the vault so it's visible in Obsidian, but it's never canonical — nothing there persists, so promote anything worth keeping into a real vault note. See [`CLAUDE.md`](CLAUDE.md).
 
 **Skills** — `ctx/skills/usr/` is gitignored in this template but intended for use in your personal fork. `sync.sh` picks these up automatically alongside the template skills. To track them in your fork, remove or edit `ctx/skills/.gitignore` — when you pull template updates, that's the one likely conflict point; resolve it in favour of your fork's version.
 

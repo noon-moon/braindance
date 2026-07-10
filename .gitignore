@@ -1,10 +1,12 @@
 # Working repos — cloned here locally, never tracked
 repo/
 
-# Ephemeral scratch — non-persisted things, never tracked
-# (the explanatory README is the one tracked file)
-ctx/ephemeral/*
-!ctx/ephemeral/README.md
+# Ephemeral scratch — non-persisted things, never tracked. Lives inside the
+# vault so Obsidian can see it; scoped to the _ephemeral/ subfolder so real
+# vault notes stay tracked. (The explanatory README is the one tracked file.)
+# This root rule also holds in a personal fork that un-ignores its vault notes.
+ctx/vault/_ephemeral/*
+!ctx/vault/_ephemeral/README.md
 
 # Harness-generated sync targets (created by ctx/tools/sys/sync.sh)
 .claude/

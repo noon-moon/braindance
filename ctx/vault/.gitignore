@@ -11,6 +11,11 @@
 !_meta/**
 !TODO.md
 
+# Ephemeral scratch dir — track the explanatory README only; its contents are
+# gitignored (Obsidian-visible workbench, never canonical). See ctx/vault/_ephemeral/.
+!_ephemeral/
+!_ephemeral/README.md
+
 # Obsidian per-machine state (not portable between installs)
 .obsidian/workspace.json
 .obsidian/workspace-mobile.json

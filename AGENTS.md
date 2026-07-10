@@ -22,6 +22,8 @@ braindance is a **template**. Generic, reusable changes — guidelines, conventi
 
 **Landing.** Land via a squash-merge PR so `main` stays linear and the PR is the audit trail. A braindance session is `bd new <task>` → work → `bd land` → `bd rm <task>`.
 
+**Portable audit trail — no internal codenames.** PR titles, descriptions, review comments, and commit messages must describe **what changed functionally**, in general portable terms — never by an instance-specific internal codename (e.g. a project's private name). The template is generic and its history is shared by every fork; leaking one instance's codename into PR/commit text couples that shared history to a single project and reads as unprofessional out of context.
+
 ## Tooling (source of truth for the rules above)
 
 - `ctx/tools/sys/wt.sh` — the `bd` helpers for braindance-repo sessions: `bd new` (fresh-base worktree under `~/dev/bd-wt/<task>`), `bd wip` (R4 checkpoint), `bd land` (R2 rebase-before-push + squash-merge PR), `bd rm`. Source it from your shell rc.

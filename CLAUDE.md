@@ -29,11 +29,14 @@ But **don't search reflexively.** The vault runs to hundreds of notes; a specula
 
 **Triage each task before touching the vault:**
 
+0. **Consult `ctx/vault/_meta/Topics.md` first — one cheap read.** It is the authoritative-and-generated manifest of every `scope` hub: it tells you whether the vault holds context on a topic and, if so, which MOC is its entry point. A **miss is authoritative** — if a topic isn't in the manifest, the vault has no scope for it, so **do not** fall through to a speculative grep. A hit hands you the hub to start from in step 2. (Model: `ctx/vault/_meta/Agent Context.md`; regenerate the manifest with `ctx/tools/sys/gen-topics.sh`.)
 1. **Does answering require user-specific context** (their projects, decisions, notes, history)? If no — general knowledge, something already in context, a self-contained coding task — **answer directly and skip the vault.**
 2. If yes, **is it about a known project or topic?** Search that term and **start from its `scope`/MOC note** — the hub that links the rest — then follow its links. Don't grep the whole vault.
 3. If the topic is fuzzy, **let `ctx/vault/_meta/Tags.md` guide your keywords**, search those, and **read only the notes that actually hit.** Pull in linked notes only as the thread demands.
 
 Keep context lean: one MOC or index note beats ten speculative reads. `TODO.md` (open work) and any `Resources`/index note are cheap, high-signal entry points — the `scope`/MOC layer *is* the vault's index, so lean on it rather than scanning notes wholesale.
+
+**Scope grants (privacy + token guardrail).** A dispatched agent may be handed a **scope grant** — the specific scope(s) it is allowed to read. It then searches **only** that scope and the scopes transitively `Contained By` it (its sub-tree), never the whole vault, and **`scope_kind: system` scopes are excluded unless explicitly granted**. For the local orchestrator this is a token-optimization and a guardrail (consult `Topics.md`, pick the sub-tree a task needs, read only that); for a dispatched sub-agent it is *enforceable* — hand it only the granted sub-tree so it cannot read beyond its grant. See `ctx/vault/_meta/Agent Context.md`.
 
 The source of truth for how the vault is structured is **`ctx/vault/_meta/Tags.md`** — read it before creating or restructuring notes. In brief:
 
@@ -62,7 +65,7 @@ Skills are plain-markdown prompt-commands in `ctx/skills/`, grouped by area (`en
 
 ## Tools
 
-`ctx/tools/sys/` holds braindance lifecycle tooling — `sync.sh` (skill install) and `flatten-vault.sh`. Other subdirs are standalone tools (e.g. `music/`, a Rust utility). These are infrastructure, not vault content.
+`ctx/tools/sys/` holds braindance lifecycle tooling — `sync.sh` (skill install), `flatten-vault.sh`, and `gen-topics.sh` (regenerate the `_meta/Topics.md` topics manifest from scope-note frontmatter; run after adding/removing/re-linking a `scope` note, or `--check` in CI). Other subdirs are standalone tools (e.g. `music/`, a Rust utility). These are infrastructure, not vault content.
 
 ## repo/
 

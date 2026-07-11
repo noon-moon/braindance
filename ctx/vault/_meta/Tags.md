@@ -1,3 +1,11 @@
+---
+tags:
+  - scope
+scope_kind: system
+Contained By:
+  - "[[Agent Context]]"
+---
+
 # Tag Definitions
 
 ## Note types
@@ -6,6 +14,8 @@ Two structural note types. Every note is one of these:
 
 ### `scope`
 A hub note (MOC — Map of Content) for a topic. Scopes are structural: they exist to organise and link other notes. Key property: `Contains` and `Contained By` frontmatter fields linking to related scopes. The relationship is intentionally loose and encompasses "owns / owned by", "contains / contained by", and similar dual relationships.
+
+Optional field: **`scope_kind`** — `content` (default, may be omitted) or `system`. A `content` scope is a user-topic hub (a project, a body of knowledge, a media collection). A `system` scope is the agent / infrastructure / meta layer — it describes *how the repo works*, not what it's *about* — e.g. [[Agent Context]], the generated [[Topics]] manifest, and this note. `scope_kind` is a dedicated field, **not** a stacked tag: it sub-classifies the `scope` type (parallel to `Contains`) rather than adding to the tag namespace. [[Topics]] renders content and system scopes in separate sections, and a content-scope search excludes `system` scopes unless they're explicitly granted (see [[Agent Context]]).
 
 ### `memo`
 A permanent memorandum on a topic. Memos are substantive notes intended to persist indefinitely — reference material, decisions, observations. Not actionable in themselves.

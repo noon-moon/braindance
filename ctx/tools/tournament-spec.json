@@ -155,6 +155,14 @@
     "block0_warmup_offclock": ["pin origin/main SHA", "stash T1/T2/T5 planted-bug patches (Loon-side)", "cargo build --workspace (warm shared target/)", "dry-run parser on an existing session"],
     "block1_hygiene_bundle":  { "tasks": ["T4", "T2"], "compare": "baseline_off vs hygiene_on", "n": 2, "budget_min": 25 },
     "block2_screen":          { "toggles": "tested_toggles", "on_top_of": "hygiene", "tasks_by_toggle": "screens_on", "budget_min": 90 },
-    "block3_finalists":       { "configs": ["cheap_champion", "fast_champion"], "tasks": ["T1", "T4", "T3", "T5"], "quality_floor": "5/5 on T1/T4; directional on T3/T5", "budget_min": 100 }
+    "block3_finalists":       { "configs": ["cheap_champion", "fast_champion"], "tasks": ["T1", "T4", "T3", "T5"], "quality_floor": "5/5 on T1/T4; directional on T3/T5", "budget_min": 100 },
+    "pruned": {
+      "_about": "The <=4h runnable schedule (runner --prune). Keeps strict 5/5 on Block-3 T1/T4; prunes Block-2 expensive-task screens to S-DAG + S-BATCH (the scheduling + cheap/fast levers), folds the other T3-only toggles (S-O2-FOLD, S-O8-PRUNE) into the finalist; runs a single finalist (cheap_champion). Est ~225 min < 240.",
+      "block1_n": 1,
+      "block2_n": 1,
+      "block2_expensive_toggles": ["S-DAG", "S-BATCH"],
+      "block3_configs": ["cheap_champion"],
+      "runs_per_cell": { "T1": 5, "T2": 2, "T4": 5, "T3": 1, "T5": 1 }
+    }
   }
 }

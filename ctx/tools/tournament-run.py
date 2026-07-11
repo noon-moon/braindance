@@ -42,32 +42,51 @@ def load_spec(path):
         return json.load(f)
 
 
-def build_schedule(spec):
+def build_schedule(spec, prune=False):
     """Flatten the Block 1-3 plan into an ordered list of cells.
 
     Each cell: {block, task, config, n}. Config names encode the toggle set so
     the scorer can group by config. This is the SERIAL order runs execute in.
+
+    prune=True honors spec.schedule.pruned to fit the <=4h budget: single
+    finalist config, only the listed toggles keep their expensive T3/T5 screen
+    (the rest fold into the finalist), and reduced n — while KEEPING the strict
+    5/5 floor on the Block-3 repeatable tasks (T1/T4).
     """
     cells = []
-    rpc = spec["runs_per_cell"]
+    rpc = dict(spec["runs_per_cell"])
+    pruned = spec["schedule"].get("pruned", {}) if prune else {}
+    if prune:
+        rpc.update(pruned.get("runs_per_cell", {}))
+    keep_expensive = set(pruned.get("block2_expensive_toggles", [])) if prune else None
 
     # Block 1 — hygiene bundle vs baseline, cheap tasks only
     b1 = spec["schedule"]["block1_hygiene_bundle"]
+    b1n = pruned.get("block1_n", b1["n"]) if prune else b1["n"]
     for task in b1["tasks"]:
         for config in ["baseline", "hygiene"]:
-            cells.append({"block": 1, "task": task, "config": config, "n": b1["n"]})
+            cells.append({"block": 1, "task": task, "config": config, "n": b1n})
 
-    # Block 2 — one toggle at a time on top of hygiene, on its screening tasks
+    # Block 2 — one toggle at a time on top of hygiene, on its screening tasks.
+    # When pruning, a toggle whose ONLY screen task is expensive (T3/T5) is
+    # dropped from Block 2 unless it is in block2_expensive_toggles (folded into
+    # the finalist instead).
+    expensive = {"T3", "T5"}
+    b2n = pruned.get("block2_n") if prune else None
     for tg, meta in spec["tested_toggles"].items():
         if tg.startswith("_") or not isinstance(meta, dict):
             continue
         cfg = f"hygiene+{tg}"
         for task in meta["screens_on"]:
-            cells.append({"block": 2, "task": task, "config": cfg, "n": min(2, rpc.get(task, 2))})
+            if prune and task in expensive and keep_expensive is not None and tg not in keep_expensive:
+                continue
+            n = b2n if b2n is not None else min(2, rpc.get(task, 2))
+            cells.append({"block": 2, "task": task, "config": cfg, "n": n})
 
-    # Block 3 — finalist champion configs across the expensive suite
+    # Block 3 — finalist champion config(s) across the expensive suite
     b3 = spec["schedule"]["block3_finalists"]
-    for config in b3["configs"]:
+    configs = pruned.get("block3_configs", b3["configs"]) if prune else b3["configs"]
+    for config in configs:
         for task in b3["tasks"]:
             cells.append({"block": 3, "task": task, "config": config, "n": rpc.get(task, 1)})
 
@@ -142,12 +161,13 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--spec", default=os.path.join(HERE, "tournament-spec.json"))
     ap.add_argument("--go", action="store_true", help="actually execute (default is dry-run)")
+    ap.add_argument("--prune", action="store_true", help="use the <=4h pruned schedule (spec.schedule.pruned)")
     ap.add_argument("--dispatch-cmd", help="per-run dispatch command (see module docstring)")
     ap.add_argument("--out-dir", default="ctx/vault/_ephemeral/tournament-results")
     args = ap.parse_args(argv)
 
     spec = load_spec(args.spec)
-    cells = build_schedule(spec)
+    cells = build_schedule(spec, prune=args.prune)
     total = est_minutes(spec, cells)
     budget = spec["budget"]["total_wall_clock_minutes"]
 

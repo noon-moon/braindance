@@ -1,0 +1,160 @@
+{
+  "_about": "Frozen task-spec + rubric + toggle schema for the braindance optimization tournament (artifact #2). Generic tooling — canonical home core template ctx/tools/. Consumed by tournament-run.sh (#3) and tournament-score.py. The Loon-specific instantiation (exact planted-bug patches, T2/T4 ground-truth) is deferred per user flag-2 ('shape is enough') and lands Loon-side / in _ephemeral at build-of-run time; here the tasks carry SHAPES + placeholders. Nothing in this file runs a tournament — it is data.",
+  "version": "v3",
+  "budget": {
+    "total_wall_clock_minutes": 240,
+    "off_clock_warmup_minutes": 30,
+    "r3_serial": true,
+    "loadguard": "ctx/tools/orchestration/loadguard.sh"
+  },
+
+  "cost_weights": {
+    "_about": "Cost-weighted 4-tier token total (per user decision from the parser-validation finding: cache_read dominates the naive sum, so weight by API price tier, NOT a raw total). Weights are relative $ per token, normalized to output=1.0. Tune to match current pricing before a real run. cheap-mode objective = sum(tier_tokens * weight).",
+    "output": 1.0,
+    "input": 0.25,
+    "cache_creation": 0.3125,
+    "cache_read": 0.025
+  },
+
+  "quality_floor": {
+    "_about": "Strict per user Q4. Applied at full 5/5 on repeatable tasks; directional (n=1-2) on the expensive orchestration tasks per the accepted Q4xQ5 resolution.",
+    "repeatable_tasks": ["T1", "T2", "T4"],
+    "repeatable_pass_required": "5/5",
+    "expensive_tasks": ["T3", "T5"],
+    "expensive_mode": "directional",
+    "expensive_n": 2
+  },
+
+  "runs_per_cell": { "T1": 5, "T2": 5, "T4": 5, "T3": 2, "T5": 1 },
+
+  "tasks": [
+    {
+      "id": "T1",
+      "type": "small_code_change",
+      "repeatable": true,
+      "est_wall_clock_min": 9,
+      "prompt": "In crates/garden-game (Track A) of repo/loon, fix the planted bug {BUG_VARIANT} and land it on a worktree PR (pr/<name> off fresh origin/main). Run everything from the worktree; do not touch the main checkout.",
+      "bug_variants": {
+        "_note": "SHAPES only (flag-2). Exact crate/function/line pinned at run-build, patch stored Loon-side.",
+        "off_by_one": "an off-by-one in a pure-logic fn (e.g. in loon-math / a garden-game helper) that a unit test catches",
+        "unseeded_rng": "an unseeded rand/random() draw that breaks the (seed,tick) state-hash test",
+        "instant_in_lib": "a std::time::Instant in library code that trips clippy::disallowed_types"
+      },
+      "success_gate": {
+        "hard": ["cargo clippy -p {CRATE} --all-targets -- -D warnings", "cargo test -p {CRATE}"],
+        "diff_precision": "changed files subset of {INTENDED_FILES}",
+        "pr": "opens on pr/<name> based on fresh origin/main"
+      },
+      "graded": { "diff_precision_0_1": "1 - (unintended_files / total_changed_files)" },
+      "stresses": ["F1", "F5"]
+    },
+    {
+      "id": "T2",
+      "type": "investigation_memo",
+      "repeatable": true,
+      "est_wall_clock_min": 6,
+      "prompt": "Audit repo/loon's determinism discipline: find every LIBRARY-code site risking nondeterminism (wall-clock / unseeded RNG) across loon-sim, garden-game, garden-ai. Write a [memo] to ctx/vault/_ephemeral/ with findings + crate/src/...:line evidence.",
+      "success_gate": {
+        "hard": ["memo file exists", "frontmatter tags:[memo] present", "Status: line present"],
+        "rubric_ref": "T2_determinism_groundtruth"
+      },
+      "graded": {
+        "coverage_0_1": "found_groundtruth_sites / total_groundtruth_sites",
+        "precision_0_1": "true_positives / (true_positives + false_positives)",
+        "citation_valid_0_1": "fraction of cited crate/src:line paths that resolve"
+      },
+      "rubric": {
+        "T2_determinism_groundtruth": {
+          "_note": "Authored once by hand at run-build (flag-2). Placeholder shape below.",
+          "known_sites": ["<crate/src/file.rs:LINE — reason>"],
+          "planted_violations": ["<1-2 planted Instant/unseeded-rng sites>"],
+          "false_positive_tolerance": 1
+        }
+      },
+      "stresses": ["F5", "O7"]
+    },
+    {
+      "id": "T3",
+      "type": "multi_agent_fanout_foldin",
+      "repeatable": false,
+      "est_wall_clock_min": 27,
+      "prompt": "Make 3 disjoint-crate changes in repo/loon IN PARALLEL — (a) a loon-sim tweak, (b) a garden-ai tweak, (c) a new fixture in garden-fixtures — respecting the garden-fixtures/src/lib.rs single-owner lane. Then integrate + report. Use the ledger for ownership.",
+      "success_gate": {
+        "hard": ["all 3 land on their own pr/*", "no collision on garden-fixtures/src/lib.rs", "crate-scoped gates pass on each"],
+        "integration": "integrated summary correct (rubric)"
+      },
+      "graded": { "collision_free_0_1": "1 if no owned-file collision else 0", "gates_pass_frac": "landed_passing / 3" },
+      "stresses": ["F2", "F6", "O2", "O6", "O8"]
+    },
+    {
+      "id": "T4",
+      "type": "vault_lookup",
+      "repeatable": true,
+      "est_wall_clock_min": 2,
+      "prompt": "Answer {VAULT_QUESTION} (a braindance-vault question needing one specific note — e.g. where/why did parallel Loon dev pause and what resumes first) and cite the source [[note]].",
+      "success_gate": {
+        "hard": ["answer matches ground-truth note", "cites correct [[note]]/path"],
+        "bounded_reads": "notes_opened <= {MAX_NOTE_OPENS}"
+      },
+      "graded": {
+        "answer_correct_0_1": "rubric match",
+        "citation_correct_0_1": "cited note == ground-truth note",
+        "over_read_penalty": "max(0, notes_opened - MAX_NOTE_OPENS)"
+      },
+      "rubric": { "T4_vault_groundtruth": { "_note": "Placeholder; pin the note + expected answer at run-build.", "answer_keys": ["<key phrase>"], "source_note": "<[[note title]]>", "max_note_opens": 3 } },
+      "stresses": ["vault_load", "O4", "O5"]
+    },
+    {
+      "id": "T5",
+      "type": "stacked_pr",
+      "repeatable": false,
+      "est_wall_clock_min": 18,
+      "prompt": "Land change A (add a fixture to garden-fixtures/src/lib.rs), then change B in garden-game that CONSUMES that fixture — as two stacked PRs in dependency order; B cut off / rebased cleanly on A.",
+      "success_gate": {
+        "hard": ["both land in order", "B rebases cleanly on A", "crate gates pass on each", "no serialized-lane collision"]
+      },
+      "graded": { "order_correct_0_1": "1 if A before B and B based on A else 0" },
+      "stresses": ["F3", "R2", "F4", "F6"]
+    }
+  ],
+
+  "hygiene_bundle": {
+    "_about": "Near-free, near-dominant, already-specced wins. ALWAYS ON after Block 1; measured once as an aggregate vs baseline, not ablated individually.",
+    "toggles": ["S-GUARD", "S-PREAMBLE", "S-FRESH", "S-GATERUN", "S-DOCFACTS"]
+  },
+
+  "tested_toggles": {
+    "_about": "The ~6 high-leverage toggles actually screened in the 4h budget (v3 selection). Each is a strategy the runner flips on-top-of-hygiene.",
+    "S-TIER": {
+      "desc": "model-tiering for sub-agents",
+      "model_matrix": {
+        "code_tasks": ["opus", "sonnet"],
+        "noncode_tasks": ["opus", "sonnet", "haiku"],
+        "_haiku_note": "Haiku only on non-code (T2/T4) per user flag-3; barred from gate-compiled code by the strict floor.",
+        "orchestrator_always": "opus"
+      },
+      "screens_on": ["T2", "T4", "T3"]
+    },
+    "S-O2-FOLD":       { "desc": "fold into existing agent before spawning", "screens_on": ["T3"] },
+    "S-INDEX+ADDRESS": { "desc": "vault index + always hand sub-agent an exact [[note]]/path address", "screens_on": ["T4"] },
+    "S-O8-PRUNE":      { "desc": "aggressive record-then-drop orchestrator context pruning", "screens_on": ["T3"] },
+    "S-DAG":           { "desc": "dependency-graph / topological wave dispatch scheduling", "screens_on": ["T3", "T5"] },
+    "S-BATCH":         { "desc": "batched fold-ins (fewer tokens, more latency — the cheap-vs-fast lever)", "screens_on": ["T3"] }
+  },
+
+  "deferred_toggles": ["S-MEMO", "S-PREFETCH", "S-SCRATCHPAD", "S-DEPTH", "S-BUDGET", "S-STOPWORD", "S-COMPRESS", "S-RECALL", "S-STATECACHE", "S-MODELSIZE"],
+
+  "modes": {
+    "_about": "Scoring produces two named operating modes (user Q3) + a balanced default; each is a lexicographic ordering over floor-passers.",
+    "cheap": { "order": ["quality_floor", "min_weighted_tokens", "min_latency"] },
+    "fast":  { "order": ["quality_floor", "min_ttfu", "min_weighted_tokens"] },
+    "balanced": { "order": ["quality_floor", "pareto_knee_tokens_latency"] }
+  },
+
+  "schedule": {
+    "block0_warmup_offclock": ["pin origin/main SHA", "stash T1/T2/T5 planted-bug patches (Loon-side)", "cargo build --workspace (warm shared target/)", "dry-run parser on an existing session"],
+    "block1_hygiene_bundle":  { "tasks": ["T4", "T2"], "compare": "baseline_off vs hygiene_on", "n": 2, "budget_min": 25 },
+    "block2_screen":          { "toggles": "tested_toggles", "on_top_of": "hygiene", "tasks_by_toggle": "screens_on", "budget_min": 90 },
+    "block3_finalists":       { "configs": ["cheap_champion", "fast_champion"], "tasks": ["T1", "T4", "T3", "T5"], "quality_floor": "5/5 on T1/T4; directional on T3/T5", "budget_min": 100 }
+  }
+}

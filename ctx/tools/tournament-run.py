@@ -157,16 +157,86 @@ def run_cell(cell, spec, dispatch_cmd, tokens_csv, quality_csv):
     return True
 
 
+def _write_mock_transcript(path):
+    """A minimal, valid session transcript (one user + one assistant-with-usage)
+    so --selftest can exercise the parser without any real dispatch."""
+    recs = [
+        {"type": "user", "timestamp": "2026-07-10T00:00:00.000Z",
+         "message": {"role": "user", "content": "selftest"}},
+        {"type": "assistant", "timestamp": "2026-07-10T00:00:02.000Z",
+         "message": {"model": "claude-mock", "role": "assistant",
+                     "usage": {"input_tokens": 100, "output_tokens": 50,
+                               "cache_read_input_tokens": 1000,
+                               "cache_creation_input_tokens": 200}}},
+    ]
+    with open(path, "w", encoding="utf-8") as f:
+        for r in recs:
+            f.write(json.dumps(r) + "\n")
+
+
+def selftest(spec_path, spec, prune=True):
+    """Dry end-to-end wiring check: for every cell in the (pruned) schedule,
+    push a MOCK dispatch through dispatch->transcript->parser->CSV->scorer->gate
+    verdict, with NO real agent run and NO cost. Confirms every cell resolves."""
+    cells = build_schedule(spec, prune=prune)
+    td = tempfile.mkdtemp(prefix="tourney-selftest-")
+    proj = os.path.join(td, "projects")
+    os.makedirs(proj)
+    mock_id = "selftest-mock-session"
+    _write_mock_transcript(os.path.join(proj, mock_id + ".jsonl"))
+    tokens_csv = os.path.join(td, "tokens.csv")
+    quality_csv = os.path.join(td, "quality.csv")
+
+    print(f"=== selftest: {len(cells)} cells, mock dispatch (no real run, $0) ===")
+    all_ok = True
+    for c in cells:
+        cell_ok = True
+        for run_idx in range(c["n"]):
+            label = f"task={c['task']},config={c['config']},run={run_idx}"
+            r = subprocess.run(
+                [sys.executable, PARSER, mock_id, "--projects-dir", proj,
+                 "--label", label, "--csv", tokens_csv],
+                capture_output=True, text=True,
+            )
+            cell_ok = cell_ok and r.returncode == 0
+            newq = not os.path.exists(quality_csv)
+            with open(quality_csv, "a", encoding="utf-8") as qf:
+                if newq:
+                    qf.write("label,passed,graded\n")
+                qf.write(f'"{label}",1,1.0\n')
+        verdict = "OK" if cell_ok else "FAIL"
+        all_ok = all_ok and cell_ok
+        print(f"  B{c['block']} {c['task']:4} {c['config']:22} x{c['n']}  "
+              f"dispatch=mock parse={verdict} gate=recorded")
+
+    sc = subprocess.run(
+        [sys.executable, SCORER, "--tokens-csv", tokens_csv,
+         "--quality-csv", quality_csv, "--spec", spec_path],
+        capture_output=True, text=True,
+    )
+    print("\n--- scorer over all cells ---")
+    print(sc.stdout.strip()[-600:] or sc.stderr)
+    ok = all_ok and sc.returncode == 0 and os.path.exists(tokens_csv)
+    print(f"\n[selftest] {'ALL CELLS WIRED CLEAN' if ok else 'WIRING FAILURE'} "
+          f"(dispatch->transcript->parser->CSV->scorer->gate). scratch: {td}")
+    return 0 if ok else 1
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--spec", default=os.path.join(HERE, "tournament-spec.json"))
     ap.add_argument("--go", action="store_true", help="actually execute (default is dry-run)")
     ap.add_argument("--prune", action="store_true", help="use the <=4h pruned schedule (spec.schedule.pruned)")
+    ap.add_argument("--selftest", action="store_true", help="dry end-to-end wiring check over every cell (mock dispatch, no cost)")
     ap.add_argument("--dispatch-cmd", help="per-run dispatch command (see module docstring)")
     ap.add_argument("--out-dir", default="ctx/vault/_ephemeral/tournament-results")
     args = ap.parse_args(argv)
 
     spec = load_spec(args.spec)
+
+    if args.selftest:
+        return selftest(args.spec, spec, prune=args.prune)
+
     cells = build_schedule(spec, prune=args.prune)
     total = est_minutes(spec, cells)
     budget = spec["budget"]["total_wall_clock_minutes"]

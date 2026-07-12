@@ -1,0 +1,71 @@
+name: Build & deploy api
+
+# Build the api image, push it to GHCR, then (once the VPS_* secrets exist) SSH
+# to the droplet and redeploy the api service — so an `api/**` (or compose)
+# change on `main` ships without a manual `ssh droplet + ./deploy.sh pull api`.
+#
+# The deploy job self-skips while VPS_HOST is empty (same pattern as
+# noon-moon-net's deploy.yml), so pushes still build + push the image without a
+# red X before the box is wired up. Even with deploy skipped, the droplet's
+# systemd `braindance-sync.timer` still pulls the new image within a few
+# minutes — this workflow just makes the redeploy immediate.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "docker-compose.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-api
+  cancel-in-progress: true
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./api
+          push: true
+          # Resolves to ghcr.io/<owner>/<repo>/api:latest — on this fork that is
+          # ghcr.io/noon-moon/braindance-usr/api:latest, matching API_IMAGE in
+          # the droplet's /srv/.env (and .env.example's OWNER/REPO placeholder).
+          tags: ghcr.io/${{ github.repository }}/api:latest
+
+  deploy:
+    needs: build-push # ordering guard: only redeploy after the image is pushed
+    runs-on: ubuntu-latest
+    env:
+      # Empty until the VPS secrets are added — the deploy step then self-skips,
+      # so a push still builds + pushes the image without failing.
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+    steps:
+      - name: SSH to droplet and redeploy api
+        if: env.VPS_HOST != ''
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          SSH="ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes $VPS_USER@$VPS_HOST"
+          # /srv/braindance holds docker-compose.yml + deploy.sh. `git pull`
+          # first so a compose change lands; then pull the fresh image and
+          # recreate only the api service. The droplet must already be
+          # `docker login`'d to ghcr.io (one-time provisioning step) for the
+          # private-image pull to succeed.
+          $SSH 'cd /srv/braindance && git pull --ff-only && ./deploy.sh pull api && ./deploy.sh up -d api'

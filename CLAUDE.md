@@ -75,7 +75,7 @@ Skills are plain-markdown prompt-commands in `ctx/skills/`, grouped by area (`en
 
 ## Serving / deploy layer
 
-`api/`, `www/`, `Caddyfile`, `docker-compose.yml`, and `deploy.sh` are the optional admin-app + public-serving stack, not vault content. The `api` captures notes to an `inbox` branch and serves a read-only vault viewer; on a personal instance the desk-side `Process Inbox` routine triages captures onto the working branch. Full configuration, the `/srv/.env` mechanics, and `./deploy.sh` usage are documented in `README.md` — consult it before changing anything here, and note the api has **no built-in auth** (it must sit behind a VPN/tunnel).
+`api/`, `www/`, `Caddyfile`, `docker-compose.yml`, and `deploy.sh` are the optional admin-app + public-serving stack, not vault content. The `api` captures notes **directly to `main`**, into `ctx/vault/inbox/` (so they show up in Obsidian and the read-only vault viewer immediately, no merge step); the desk-side `Process Inbox` routine then triages each capture in-vault — an `inbox/` → flat-vault file move, no git. Writing `main` directly is safe because the api is **Tailscale-only** with no public exposure and **no built-in auth** (it must sit behind a VPN/tunnel); the old `inbox`-branch isolation was belt-and-suspenders and is now retired. Full configuration, the `/srv/.env` mechanics, and `./deploy.sh` usage are documented in `README.md` — consult it before changing anything here.
 
 ## Publishing to GitHub Pages (`ctx/www`)
 
@@ -101,7 +101,7 @@ Multiple agent sessions must **never share the one working tree** — a shared i
   - `bd rm <task>` — remove the worktree + local branch
 - **Always address a worktree by its ABSOLUTE path** (`~/dev/bd-wt/<task>/…`); never rely on an ambient `cwd` or repo-relative paths that could resolve into the sacred main tree.
 - A session is: `bd new fix-tags` → work → `bd land` → `bd rm fix-tags`. Because the flat vault is file-per-note, disjoint-file sessions rebase and land with no conflict.
-- Orthogonal path: VPS/`api` writes go to the `inbox` branch (funnel-shaped, desk-triaged) — not this flow, which governs local sessions landing on `main`.
+- Orthogonal path: VPS/`api` captures land directly on `main` in `ctx/vault/inbox/` (funnel-shaped, triaged in-vault at the desk) — a separate ingress from this worktree flow, but now sharing `main` as the target.
 
 **Fleets of parallel agents in a target project** (`repo/<project>`) additionally use the orchestration tooling in `ctx/tools/orchestration/` — the owner↔branch coordination ledger (`agent-ledger.md`, R7), post-merge `rebase-open-prs.sh` (R5/R6), and perf `loadguard.sh` (R3) — plus whatever local guard hooks that target repo installs (R1 blocks writes to its main checkout; R4 checkpoints worktree WIP). See `ctx/tools/orchestration/README.md`.
 

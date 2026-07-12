@@ -211,7 +211,7 @@ VPS stack below — see [`ctx/tools/pub/README.md`](ctx/tools/pub/README.md).
 Braindance ships an optional admin app — a mobile-friendly interface for capturing notes into your vault and browsing it — plus the static-site plumbing to serve a public homepage and a published knowledge garden. It's a stack of two Docker services:
 
 - **`caddy`** — TLS + routing for the public surface: your homepage at `/` (from `/srv/www`) and, if you publish a [Quartz](https://quartz.jzhao.xyz) garden, static output at `/garden` (from `/srv/garden`).
-- **`api`** — the admin surface (`api/`): a small Hono/Node service for on-the-go note capture and a read-only vault viewer. It reads the vault (mounted read-only) and commits captures to an `inbox` branch via the GitHub API.
+- **`api`** — the admin surface (`api/`): a small Hono/Node service for on-the-go note capture and a read-only vault viewer. It reads the vault (mounted read-only) and commits captures **directly to `main`**, into `ctx/vault/inbox/`, via the GitHub Contents API — so they appear in the vault (and the viewer) with no branch to merge. Each capture is a unique timestamped file, so the atomic write is safe against concurrent commits on `main` (it retries the rare racing ref update); triage is then a plain in-vault file move (`inbox/` → the flat vault). The old `inbox`-*branch* isolation is retired — it was belt-and-suspenders from before the app was locked behind a private network (see the hosting note below).
 
 **Bring your own secure hosting.** The `api` service binds a plain HTTP port and has **no built-in authentication** — exposing it safely is *your* responsibility. Put it behind Tailscale/a VPN, an authenticating reverse proxy, or an SSH tunnel. Do not expose it to the public internet as-is.
 
@@ -224,7 +224,7 @@ All instance-specific values live in `/srv/.env` on the host (`chmod 600`, never
 | `DOMAIN` | Caddy (`{$DOMAIN}`) | Public hostname for TLS + routing |
 | `API_IMAGE` | Compose interpolation | Your GHCR image, e.g. `ghcr.io/you/your-repo/api:latest` |
 | `GITHUB_REPO` | api | `owner/repo` the api commits captures to |
-| `GITHUB_TOKEN` | api | PAT with `repo` scope for inbox commits |
+| `GITHUB_TOKEN` | api | PAT with `repo` scope for capture commits |
 
 Two different env mechanisms are in play, which is easy to trip over:
 - `${VAR}` in `docker-compose.yml` is **interpolation**, resolved from `--env-file /srv/.env`. Always run compose through **`./deploy.sh`** (which passes that flag) — bare `docker compose` won't see `/srv/.env` and will resolve those vars empty.

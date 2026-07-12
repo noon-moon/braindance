@@ -16,6 +16,12 @@
 !_ephemeral/
 !_ephemeral/README.md
 
+# Mobile-capture inbox — the admin app commits captures here on `main`; the
+# Process Inbox routine triages them into the flat vault. Track the folder (via
+# .gitkeep) and whatever captures land in it (they're triaged, not permanent).
+!inbox/
+!inbox/**
+
 # Obsidian per-machine state (not portable between installs)
 .obsidian/workspace.json
 .obsidian/workspace-mobile.json

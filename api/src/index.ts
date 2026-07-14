@@ -1,9 +1,16 @@
 import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { createNote } from "./notes.js";
 import { getScopes } from "./scopes.js";
 
 const app = new Hono();
+
+// ── Static assets ────────────────────────────────────────────────────────────
+// The app's favicon. Any HTML pages this api serves should link
+// <link rel="icon" type="image/png" href="/favicon.png"> in their <head>.
+app.use("/favicon.png", serveStatic({ path: "./public/favicon.png" }));
+app.use("/favicon.ico", serveStatic({ path: "./public/favicon.png" }));
 
 app.get("/scopes", (c) => c.json({ scopes: getScopes() }));
 

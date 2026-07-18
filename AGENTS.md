@@ -37,4 +37,11 @@ Full doctrine, the motivating pattern, and the topics-manifest / scope-grant mod
 
 Full R1–R7 mechanics + rationale, the `bd` workflow, and the fleet tooling (`wt.sh`, `orchestration/`): [`docs/worktrees.md`](docs/worktrees.md).
 
+## Output conventions
+
+Two defaults hold for the outputs we produce:
+
+- **Markdown, with language-hinted code fences** (universal). Format outputs as Markdown; put every span of code, console/terminal output, query, config, or structured data in a fenced code block with a language hint (```python, ```sql, ```console, ```json, …). Never paste code or command output as bare prose — in a note, in `_ephemeral`, or back to the user.
+- **`_ephemeral` by default** (braindance context). When working in braindance (not a target project under `repo/`, whose skills set their own output locations), generated work products — reports, analyses, drafts, query results — go to `ctx/vault/_ephemeral/` (flat, timestamp-prefixed; see [`docs/vault.md`](docs/vault.md)), not the repo root, `/tmp`, or the vault proper.
+
 For everything else about this repo — the vault ontology, ephemeral scratch, skills, and the serving layer — see [`CLAUDE.md`](CLAUDE.md) and the `docs/` it maps to.

@@ -44,7 +44,7 @@ But **don't search reflexively.** The vault runs to hundreds of notes; a specula
 
 Full triage tree, ontology, `_ephemeral` naming, daily notes, and skills mechanics: [`docs/vault.md`](docs/vault.md). Schema source of truth: `ctx/vault/_meta/Tags.md`; scope-grant model: `ctx/vault/_meta/Agent Context.md`.
 
-**`ctx/vault/_ephemeral/` is non-canonical scratch** — gitignored and ephemeral. Read and write it freely for transient inputs/outputs, but never treat it as canonical, and if something is worth keeping, **promote it into a real vault note** in `ctx/vault/`. (Naming convention in [`docs/vault.md`](docs/vault.md).)
+**`ctx/vault/_ephemeral/` is non-canonical scratch and the default sink for generated outputs** — gitignored and ephemeral. **Unless the user names a destination, write work products (reports, analyses, drafts, query results) here** rather than the repo root or `/tmp`; read and write it freely for transient inputs/outputs, but never treat it as canonical, and if something is worth keeping, **promote it into a real vault note** in `ctx/vault/`. (Naming convention in [`docs/vault.md`](docs/vault.md).)
 
 ## repo/
 
@@ -66,6 +66,7 @@ Full discipline (R1–R7), the `bd` workflow, and fleet tooling: [`AGENTS.md`](A
 
 - **Commits** — imperative summaries. On a personal instance, vault edits are conventionally prefixed `Vault: <summary — detail>`; keep that prefix scheme (`Skills:`, `Tools:`, `Docs:`, `Deploy:`) for other areas.
 - **Template, not fork** — generic/guideline/tooling/skill/doc changes land on the core template (`noon-moon/braindance`, `master`); a fork carries only instance-specific content and pulls the rest via `git merge upstream/master`. (See the note at the top of this file.)
+- **Output format** — write Markdown, and put every span of code, console/terminal output, query, config, or structured data in a fenced code block with a language hint (```python, ```sql, ```console, ```json, …). This holds for what we write to `_ephemeral`, to vault notes, and back to the user — never paste code or command output as bare prose.
 - **Edit skills in `ctx/skills/`, never the installed harness copy** under `.claude/commands/` — the change would be lost or hit the wrong file. (Mechanics: [`docs/vault.md`](docs/vault.md).)
 - **Don't touch** `.obsidian/` config unless explicitly asked (it's the Obsidian workspace, easy to corrupt).
 - **Don't** fold the flat vault into folders, or mass-rewrite existing notes.

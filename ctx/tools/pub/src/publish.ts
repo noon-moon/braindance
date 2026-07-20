@@ -27,7 +27,7 @@ function parseArgs(argv: string[]): Args {
     return i !== -1 && argv[i + 1] ? argv[i + 1] : undefined;
   };
   return {
-    vault: resolve(get('--vault') ?? resolve(HERE, '../../../vault')),
+    vault: resolve(get('--vault') ?? process.env.VAULT_REPO ?? resolve(HERE, '../../../vault')),
     pub: resolve(get('--pub') ?? process.env.PUB_REPO ?? resolve(homedir(), 'dev/noon-moon-net')),
     scrub: argv.includes('--scrub'),
     dry: argv.includes('--dry') || argv.includes('--dry-run'),

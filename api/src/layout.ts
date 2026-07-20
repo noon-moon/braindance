@@ -57,6 +57,11 @@ input:focus,select:focus,textarea:focus { outline:none; border-color:var(--accen
 .capture-form { display:flex; flex-direction:column; }
 .cap-actions { display:flex; gap:.5rem; align-items:center; margin-top:.7rem; }
 .cap-actions .btn { flex:1; }
+h2.section { font-size:1rem; font-weight:600; color:var(--muted); margin:1.4rem 0 .4rem; }
+h2.section:first-of-type { margin-top:.6rem; }
+.snippet { margin:.25rem 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+a.tag:hover { border-color:var(--accent); color:var(--accent); }
+.triage-discard { margin-top:.6rem; }
 hr { border:none; border-top:1px solid var(--border); margin:1rem 0; }
 .note-body { overflow-wrap:break-word; word-break:break-word; }
 .note-body pre { background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:.6rem; max-width:100%; overflow-x:auto; }

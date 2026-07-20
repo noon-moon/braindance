@@ -54,6 +54,10 @@ input,select,textarea {
 textarea { min-height:7rem; resize:vertical; }
 input:focus,select:focus,textarea:focus { outline:none; border-color:var(--accent); }
 .req { color:var(--danger); }
+.capture-form { display:flex; flex-direction:column; }
+.cap-actions { display:flex; gap:.5rem; align-items:center; margin-top:.7rem; }
+.cap-actions select { width:auto; flex:0 0 auto; }
+.cap-actions .btn { flex:1; }
 hr { border:none; border-top:1px solid var(--border); margin:1rem 0; }
 .note-body { overflow-wrap:break-word; word-break:break-word; }
 .note-body pre { background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:.6rem; max-width:100%; overflow-x:auto; }
@@ -107,6 +111,10 @@ ul.notes li { padding:.2rem 0; border-bottom:1px solid var(--border); overflow-w
   .bar nav a .nav-ic { display:block; }
   .bar nav a .nav-tx { display:none; }
   main { padding-bottom:calc(4.5rem + env(safe-area-inset-bottom, 0px)); }
+  /* Capture: anchor the form to the bottom so inputs build up from the thumb. */
+  main:has(.capture-form) { display:flex; flex-direction:column; min-height:100dvh; }
+  main:has(.capture-form) h1 { display:none; }
+  .capture-form { margin-top:auto; }
 }
 `;
 

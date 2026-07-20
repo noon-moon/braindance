@@ -1,0 +1,20 @@
+[package]
+name = "add-album"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "add-album"
+path = "src/main.rs"
+
+[[bin]]
+name = "list-albums"
+path = "src/bin/list_albums.rs"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+clap = { version = "4", features = ["derive"] }
+plist = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

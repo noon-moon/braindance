@@ -12,7 +12,9 @@ name: Build & deploy api
 
 on:
   push:
-    branches: [main]
+    # main (fork instances) + master (this template repo's default branch) — so
+    # the image builds whichever branch a given repo deploys from.
+    branches: [main, master]
     paths:
       - "api/**"
       - "docker-compose.yml"

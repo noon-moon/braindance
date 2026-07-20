@@ -5,14 +5,23 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "npm run test:git && npm run test:proposals && npm run test:dedup && npm run test:object && npm run test:migrate",
+    "test:git": "tsx test/git.test.ts",
+    "test:proposals": "tsx test/proposals.test.ts",
+    "test:dedup": "tsx test/dedup.test.ts",
+    "test:object": "tsx test/objectadapter.test.ts",
+    "test:migrate": "tsx test/migrate.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",
     "gray-matter": "^4.0.3",
-    "hono": "^4.6.0"
+    "hono": "^4.6.0",
+    "markdown-it": "^14.1.0",
+    "simple-git": "^3.27.0"
   },
   "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"

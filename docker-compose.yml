@@ -22,11 +22,19 @@ services:
   api:
     image: ${API_IMAGE:?set API_IMAGE in /srv/.env}
     ports:
-      - "3000:3000"
-    env_file: /srv/.env            # GITHUB_TOKEN / GITHUB_REPO
+      # Bind to the Tailscale IP ONLY. The API has no auth, so it must never
+      # publish on the public interface — and Docker's iptables would bypass UFW
+      # if this were plain "3000:3000". Set TAILSCALE_IP in /srv/.env.
+      - "${TAILSCALE_IP:?set TAILSCALE_IP in /srv/.env}:3000:3000"
+    # GITHUB_TOKEN / GITHUB_REPO (push+pull creds), REPO_PATH, GIT_AUTHOR_*.
+    env_file: /srv/.env
     volumes:
-      # Whole vault, read-only — the mobile API reads scopes/notes from here.
-      - /srv/braindance/ctx/vault:/srv/braindance/ctx/vault:ro
+      # Local-first: mount the writable checkout the api owns (sees `.git`,
+      # commits captures locally, then pulls --rebase + pushes asynchronously).
+      # The mount follows $REPO_PATH so the v2 cutover — pointing the api at the
+      # standalone vault repo — is a pure /srv/.env flip (REPO_PATH=/srv/vault),
+      # no compose edit. Defaults to /srv/braindance (pre-cutover behaviour).
+      - ${REPO_PATH:-/srv/braindance}:${REPO_PATH:-/srv/braindance}
     restart: unless-stopped
 
 volumes:

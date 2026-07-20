@@ -1,56 +1,35 @@
-// Commit captures directly to `main`, into ctx/vault/inbox/, via the GitHub
-// REST Contents API. The admin app is Tailscale-only (no public exposure), so
-// the old belt-and-suspenders `inbox` branch is retired: captures land on
-// `main` and are visible in the vault immediately, then triaged into the flat
-// vault at the desk.
+// Capture writes — Slice 1: LOCAL-FIRST git model.
 //
-// Robustness: every capture is a unique timestamped path, so the Contents API
-// PUT never hits a same-file sha conflict; GitHub applies the commit on the
-// current tip of `main` server-side (atomic ref update). A short retry loop
-// absorbs the rare transient 409/422 when a sibling commit lands on `main`
-// between GitHub reading the tip and updating the ref.
-const GITHUB_API = "https://api.github.com";
-const BRANCH = "main";
-const MAX_RETRIES = 4;
+// Captures no longer PUT to the GitHub REST Contents API and wait on the
+// network. They now land as a LOCAL commit in the api's read-write working
+// checkout (see git.ts): write file → `git commit` locally (instant) → enqueue
+// an async push to GitHub off the request path. The viewer reads the same
+// working tree, so a capture is visible on the next read (no ≤3-min round-trip).
+//
+// Robustness is unchanged in spirit: unique timestamped capture paths mean two
+// writes never touch the same file, so real merge conflicts are near-impossible;
+// the old REST retry loop is replaced by the push queue's pull --rebase + retry
+// (git.ts), now non-blocking and off the interactive path.
+import { gitStore } from "./git.js";
+import { invalidate } from "./vault.js";
+import { VAULT_SUBDIR, vaultRel } from "./config.js";
 
-interface NotePayload {
-  content: string;
-  scope: string;
+/** Commit a capture file into the local checkout under `ctx/vault/inbox/` and
+ *  enqueue the async push. `relPath` is repo-relative and must use
+ *  filesystem-safe characters. Resolves when the LOCAL commit lands. */
+export async function commitCapture(relPath: string, content: string, message: string): Promise<{ path: string }> {
+  const res = await gitStore().commitCapture(relPath, content, message);
+  invalidate(); // make the capture visible to the viewer immediately
+  return res;
 }
 
-function ghHeaders(): Record<string, string> {
-  const token = process.env.GITHUB_TOKEN;
-  if (!token) throw new Error("GITHUB_TOKEN not set");
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/vnd.github+json",
-    "Content-Type": "application/json",
-  };
-}
+export const stamp = (): string => new Date().toISOString().replace(/[:.]/g, "-");
 
-export async function createNote({ content, scope }: NotePayload): Promise<{ path: string }> {
-  const repo = process.env.GITHUB_REPO;
-  if (!repo) throw new Error("GITHUB_REPO not set");
+export const slug = (s: string): string =>
+  (s || "note").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "note";
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const path = `ctx/vault/inbox/${timestamp}.md`;
+// Legacy JSON endpoint: POST /notes { content, scope }
+export async function createNote({ content, scope }: { content: string; scope: string }): Promise<{ path: string }> {
   const body = `---\ntags:\n  - ${scope}\n---\n\n${content}\n`;
-  const url = `${GITHUB_API}/repos/${repo}/contents/${path}`;
-  const payload = JSON.stringify({
-    message: `inbox: ${scope} capture`,
-    content: Buffer.from(body, "utf8").toString("base64"),
-    branch: BRANCH,
-  });
-
-  for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, { method: "PUT", headers: ghHeaders(), body: payload });
-    if (res.ok) return { path };
-    // 409 (ref moved under us) / 422 (stale) — a sibling commit raced ours.
-    // Back off briefly and retry; GitHub re-applies on the new tip.
-    if ((res.status === 409 || res.status === 422) && attempt < MAX_RETRIES) {
-      await new Promise((r) => setTimeout(r, 150 * (attempt + 1)));
-      continue;
-    }
-    throw new Error(`GitHub contents PUT ${path} failed: ${res.status} ${await res.text()}`);
-  }
+  return commitCapture(vaultRel(VAULT_SUBDIR, "inbox", `${stamp()}.md`), body, `inbox: ${scope} capture`);
 }

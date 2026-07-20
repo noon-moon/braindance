@@ -106,51 +106,16 @@ export function normalizeAssetEmbeds(body: string): string {
   });
 }
 
-// --scrub mode: downgrade links AND transclusions of private notes to plain text
-// (prefer the alias), so a bulk publish doesn't hard-fail. This covers both
-// [[private note]] links and ![[private note]] embeds — a note embed must never
-// survive as a raw transclusion directive (that would try to pull private content
-// / leak the boundary), so its `!` is dropped and it becomes text like a link.
-// Asset embeds (![[x.png]]) are left untouched here (handled by
-// scrubMissingAssetEmbeds). Bare-title scrub still surfaces the title, so this is
-// opt-in — the default is to block (see publish.ts).
+// --scrub mode: downgrade links to private notes to plain text (prefer the alias),
+// so a bulk publish doesn't hard-fail. Bare-title scrub still surfaces the title,
+// so this is opt-in — the default is to block (see publish.ts).
 export function scrubPrivateLinks(body: string, privateSet: Set<string>): string {
   return body.replace(WIKILINK_RE, (full, bang, inner) => {
-    const target = targetOf(inner);
-    if (bang === '!' && isAssetRef(true, target)) return full; // leave asset embeds
-    const base = stripMdExt(target);
+    if (bang === '!') return full; // leave embeds
+    const base = stripMdExt(targetOf(inner));
     if (!privateSet.has(base)) return full;
     return inner.includes('|') ? inner.split('|').slice(1).join('|').trim() : base;
   });
-}
-
-// --scrub mode: drop asset embeds (![[x.png]]) whose file couldn't be resolved,
-// so a bulk publish proceeds instead of hard-failing. `missing` is the set of
-// unresolvable asset basenames. Strict mode blocks these instead (see publish.ts).
-export function scrubMissingAssetEmbeds(body: string, missing: Set<string>): string {
-  return body.replace(WIKILINK_RE, (full, bang, inner) => {
-    if (bang !== '!') return full;
-    const target = targetOf(inner);
-    if (!isAssetRef(true, target)) return full;
-    const name = target.split('/').pop()!;
-    return missing.has(name) ? '' : full;
-  });
-}
-
-// Extract every wikilink/embed reference from a body, split into asset basenames
-// (![[x.ext]]) and note basenames ([[x]] / ![[x]]). Used by verify.ts to audit
-// the already-committed public projection without touching the vault.
-export function extractRefs(body: string): { assets: string[]; notes: string[] } {
-  const assets: string[] = [];
-  const notes: string[] = [];
-  for (const m of body.matchAll(WIKILINK_RE)) {
-    const embed = m[1] === '!';
-    const target = targetOf(m[2]);
-    if (!target) continue; // e.g. [[#heading]] self-links — nothing to resolve
-    if (isAssetRef(embed, target)) assets.push(target.split('/').pop()!);
-    else notes.push(stripMdExt(target));
-  }
-  return { assets, notes };
 }
 
 export function whitelistFrontmatter(data: Record<string, unknown>): Record<string, unknown> {

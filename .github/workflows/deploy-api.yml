@@ -39,8 +39,8 @@ jobs:
         with:
           context: ./api
           push: true
-          # Resolves to ghcr.io/<owner>/<repo>/api:latest — on this fork that is
-          # ghcr.io/noon-moon/braindance-usr/api:latest, matching API_IMAGE in
+          # Resolves to ghcr.io/<owner>/<repo>/api:latest for whatever repo this
+          # runs in (a fork resolves to that fork's path), matching API_IMAGE in
           # the droplet's /srv/.env (and .env.example's OWNER/REPO placeholder).
           tags: ghcr.io/${{ github.repository }}/api:latest
 
@@ -63,9 +63,15 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
           SSH="ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes $VPS_USER@$VPS_HOST"
-          # /srv/braindance holds docker-compose.yml + deploy.sh. `git pull`
-          # first so a compose change lands; then pull the fresh image and
-          # recreate only the api service. The droplet must already be
-          # `docker login`'d to ghcr.io (one-time provisioning step) for the
-          # private-image pull to succeed.
-          $SSH 'cd /srv/braindance && git pull --ff-only && ./deploy.sh pull api && ./deploy.sh up -d api'
+          # /srv/braindance holds docker-compose.yml + deploy.sh. We do NOT
+          # `git pull` here: since the local-first api (Slice 1) owns a
+          # read-write working checkout of this repo and drives its own
+          # `git pull --rebase` under a lock, an external ff-only pull would
+          # race/diverge against the container's local commits. The api's own
+          # reconcile brings compose/ops changes into the working tree; this
+          # step just pulls the fresh image and recreates the api service.
+          # (One-time bootstrap of THIS change — the RW-mount compose + the
+          # git-enabled image — needs a manual `git pull` on the droplet while
+          # the old api is stopped; see README/ops.) The droplet must already
+          # be `docker login`'d to ghcr.io for the private-image pull.
+          $SSH 'cd /srv/braindance && ./deploy.sh pull api && ./deploy.sh up -d api'

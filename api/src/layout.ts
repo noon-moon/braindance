@@ -90,7 +90,24 @@ ul.notes li { padding:.2rem 0; border-bottom:1px solid var(--border); overflow-w
 .bar nav a { display:flex; align-items:center; color:var(--muted); border-bottom:3px solid transparent; padding-bottom:.12rem; }
 .bar nav a:hover { color:var(--fg); }
 .bar nav a.nav-active { color:var(--accent); border-bottom-color:var(--accent); }
-.bar nav .ic { width:1.45rem; height:1.45rem; fill:currentColor; display:block; }
+.bar nav .ic { width:1.5rem; height:1.5rem; fill:currentColor; display:block; }
+/* Desktop: text labels, icons hidden. */
+.bar nav a .nav-ic { display:none; }
+.bar nav a .nav-tx { display:inline; }
+/* Mobile: icon tab bar pinned to the BOTTOM, brand hidden. */
+@media (max-width: 640px) {
+  .bar { position:fixed; top:auto; bottom:0; left:0; right:0; justify-content:space-around;
+         border-top:1px solid var(--border); border-bottom:none;
+         padding:.35rem .2rem; padding-bottom:calc(.35rem + env(safe-area-inset-bottom, 0px)); }
+  .bar .brand { display:none; }
+  .bar nav { flex:1; justify-content:space-around; gap:0; }
+  .bar nav a { flex-direction:column; padding:.25rem .7rem 0;
+               border-bottom:none; border-top:3px solid transparent; }
+  .bar nav a.nav-active { border-bottom-color:transparent; border-top-color:var(--accent); }
+  .bar nav a .nav-ic { display:block; }
+  .bar nav a .nav-tx { display:none; }
+  main { padding-bottom:calc(4.5rem + env(safe-area-inset-bottom, 0px)); }
+}
 `;
 
 type Html = HtmlEscapedString | Promise<HtmlEscapedString>;
@@ -108,12 +125,12 @@ const ICON: Record<string, ReturnType<typeof svg>> = {
 /** `active` marks the current tab (capture | vault | review | history). */
 export function layout(title: string, body: Html | string, active?: string): Html {
   const nav = (id: string, href: string, icon: keyof typeof ICON) =>
-    html`<a href="${href}" class="${active === id ? "nav-active" : ""}" title="${id}" aria-label="${id}">${ICON[icon]}</a>`;
+    html`<a href="${href}" class="${active === id ? "nav-active" : ""}" title="${id}" aria-label="${id}"><span class="nav-ic">${ICON[icon]}</span><span class="nav-tx">${id}</span></a>`;
   return html`<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>${title}</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="shortcut icon" href="/favicon.png" />

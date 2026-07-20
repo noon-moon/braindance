@@ -41,14 +41,17 @@ function captureForm(funnelId: string) {
     "capture",
     html`
       <h1>capture</h1>
-      <form method="post" action="/ingest">
+      <form method="post" action="/ingest" class="capture-form">
         <input type="hidden" name="idem" value="${randomUUID()}">
-        <label>type</label>
-        <select name="funnel" onchange="location.href='/?funnel='+this.value">
-          ${FUNNELS.map((x) => html`<option value="${x.id}"${x.id === f.id ? raw(" selected") : ""}>${x.label}</option>`)}
-        </select>
-        ${f.fields.map((fl) => html`<label>${fl.label} ${fl.required ? html`<span class="req">*</span>` : ""}</label>${control(fl, scopes)}`)}
-        <p><button class="btn" type="submit">[ capture → inbox ]</button></p>
+        <div class="cap-fields">
+          ${f.fields.map((fl) => html`<label>${fl.label} ${fl.required ? html`<span class="req">*</span>` : ""}</label>${control(fl, scopes)}`)}
+        </div>
+        <div class="cap-actions">
+          <select name="funnel" onchange="location.href='/?funnel='+this.value">
+            ${FUNNELS.map((x) => html`<option value="${x.id}"${x.id === f.id ? raw(" selected") : ""}>${x.label}</option>`)}
+          </select>
+          <button class="btn" type="submit">capture</button>
+        </div>
       </form>`,
     "capture",
   );

@@ -56,7 +56,6 @@ input:focus,select:focus,textarea:focus { outline:none; border-color:var(--accen
 .req { color:var(--danger); }
 .capture-form { display:flex; flex-direction:column; }
 .cap-actions { display:flex; gap:.5rem; align-items:center; margin-top:.7rem; }
-.cap-actions select { width:auto; flex:0 0 auto; }
 .cap-actions .btn { flex:1; }
 hr { border:none; border-top:1px solid var(--border); margin:1rem 0; }
 .note-body { overflow-wrap:break-word; word-break:break-word; }

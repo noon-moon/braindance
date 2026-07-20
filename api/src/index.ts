@@ -34,8 +34,11 @@ function control(f: Field, scopes: string[]) {
 
 // The capture screen: a funnel-type dropdown + that funnel's fields. Changing
 // the dropdown reloads with the selected type's fields (server-rendered).
-function captureForm(funnelId: string) {
-  const f = funnelById(funnelId) ?? FUNNELS[0];
+// Web capture is untyped: everything drops into the inbox as a raw memo.
+// The memo/todo/media/resource sorting now happens at triage/review, not here.
+// (The typed funnel schema still lives on the JSON /ingest API.)
+function captureForm() {
+  const f = funnelById("memo") ?? FUNNELS[0];
   const scopes = getScopes();
   return layout(
     "capture",
@@ -43,13 +46,11 @@ function captureForm(funnelId: string) {
       <h1>capture</h1>
       <form method="post" action="/ingest" class="capture-form">
         <input type="hidden" name="idem" value="${randomUUID()}">
+        <input type="hidden" name="funnel" value="${f.id}">
         <div class="cap-fields">
           ${f.fields.map((fl) => html`<label>${fl.label} ${fl.required ? html`<span class="req">*</span>` : ""}</label>${control(fl, scopes)}`)}
         </div>
         <div class="cap-actions">
-          <select name="funnel" onchange="location.href='/?funnel='+this.value">
-            ${FUNNELS.map((x) => html`<option value="${x.id}"${x.id === f.id ? raw(" selected") : ""}>${x.label}</option>`)}
-          </select>
           <button class="btn" type="submit">capture</button>
         </div>
       </form>`,
@@ -57,9 +58,9 @@ function captureForm(funnelId: string) {
   );
 }
 
-app.get("/", (c) => c.html(captureForm(c.req.query("funnel") ?? "memo")));
-// old per-funnel URLs fold into the unified capture form
-app.get("/new/:funnel", (c) => c.redirect(`/?funnel=${encodeURIComponent(c.req.param("funnel"))}`));
+app.get("/", (c) => c.html(captureForm()));
+// old per-funnel URLs fold into the single untyped capture form
+app.get("/new/:funnel", (c) => c.redirect("/"));
 
 // Shared capture: validate → build → de-dup → commit. Used by the web form
 // (HTML) and the JSON API alike, so both behave identically.

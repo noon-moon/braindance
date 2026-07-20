@@ -19,16 +19,7 @@ const app = new Hono();
 app.use("/favicon.png", serveStatic({ path: "./public/favicon.png" }));
 app.use("/favicon.ico", serveStatic({ path: "./public/favicon.png" }));
 
-// ── Capture: funnel picker (home) ───────────────────────────────────────────
-app.get("/", (c) =>
-  c.html(layout("capture", html`
-    <h1>capture</h1>
-    <div class="grid">
-      ${FUNNELS.map((f) => html`<a class="card" href="/new/${f.id}"><strong>${f.label}</strong><div class="muted">${f.hint}</div></a>`)}
-    </div>`)),
-);
-
-// ── Capture: funnel form ────────────────────────────────────────────────────
+// ── Capture: input form with a funnel-type dropdown (home) ──────────────────
 function control(f: Field, scopes: string[]) {
   const req = f.required ? raw(" required") : "";
   const ph = f.placeholder ?? "";
@@ -41,19 +32,31 @@ function control(f: Field, scopes: string[]) {
   return html`<input type="${t}" name="${f.key}"${req} placeholder="${ph}">`;
 }
 
-app.get("/new/:funnel", (c) => {
-  const f = funnelById(c.req.param("funnel"));
-  if (!f) return c.notFound();
+// The capture screen: a funnel-type dropdown + that funnel's fields. Changing
+// the dropdown reloads with the selected type's fields (server-rendered).
+function captureForm(funnelId: string) {
+  const f = funnelById(funnelId) ?? FUNNELS[0];
   const scopes = getScopes();
-  return c.html(layout(f.label, html`
-    <h1>${f.label}</h1>
-    <form method="post" action="/ingest">
-      <input type="hidden" name="funnel" value="${f.id}">
-      <input type="hidden" name="idem" value="${randomUUID()}">
-      ${f.fields.map((fl) => html`<label>${fl.label} ${fl.required ? html`<span class="req">*</span>` : ""}</label>${control(fl, scopes)}`)}
-      <p><button class="btn" type="submit">[ capture → inbox ]</button></p>
-    </form>`));
-});
+  return layout(
+    "capture",
+    html`
+      <h1>capture</h1>
+      <form method="post" action="/ingest">
+        <input type="hidden" name="idem" value="${randomUUID()}">
+        <label>type</label>
+        <select name="funnel" onchange="location.href='/?funnel='+this.value">
+          ${FUNNELS.map((x) => html`<option value="${x.id}"${x.id === f.id ? raw(" selected") : ""}>${x.label}</option>`)}
+        </select>
+        ${f.fields.map((fl) => html`<label>${fl.label} ${fl.required ? html`<span class="req">*</span>` : ""}</label>${control(fl, scopes)}`)}
+        <p><button class="btn" type="submit">[ capture → inbox ]</button></p>
+      </form>`,
+    "capture",
+  );
+}
+
+app.get("/", (c) => c.html(captureForm(c.req.query("funnel") ?? "memo")));
+// old per-funnel URLs fold into the unified capture form
+app.get("/new/:funnel", (c) => c.redirect(`/?funnel=${encodeURIComponent(c.req.param("funnel"))}`));
 
 // Shared capture: validate → build → de-dup → commit. Used by the web form
 // (HTML) and the JSON API alike, so both behave identically.
@@ -99,17 +102,17 @@ app.post("/ingest", async (c) => {
     return c.json({ error: res.message }, 400);
   }
   if (res.kind === "error") {
-    const back = funnelId ? `/new/${funnelId}` : "/";
-    return c.html(layout("missing", html`<p class="flash">${res.message}</p><p><a href="${back}">← back</a></p>`), 400);
+    const back = funnelId ? `/?funnel=${encodeURIComponent(funnelId)}` : "/";
+    return c.html(layout("missing", html`<p class="flash">${res.message}</p><p><a href="${back}">← back</a></p>`, "capture"), 400);
   }
   if (res.kind === "duplicate") {
     return c.html(layout("duplicate", html`
       <p class="flash">↩ duplicate ignored — this matches a capture just made.</p>
-      <p><a href="/">＋ capture another</a> · <a href="/vault">browse vault</a></p>`));
+      <p><a href="/">＋ capture another</a> · <a href="/vault">browse vault</a></p>`, "capture"));
   }
   return c.html(layout("captured", html`
     <p class="flash">✓ captured → <code>${res.path}</code></p>
-    <p><a href="/">＋ capture another</a> · <a href="/vault">browse vault</a></p>`));
+    <p><a href="/">＋ capture another</a> · <a href="/vault">browse vault</a></p>`, "capture"));
 });
 
 // ── Vault viewer ────────────────────────────────────────────────────────────
@@ -119,7 +122,7 @@ app.get("/vault", (c) => {
     <h1>vault <span class="muted">(${notes.length})</span></h1>
     <ul class="notes">
       ${notes.map((n) => html`<li><a href="/vault/${encodeURIComponent(n.name)}">${n.name}</a> ${n.tags.slice(0, 3).map((t) => html`<span class="tag">${t}</span>`)}</li>`)}
-    </ul>`));
+    </ul>`, "vault"));
 });
 
 app.get("/vault/:name", (c) => {
@@ -128,14 +131,14 @@ app.get("/vault/:name", (c) => {
   try { name = decodeURIComponent(p); } catch { /* keep p */ }
   const note = getNote(name) ?? getNote(p);
   if (!note) {
-    return c.html(layout(name, html`<p class="flash">no note “${name}”.</p><p><a href="/vault">← vault</a></p>`), 404);
+    return c.html(layout(name, html`<p class="flash">no note “${name}”.</p><p><a href="/vault">← vault</a></p>`, "vault"), 404);
   }
   const backlinks = backlinksFor(note.name);
   return c.html(layout(note.name, html`
     <h1>${note.name}</h1>
     <div class="meta">${note.tags.map((t) => html`<span class="tag">${t}</span>`)}</div>
     <article class="note-body">${raw(renderMarkdown(note.body))}</article>
-    ${backlinks.length ? html`<hr><h3>backlinks <span class="muted">(${backlinks.length})</span></h3><ul class="notes">${backlinks.map((b) => html`<li><a href="/vault/${encodeURIComponent(b)}">${b}</a></li>`)}</ul>` : ""}`));
+    ${backlinks.length ? html`<hr><h3>backlinks <span class="muted">(${backlinks.length})</span></h3><ul class="notes">${backlinks.map((b) => html`<li><a href="/vault/${encodeURIComponent(b)}">${b}</a></li>`)}</ul>` : ""}`, "vault"));
 });
 
 // ── History: operation log + undo ───────────────────────────────────────────
@@ -170,6 +173,7 @@ async function renderHistory(flash?: { ok: boolean; msg: string }) {
         `,
       )}
     `,
+    "history",
   );
 }
 
@@ -255,6 +259,7 @@ async function renderReview(flash?: { ok: boolean; msg: string }) {
             `,
           )}
     `,
+    "review",
   );
 }
 
@@ -295,6 +300,7 @@ function renderEditForm(p: Proposal) {
         </div>
       </form>
     `,
+    "review",
   );
 }
 

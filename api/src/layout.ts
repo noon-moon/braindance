@@ -85,11 +85,30 @@ details.diff pre { background:var(--bg); border:1px solid var(--border); border-
 .dataview-skipped { opacity:.6; }
 ul.notes { list-style:none; padding:0; margin:.5rem 0; }
 ul.notes li { padding:.2rem 0; border-bottom:1px solid var(--border); overflow-wrap:break-word; }
+.bar { align-items:center; }
+.bar nav { display:flex; gap:1.15rem; align-items:center; }
+.bar nav a { display:flex; align-items:center; color:var(--muted); border-bottom:3px solid transparent; padding-bottom:.12rem; }
+.bar nav a:hover { color:var(--fg); }
+.bar nav a.nav-active { color:var(--accent); border-bottom-color:var(--accent); }
+.bar nav .ic { width:1.45rem; height:1.45rem; fill:currentColor; display:block; }
 `;
 
 type Html = HtmlEscapedString | Promise<HtmlEscapedString>;
 
-export function layout(title: string, body: Html | string): Html {
+// Inline MUI (Material Icons) SVGs — self-contained, no external font/CDN.
+const svg = (paths: string) =>
+  raw(`<svg class="ic" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">${paths}</svg>`);
+const ICON: Record<string, ReturnType<typeof svg>> = {
+  save: svg('<path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3s3 1.34 3 3s-1.34 3-3 3zm3-10H5V5h10v4z"/>'),
+  lock: svg('<path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2s2 .9 2 2s-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1c1.71 0 3.1 1.39 3.1 3.1v2z"/>'),
+  search: svg('<path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5A6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5S14 7.01 14 9.5S11.99 14 9.5 14z"/>'),
+  clock: svg('<path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8s8 3.58 8 8s-3.58 8-8 8z"/><path d="M12.5 7H11v6l5.25 3.15l.75-1.23l-4.5-2.67z"/>'),
+};
+
+/** `active` marks the current tab (capture | vault | review | history). */
+export function layout(title: string, body: Html | string, active?: string): Html {
+  const nav = (id: string, href: string, icon: keyof typeof ICON) =>
+    html`<a href="${href}" class="${active === id ? "nav-active" : ""}" title="${id}" aria-label="${id}">${ICON[icon]}</a>`;
   return html`<!doctype html>
 <html lang="en">
 <head>
@@ -104,7 +123,7 @@ export function layout(title: string, body: Html | string): Html {
 <body>
   <header class="bar">
     <a href="/" class="brand">braindance</a>
-    <nav><a href="/">capture</a><a href="/vault">vault</a><a href="/review">review</a><a href="/history">history</a></nav>
+    <nav>${nav("capture", "/", "save")}${nav("vault", "/vault", "lock")}${nav("review", "/review", "search")}${nav("history", "/history", "clock")}</nav>
   </header>
   <main>${body}</main>
 </body>

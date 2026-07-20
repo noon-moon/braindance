@@ -55,40 +55,60 @@ app.get("/new/:funnel", (c) => {
     </form>`));
 });
 
-// ── Capture: ingest → main (ctx/vault/inbox/) ───────────────────────────────
-app.post("/ingest", async (c) => {
-  const body = await c.req.parseBody();
-  const funnel = funnelById(String(body.funnel ?? ""));
-  if (!funnel) return c.text("unknown funnel", 400);
+// Shared capture: validate → build → de-dup → commit. Used by the web form
+// (HTML) and the JSON API alike, so both behave identically.
+type CaptureResult =
+  | { kind: "ok"; path: string }
+  | { kind: "duplicate" }
+  | { kind: "error"; message: string };
 
+async function doCapture(funnelId: string, raw: Record<string, unknown>, idem?: string): Promise<CaptureResult> {
+  const funnel = funnelById(funnelId);
+  if (!funnel) return { kind: "error", message: "unknown funnel" };
   const input: Record<string, string> = {};
-  for (const fl of funnel.fields) input[fl.key] = String(body[fl.key] ?? "").trim();
-
+  for (const fl of funnel.fields) input[fl.key] = String(raw[fl.key] ?? "").trim();
   const missing = funnel.fields.filter((fl) => fl.required && !input[fl.key]).map((fl) => fl.label);
-  if (missing.length) {
-    return c.html(
-      layout("missing", html`<p class="flash">missing required: ${missing.join(", ")}</p><p><a href="/new/${funnel.id}">← back</a></p>`),
-      400,
-    );
-  }
+  if (missing.length) return { kind: "error", message: `missing required: ${missing.join(", ")}` };
 
   const note = funnel.build(input);
   const composed = compose(note);
-
-  // De-dup double-submits: identical content (any source) or a re-POST of the
-  // same rendered form (idempotency token). Coalesce rather than commit twice.
-  const idem = String(body.idem ?? "").trim();
+  // De-dup: identical content (any source) or a re-POST carrying the same
+  // idempotency token (form render, or a Shortcut's per-share UUID).
   const keys = [`hash:${funnel.id}:${contentHash(composed)}`, ...(idem ? [`idem:${idem}`] : [])];
-  if (keys.some((k) => seenRecently(k))) {
+  if (keys.some((k) => seenRecently(k))) return { kind: "duplicate" };
+
+  const path = vaultRel(VAULT_SUBDIR, "inbox", `${stamp()}-${slug(note.title)}.md`);
+  await commitCapture(path, composed, `inbox: ${funnel.id} capture`);
+  return { kind: "ok", path };
+}
+
+// ── Capture: ingest → inbox/ (web form → HTML; JSON body → JSON, for the iOS
+//    Share Sheet shortcut & other programmatic callers) ────────────────────────
+app.post("/ingest", async (c) => {
+  const wantsJson = (c.req.header("content-type") ?? "").includes("application/json");
+  const raw = (wantsJson
+    ? await c.req.json().catch(() => ({}))
+    : await c.req.parseBody()) as Record<string, unknown>;
+  const funnelId = String(raw.funnel ?? "");
+  const idem = raw.idem ? String(raw.idem).trim() : undefined;
+  const res = await doCapture(funnelId, raw, idem);
+
+  if (wantsJson) {
+    if (res.kind === "ok") return c.json({ status: "captured", path: res.path }, 201);
+    if (res.kind === "duplicate") return c.json({ status: "duplicate" }, 200);
+    return c.json({ error: res.message }, 400);
+  }
+  if (res.kind === "error") {
+    const back = funnelId ? `/new/${funnelId}` : "/";
+    return c.html(layout("missing", html`<p class="flash">${res.message}</p><p><a href="${back}">← back</a></p>`), 400);
+  }
+  if (res.kind === "duplicate") {
     return c.html(layout("duplicate", html`
       <p class="flash">↩ duplicate ignored — this matches a capture just made.</p>
       <p><a href="/">＋ capture another</a> · <a href="/vault">browse vault</a></p>`));
   }
-
-  const path = vaultRel(VAULT_SUBDIR, "inbox", `${stamp()}-${slug(note.title)}.md`);
-  await commitCapture(path, composed, `inbox: ${funnel.id} capture`);
   return c.html(layout("captured", html`
-    <p class="flash">✓ captured → <code>${path}</code></p>
+    <p class="flash">✓ captured → <code>${res.path}</code></p>
     <p><a href="/">＋ capture another</a> · <a href="/vault">browse vault</a></p>`));
 });
 

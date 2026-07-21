@@ -14,11 +14,10 @@ The cost is building the projection tool — but you'd need link-scrubbing in *a
 ## Topology
 
 ```
-noon-moon/braindance-usr   (PRIVATE — source of truth)
-  ctx/vault/*.md               full flat vault; some notes tagged `publish: true`
-  ctx/tools/pub/               the publish tool (this design)
+noon-moon/vault           (PRIVATE — source of truth)
+  *.md                         full flat vault; some notes tagged `publish: true`
         │
-        │  publish  ── select → gate → transform → mirror → commit
+        │  publish (ctx/tools/pub, in noon-moon/braindance) ── select → gate → transform → mirror → commit
         ▼
 noon-moon/noon-moon-net   (PUBLIC — generated content + Quartz)
   content/<slug>.md            GENERATED flat, committed → served at /garden/<slug>
@@ -84,11 +83,11 @@ The tool-owned slice of `content/` is a **pure function of P**, so publishing is
 Idempotent: re-running with an unchanged vault produces an empty diff.
 
 ### 5. Commit
-Commit the projected diff in `noon-moon-net` with provenance — `Publish: sync <N> notes from braindance-usr@<sha>`. **Do not auto-push by default.** A human reviews the `noon-moon-net` diff before it goes public (appropriate for a privacy boundary); `--push` opts into automation later.
+Commit the projected diff in `noon-moon-net` with provenance — `Publish: sync <N> notes from vault@<sha>`. **Do not auto-push by default.** A human reviews the `noon-moon-net` diff before it goes public (appropriate for a privacy boundary); `--push` opts into automation later.
 
 ## Where it runs
 
-**Manual/local first.** You run `publish` on a machine that has both repos, review the diff, push `noon-moon-net`. Its Action then builds + deploys. Keeping a human between "tag a note" and "it's world-readable" is the right default for a privacy gate. A CI-driven publish-on-tag in `braindance-usr` is a possible later automation, but auto-pushing to a public repo is exactly the thing to be conservative about — defer it.
+**Manual/local first.** You run `publish` on a machine that has both repos, review the diff, push `noon-moon-net`. Its Action then builds + deploys. Keeping a human between "tag a note" and "it's world-readable" is the right default for a privacy gate. A CI-driven publish-on-tag in `noon-moon/vault` is a possible later automation, but auto-pushing to a public repo is exactly the thing to be conservative about — defer it.
 
 ## Tech choice
 

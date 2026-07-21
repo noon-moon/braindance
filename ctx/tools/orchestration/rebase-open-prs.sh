@@ -10,7 +10,7 @@
 # into main ("superseded — replant follow-ups on a fresh branch").
 #
 # Point it at your target project (the repo cloned under repo/<project>):
-#   PROJECT_DIR=~/dev/braindance-usr/repo/<project> rebase-open-prs.sh
+#   PROJECT_DIR=~/dev/braindance/repo/<project> rebase-open-prs.sh
 #
 # SAFE BY DEFAULT:
 #   * default = REPORT ONLY (no writes to any branch).
@@ -29,7 +29,7 @@
 # never churn and the fast-forward below stays clean (that is the R5 fix).
 
 set -uo pipefail
-PROJECT="${PROJECT_DIR:-$HOME/dev/braindance-usr/repo/<project>}"
+PROJECT="${PROJECT_DIR:-$HOME/dev/braindance/repo/<project>}"
 APPLY=0; PUSH=0; ONLY=""
 for a in "$@"; do
   case "$a" in
@@ -42,7 +42,7 @@ done
 
 git -C "$PROJECT" rev-parse --git-dir >/dev/null 2>&1 || {
   echo "not a git repo: $PROJECT" >&2
-  echo "set PROJECT_DIR to your target repo (e.g. ~/dev/braindance-usr/repo/<project>)" >&2
+  echo "set PROJECT_DIR to your target repo (e.g. ~/dev/braindance/repo/<project>)" >&2
   exit 2
 }
 

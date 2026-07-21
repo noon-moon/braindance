@@ -58,7 +58,7 @@ Target repos you're actively working on resolve under `${REPOS_PATH:-$BD_ROOT}/<
 
 Multiple agent sessions must **never share the one working tree** — a shared index/HEAD means one session's `git add -A` sweeps another's half-written files, commits interleave, and `index.lock` contention stalls git. The rule: **one terminal = one git worktree = one branch.**
 
-- The main tree (the braindance checkout, e.g. `~/dev/braindance-usr`) is **sacred and read-only to agents**: it stays on `main`, it's the Obsidian window and the integration point. **Agents don't write here.**
+- The main tree (the braindance checkout, e.g. `~/dev/braindance`) is **sacred and read-only to agents**: it stays on `main`, it's the Obsidian window and the integration point. **Agents don't write here.**
 - Agent sessions work in sibling worktrees under `~/dev/bd-wt/<task>` (outside the vault, so Obsidian never indexes them), cut off **freshly-fetched `origin/main`** and **rebased before every push**. Helper `bd` (in `ctx/tools/sys/wt.sh`) bakes this in: `bd new <task>` → work → `bd land` → `bd rm <task>`.
 - **Always address a worktree by its ABSOLUTE path**; never rely on an ambient `cwd` that could resolve into the sacred main tree.
 

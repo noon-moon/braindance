@@ -22,8 +22,16 @@ import re
 import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-BD_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", ".."))
-VAULT = os.path.join(BD_ROOT, "ctx", "vault")
+CORE = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", ".."))
+# Resolve the vault the same way the core does (see CLAUDE.md `$BD_ROOT`):
+# explicit VAULT_PATH wins, else the single external root's vault, else the
+# default nested vault inside this checkout.
+BD_ROOT = os.environ.get("BD_ROOT")
+VAULT = (
+    os.environ.get("VAULT_PATH")
+    or (os.path.join(BD_ROOT, "vault") if BD_ROOT else None)
+    or os.path.join(CORE, "ctx", "vault")
+)
 OUT = os.path.join(VAULT, "_meta", "Topics.md")
 
 # Vault dirs that never hold content/system scope notes.
@@ -247,7 +255,7 @@ def main():
         f.write(text)
     n_sys = sum(1 for s in scopes if s["kind"] == "system")
     print("Wrote %s (%d content, %d system scopes)"
-          % (os.path.relpath(OUT, BD_ROOT), len(scopes) - n_sys, n_sys))
+          % (os.path.relpath(OUT, CORE), len(scopes) - n_sys, n_sys))
 
 
 if __name__ == "__main__":

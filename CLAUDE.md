@@ -17,9 +17,11 @@ ctx/
 api/         Admin app: mobile note-capture API + read-only vault viewer (Hono/Node)
 www/         Static homepage served at your domain
 Caddyfile, docker-compose.yml, deploy.sh   Serving stack
-repo/        Gitignored — target repos you're working on get cloned here
+repo/        Default (nested) home for target repos you're working on — gitignored
 docs/        On-demand detail this core points to (see map below)
 ```
+
+**Single external root (`$BD_ROOT`).** The vault and the repos dir are *external resources* the core resolves off one optional knob. Unset ⇒ today's nested layout, byte-for-byte: vault at `<core>/ctx/vault`, repos at `<core>/repo/<name>`. Set `BD_ROOT` and the core, `vault/`, and repos become siblings under it (vault → `$BD_ROOT/vault`, repos → `$BD_ROOT/<name>`); `VAULT_PATH` / `REPOS_PATH` are explicit per-resource overrides. Scratch (`$vault/_ephemeral/`) always rides with the vault so it stays Obsidian-visible. Below, `ctx/vault` and `repo/` name the **default** locations — read them as "the resolved vault / repos dir."
 
 ## Map — pull detail only when the task needs it
 
@@ -34,7 +36,7 @@ The common path (a coding task, a vault lookup, a worktree session) is fully ser
 
 ## `ctx/vault` is the working context
 
-The vault is the canonical knowledge base — ground truth about the user's world, projects, and decisions. When a task depends on that context, search `ctx/vault` before acting and treat what you find there as authoritative. In a personal instance the vault is full of notes; in the bare template it's just scaffolding (`_meta/`, `_templates/`, `TODO.md`) because notes are gitignored.
+The vault is the canonical knowledge base — ground truth about the user's world, projects, and decisions. It resolves at `${VAULT_PATH:-${BD_ROOT:+$BD_ROOT/vault}}`, defaulting to `ctx/vault` inside the checkout when neither is set (external is opt-in). When a task depends on that context, search the vault before acting and treat what you find there as authoritative. In a personal instance the vault is full of notes; in the bare template it's just scaffolding (`_meta/`, `_templates/`, `TODO.md`) because notes are gitignored.
 
 But **don't search reflexively.** The vault runs to hundreds of notes; a speculative grep on every turn burns round-trips and bloats the context window. Search only when the answer genuinely depends on the user's own notes — not for questions answerable from the conversation, from general knowledge, or from code already in front of you. **Triage first:**
 
@@ -46,11 +48,11 @@ Full triage tree, ontology, `_ephemeral` naming, daily notes, and skills mechani
 
 **`ctx/vault/_ephemeral/` is non-canonical scratch and the default sink for generated outputs** — gitignored and ephemeral. **Unless the user names a destination, write work products (reports, analyses, drafts, query results) here** rather than the repo root or `/tmp`; read and write it freely for transient inputs/outputs, but never treat it as canonical, and if something is worth keeping, **promote it into a real vault note** in `ctx/vault/`. (Naming convention in [`docs/vault.md`](docs/vault.md).)
 
-## repo/
+## The repos dir
 
-`repo/` is gitignored; clone the repos you're actively working on into it so their code sits alongside this context. Each may carry its own `CLAUDE.md` — defer to it for work inside that repo.
+Target repos you're actively working on resolve under `${REPOS_PATH:-$BD_ROOT}/<name>`, defaulting to the gitignored nested `repo/<name>` when `BD_ROOT`/`REPOS_PATH` are unset. Clone the repos you're working on there so their code sits alongside this context; each may carry its own `CLAUDE.md` — defer to it for work inside that repo.
 
-**`repo/` can be tens of GB** (full checkouts, build artifacts, worktrees). **Never run an unscoped shell search from the repo root** — no `grep -r`, `find .`, `du .`, or `ls -R` over `.` — it will crawl `repo/` and stall the session. **Scope every shell command to the path you actually mean** (`ctx/`, `api/`, …). The Grep/Glob tools are safe (they honour `.gitignore`, which excludes `repo/`); this rule is specifically about raw shell commands, which do not.
+**The repos dir can be tens of GB** (full checkouts, build artifacts, worktrees) — nested inside the checkout or an external sibling, the hazard is the same. **Never run an unscoped shell search from the checkout root (or the repos dir)** — no `grep -r`, `find .`, `du .`, or `ls -R` over `.` — it will crawl the repos and stall the session. **Scope every shell command to the path you actually mean** (`ctx/`, `api/`, …). The Grep/Glob tools are safe (they honour `.gitignore`, which excludes the nested `repo/`); this rule is specifically about raw shell commands, which do not.
 
 ## Parallel work — never share a working tree
 

@@ -15,31 +15,37 @@ Run:  python3 test_block_loon_main_writes.py            # tests the sibling hook
       python3 test_block_loon_main_writes.py /path/hook # tests an explicit hook
 Exit 0 = all pass, 1 = one or more failures.
 
-Paths below are built from the hook's own hardcoded guarded root, so the test is
-self-consistent regardless of where the repo is cloned.
+Paths below are built from the hook's own resolved guarded root, so the test is
+self-consistent regardless of where the repo is cloned. The hook now resolves
+that root from the single-root model (REPOS_PATH | BD_ROOT | <core>/repo), so the
+final block exercises the external-root (BD_ROOT) resolution end to end.
 """
+import importlib.util
 import json
 import os
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "block-loon-main-writes.py")
 
 
-def _guarded_root():
-    """Read LOON_MAIN out of the hook so cases target its actual guarded root."""
-    ns = {}
-    with open(HOOK) as f:
-        for line in f:
-            if line.startswith("LOON_MAIN"):
-                exec(line, ns)  # noqa: S102 - trusted sibling source
-                return ns["LOON_MAIN"]
-    raise SystemExit("could not find LOON_MAIN in hook")
+def _load_hook():
+    """Import the hook as a module (runs its module-level resolution, not main())."""
+    spec = importlib.util.spec_from_file_location("loon_guard_hook", HOOK)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # __name__ != "__main__", so main() is not run
+    return mod
 
 
-MAIN = _guarded_root()
+MAIN = _load_hook().LOON_MAIN
 WT = os.path.join(MAIN, ".claude", "worktrees", "sim-human")
+
+# External-root fixture: repos as siblings under a BD_ROOT (loon = <BD_ROOT>/loon).
+EXT_ROOT = tempfile.mkdtemp(prefix="bd-ext-root-")
+EXT_MAIN = os.path.join(EXT_ROOT, "loon")
+EXT_WT = os.path.join(EXT_MAIN, ".claude", "worktrees", "sim-human")
 
 # (label, command, cwd, expected_exit)
 CASES = [
@@ -67,13 +73,24 @@ CASES = [
      f"cd {MAIN} && cargo build", MAIN, 2),
 ]
 
+# External-root cases (BD_ROOT set) — same semantics against <BD_ROOT>/loon.
+# (label, command, cwd, expected_exit, env)
+EXT_CASES = [
+    ("external BD_ROOT: cd $EXT_MAIN && cargo build blocks",
+     f"cd {EXT_MAIN} && cargo build", EXT_MAIN, 2, {"BD_ROOT": EXT_ROOT}),
+    ("external BD_ROOT: worktree write still allowed",
+     f"cd {EXT_WT} && cargo build", EXT_WT, 0, {"BD_ROOT": EXT_ROOT}),
+]
 
-def run(cmd, cwd):
+
+def run(cmd, cwd, env=None):
     payload = json.dumps(
         {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": cwd}
     )
+    full_env = dict(os.environ, **(env or {}))
     p = subprocess.run(
-        [sys.executable, HOOK], input=payload, capture_output=True, text=True
+        [sys.executable, HOOK], input=payload, capture_output=True, text=True,
+        env=full_env,
     )
     return p.returncode
 
@@ -84,6 +101,13 @@ def main():
     failures = 0
     for label, cmd, cwd, expected in CASES:
         got = run(cmd, cwd)
+        ok = got == expected
+        failures += not ok
+        verb = "block" if expected == 2 else "allow"
+        print(f"[{'PASS' if ok else 'FAIL'}] expect {verb}(exit {expected}) "
+              f"got exit {got}  :: {label}")
+    for label, cmd, cwd, expected, env in EXT_CASES:
+        got = run(cmd, cwd, env)
         ok = got == expected
         failures += not ok
         verb = "block" if expected == 2 else "allow"

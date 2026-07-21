@@ -9,10 +9,18 @@ Claude tools while LEAVING WORKTREE WRITES ALONE.
 
 Contract (deliberately narrow — a guardrail that misfires is worse than the bug):
   BLOCK a tool call only when it would MUTATE a path that is
-      under  /Users/tiernan/dev/braindance-usr/repo/loon
-      but NOT under .../repo/loon/.claude/worktrees/   (agents live here)
+      under  <repos>/loon        (the resolved guarded checkout; see below)
+      but NOT under <repos>/loon/.claude/worktrees/   (agents live here)
   ALLOW everything else: worktree writes, reads, MCP tools, and every path
       outside the Loon main checkout (the braindance repo, bd-wt/, /tmp, ...).
+
+Path resolution (single-root model — see CLAUDE.md `$BD_ROOT`): the guarded
+`<repos>` dir is REPOS_PATH, else BD_ROOT (the single external root holding the
+core + vault + repos as siblings), else the nested default <core>/repo. With all
+three unset it resolves to the historical nested location, so the guard behaves
+identically whether the repos live inside the checkout or external under BD_ROOT.
+BD_CORE overrides the checkout location the nested default hangs off; the guarded
+project name is `loon` by default, overridable via BD_GUARD_PROJECT.
 
 Tools covered: Write, Edit, MultiEdit, NotebookEdit (by resolved file path), and
 Bash (only when a mutating command targets a guarded path, or is run FROM the
@@ -26,7 +34,21 @@ import os
 import re
 import sys
 
-LOON_MAIN = "/Users/tiernan/dev/braindance-usr/repo/loon"
+# Resolve the guarded checkout from the single-root model, defaulting to the
+# historical nested layout so behavior is unchanged when nothing is set.
+#   repos dir  = REPOS_PATH | BD_ROOT | <core>/repo
+#   <core>     = BD_CORE | legacy default checkout
+#   guarded    = <repos dir>/<project>   (project = BD_GUARD_PROJECT | "loon")
+BD_CORE = os.path.expanduser(
+    os.environ.get("BD_CORE") or "/Users/tiernan/dev/braindance-usr"
+)
+REPOS_DIR = os.path.expanduser(
+    os.environ.get("REPOS_PATH")
+    or os.environ.get("BD_ROOT")
+    or os.path.join(BD_CORE, "repo")
+)
+PROJECT = os.environ.get("BD_GUARD_PROJECT", "loon")
+LOON_MAIN = os.path.join(REPOS_DIR, PROJECT)
 LOON_WORKTREES = os.path.join(LOON_MAIN, ".claude", "worktrees")
 
 
@@ -214,7 +236,7 @@ def main() -> int:
 
     if blocked_path is not None:
         sys.stderr.write(
-            "BLOCKED by R1 guard: this write targets the Loon MAIN integration "
+            f"BLOCKED by R1 guard: this write targets the {PROJECT} MAIN integration "
             f"checkout ({LOON_MAIN}).\n"
             "Agents must never mutate the main checkout — work only inside your "
             "worktree under .claude/worktrees/<task>/ using its ABSOLUTE path "

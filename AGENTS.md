@@ -1,6 +1,6 @@
 # braindance — agent guide (AGENTS.md)
 
-braindance is a **meta-repository template for agentic work**: a personal knowledge and workflow layer you carry between projects, with target repos cloned under `repo/` and worked on alongside this context.
+braindance is a **meta-repository template for agentic work**: a personal knowledge and workflow layer you carry between projects, with target repos cloned under the repos dir — resolved off a single external root `$BD_ROOT`, defaulting to the nested `repo/<project>` (see [`CLAUDE.md`](CLAUDE.md)) — and worked on alongside this context.
 
 This file is the **cross-tool entry point** (the [AGENTS.md](https://agents.md) standard — read by Codex, Cursor, Copilot, Gemini, and others). For the vault ontology, ephemeral scratch, skills, tooling, and serving layer, read the fuller repo guide in [`CLAUDE.md`](CLAUDE.md). What lives *here*, canonically, is the slice that must reach **every** tool and **every** target project cloned under `repo/`: the **orchestration doctrine** and the **multi-agent worktree discipline** below — stated tightly as guardrails, with the full mechanics in `docs/`. `CLAUDE.md` points here for these rules rather than restating them.
 
@@ -25,7 +25,7 @@ Full doctrine, the motivating pattern, and the topics-manifest / scope-grant mod
 
 **One agent session = one git worktree = one branch.** Multiple sessions must never share a single working tree: a shared index/HEAD means one session's `git add -A` sweeps another's half-written files, commits interleave, and `index.lock` contention stalls git. These rules are the **standing convention for this repo AND for any target project cloned under `repo/`**; a target repo may add its own local enforcement (e.g. a `PreToolUse` write-guard hook), but the rules hold either way. The guardrails, tightly:
 
-- **R1 — the main checkout is READ-ONLY to agents.** It stays on `main`, is the integration point; agents never `cd` in to write, build, format, or commit. For braindance the main tree is the braindance checkout (also the Obsidian window); for a target project it is `repo/<project>`.
+- **R1 — the main checkout is READ-ONLY to agents.** It stays on `main`, is the integration point; agents never `cd` in to write, build, format, or commit. For braindance the main tree is the braindance checkout (also the Obsidian window); for a target project it is its checkout under the repos dir (`${REPOS_PATH:-$BD_ROOT}/<project>`, default nested `repo/<project>`).
 - **R2 — fresh base, rebase before push.** Cut worktrees off a freshly-fetched `origin/main`; `git fetch && git rebase origin/main` immediately before every push. Never push from a stale base.
 - **R3 — perf / benchmark agents run EXCLUSIVELY.** At most one at a time, no other heavy work while it measures (`ctx/tools/orchestration/loadguard.sh || exit 1`). Never fan a perf tournament N-wide on one machine.
 - **R4 — checkpoint WIP before you yield.** Never stop with uncommitted work — leave a rebasable commit (`git add -A && git commit --no-verify -m "WIP(<task>): checkpoint"`; braindance: `bd wip`). Squashed at land.

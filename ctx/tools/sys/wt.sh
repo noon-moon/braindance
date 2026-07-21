@@ -1,6 +1,16 @@
 # bd — parallel worktree helper for the braindance repo.
 # Source from your shell rc:  source ~/dev/braindance-usr/ctx/tools/sys/wt.sh
-# (BD_ROOT defaults to ~/dev/braindance-usr; override it if you cloned elsewhere.)
+#
+# Paths (single-root model — see CLAUDE.md `$BD_ROOT`):
+#   BD_CORE   the braindance checkout itself (git ops run here). Defaults to
+#             ~/dev/braindance-usr; override if you cloned elsewhere. (This is the
+#             checkout knob that BD_ROOT used to be before it took on the meaning
+#             below — if you set BD_ROOT to relocate the checkout, switch to BD_CORE.)
+#   BD_ROOT   optional single external root holding the core + vault + repos as
+#             siblings. Unset ⇒ today's nested layout (repos under <core>/repo).
+#   BD_REPOS  where target repos live: REPOS_PATH, else BD_ROOT, else <core>/repo.
+#             Nothing here clones into it yet — it's the shared convention the docs
+#             and guard hooks resolve against; exported so tooling can reuse it.
 #
 # One terminal = one worktree = one branch. Keeps the main tree (your Obsidian
 # window) sacred: agents never write there, so no shared index/HEAD collisions.
@@ -20,20 +30,23 @@
 # `bd land` re-fetches and `git rebase origin/main` BEFORE it pushes — so a
 # branch can never push from a stale base, the failure mode that strands work.
 
-BD_ROOT="${BD_ROOT:-$HOME/dev/braindance-usr}"
+BD_CORE="${BD_CORE:-$HOME/dev/braindance-usr}"
+# Repos dir: per-resource override, else the single external root, else nested.
+BD_REPOS="${REPOS_PATH:-${BD_ROOT:-$BD_CORE/repo}}"
+export BD_REPOS
 BD_WT="${BD_WT:-$HOME/dev/bd-wt}"
 
 bd() {
   case "$1" in
     new)
       [ -n "$2" ] || { echo "usage: bd new <task>"; return 1; }
-      git -C "$BD_ROOT" fetch -q origin main || return 1
+      git -C "$BD_CORE" fetch -q origin main || return 1
       mkdir -p "$BD_WT"
-      git -C "$BD_ROOT" worktree add -b "wt/$2" "$BD_WT/$2" origin/main || return 1
+      git -C "$BD_CORE" worktree add -b "wt/$2" "$BD_WT/$2" origin/main || return 1
       cd "$BD_WT/$2"
       ;;
     ls)
-      git -C "$BD_ROOT" worktree list
+      git -C "$BD_CORE" worktree list
       ;;
     wip)
       # R4: leave a rebasable checkpoint instead of loose files before you yield.
@@ -63,7 +76,7 @@ bd() {
       ;;
     rm)
       [ -n "$2" ] || { echo "usage: bd rm <task>"; return 1; }
-      cd "$BD_ROOT" || return 1
+      cd "$BD_CORE" || return 1
       git worktree remove "$BD_WT/$2" && git branch -D "wt/$2" 2>/dev/null
       ;;
     *)

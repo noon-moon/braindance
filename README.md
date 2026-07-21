@@ -1,6 +1,6 @@
 # braindance
 
-A meta-repository for agentic development. Clone it once, maintain it as your personal knowledge and workflow layer, then plug any repository into `repo/` to bring that context to bear.
+A meta-repository for agentic development. Clone it once, maintain it as your personal knowledge and workflow layer, then plug any repository into the repos dir (`repo/` by default) to bring that context to bear.
 
 ```
 bd/
@@ -31,8 +31,21 @@ bd/
 ├── Caddyfile             # Reverse proxy / TLS (uses {$DOMAIN})                 (advanced/VPS)
 ├── docker-compose.yml    # caddy + api services                                (advanced/VPS)
 ├── deploy.sh             # Compose wrapper (feeds /srv/.env interpolation)      (advanced/VPS)
-└── repo/                 # Gitignored — clone the repos you're working on here
+└── repo/                 # Gitignored — default (nested) home for your target repos
 ```
+
+### External resources — one root, `$BD_ROOT`
+
+The **vault** and the **repos dir** are external resources braindance resolves off a single optional environment knob. Leave it unset and everything stays nested inside the checkout exactly as shown above; set `BD_ROOT` and the core, vault, and repos become siblings under it. `_ephemeral/` scratch always rides with the vault (so it stays Obsidian-visible).
+
+| Var | Resolves | Default (all unset) |
+|---|---|---|
+| `BD_ROOT` | Single external root holding the core + `vault/` + repos as siblings | unset ⇒ nested layout below |
+| `VAULT_PATH` | The vault directory (per-resource override) | `${BD_ROOT:+$BD_ROOT/vault}`, else `ctx/vault` |
+| `REPOS_PATH` | The repos dir; a repo is `<repos>/<name>` (per-resource override) | `$BD_ROOT`, else `<checkout>/repo` |
+| `BD_CORE` | The braindance checkout itself (used by `bd`/`wt.sh` for git ops) | self-resolved from the tooling's own location |
+
+`bd`/`wt.sh` and the R1 write-guard hook resolve against these, so the multi-agent worktree discipline works whether your repos are nested or external. (Distinct from the VPS `api`'s own `VAULT_PATH`/`VAULT_SUBDIR`, which configure the *served* vault — see the serving section below.)
 
 ## Quick start
 

@@ -1,11 +1,13 @@
 # bd — parallel worktree helper for the braindance repo.
-# Source from your shell rc:  source ~/dev/braindance-usr/ctx/tools/sys/wt.sh
+# Source from your shell rc:  source <braindance-checkout>/ctx/tools/sys/wt.sh
 #
 # Paths (single-root model — see CLAUDE.md `$BD_ROOT`):
-#   BD_CORE   the braindance checkout itself (git ops run here). Defaults to
-#             ~/dev/braindance-usr; override if you cloned elsewhere. (This is the
-#             checkout knob that BD_ROOT used to be before it took on the meaning
-#             below — if you set BD_ROOT to relocate the checkout, switch to BD_CORE.)
+#   BD_CORE   the braindance checkout itself (git ops run here). Defaults to this
+#             file's own checkout, self-resolved from its path, so it's correct
+#             wherever you cloned; set it only if you source a copy from outside the
+#             checkout. (This is the checkout knob that BD_ROOT used to be before it
+#             took on the meaning below — if you set BD_ROOT to relocate the
+#             checkout, switch to BD_CORE.)
 #   BD_ROOT   optional single external root holding the core + vault + repos as
 #             siblings. Unset ⇒ today's nested layout (repos under <core>/repo).
 #   BD_REPOS  where target repos live: REPOS_PATH, else BD_ROOT, else <core>/repo.
@@ -30,7 +32,11 @@
 # `bd land` re-fetches and `git rebase origin/main` BEFORE it pushes — so a
 # branch can never push from a stale base, the failure mode that strands work.
 
-BD_CORE="${BD_CORE:-$HOME/dev/braindance-usr}"
+# Self-resolve the checkout from this file's location (ctx/tools/sys/wt.sh → repo
+# root), portable across bash and zsh, so no instance path is baked in.
+_bd_self="${BASH_SOURCE[0]:-$0}"
+BD_CORE="${BD_CORE:-$(cd "$(dirname "$_bd_self")/../../.." && pwd)}"
+unset _bd_self
 # Repos dir: per-resource override, else the single external root, else nested.
 BD_REPOS="${REPOS_PATH:-${BD_ROOT:-$BD_CORE/repo}}"
 export BD_REPOS

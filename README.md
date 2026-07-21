@@ -43,7 +43,7 @@ The **vault** and the **repos dir** are external resources braindance resolves o
 | `BD_ROOT` | Single external root holding the core + `vault/` + repos as siblings | unset ⇒ nested layout below |
 | `VAULT_PATH` | The vault directory (per-resource override) | `${BD_ROOT:+$BD_ROOT/vault}`, else `ctx/vault` |
 | `REPOS_PATH` | The repos dir; a repo is `<repos>/<name>` (per-resource override) | `$BD_ROOT`, else `<checkout>/repo` |
-| `BD_CORE` | The braindance checkout itself (used by `bd`/`wt.sh` for git ops) | `~/dev/braindance-usr` |
+| `BD_CORE` | The braindance checkout itself (used by `bd`/`wt.sh` for git ops) | self-resolved from the tooling's own location |
 
 `bd`/`wt.sh` and the R1 write-guard hook resolve against these, so the multi-agent worktree discipline works whether your repos are nested or external. (Distinct from the VPS `api`'s own `VAULT_PATH`/`VAULT_SUBDIR`, which configure the *served* vault — see the serving section below.)
 

@@ -40,7 +40,8 @@ import sys
 #   <core>     = BD_CORE | legacy default checkout
 #   guarded    = <repos dir>/<project>   (project = BD_GUARD_PROJECT | "loon")
 BD_CORE = os.path.expanduser(
-    os.environ.get("BD_CORE") or "/Users/tiernan/dev/braindance-usr"
+    os.environ.get("BD_CORE")
+    or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 )
 REPOS_DIR = os.path.expanduser(
     os.environ.get("REPOS_PATH")

@@ -4,8 +4,8 @@ Serialized execution plan for the Personal Virtual Private Server. Each phase de
 
 **Repo model:** three repos.
 - `noon-moon/braindance` — public template (generic, shareable, no personal content).
-- `noon-moon/braindance-usr` — **this repo**, your personal instance: template structure plus real vault notes tracked directly at `ctx/vault/` (flat, no `usr/` split). Deployed to the VPS as the private source of truth + admin API.
-- `noon-moon/noon-moon-net` — **public** repo holding only the generated `content/` (a projection of `braindance-usr`'s `publish`-tagged notes) plus Quartz config. This is what builds into `noon-moon.net/garden`. `/garden` is a *separate published repo*, not a slice of this one — see `ctx/noon-moon-net.md` for the full publish-subsystem design. The isolation is structural: the public repo cannot leak a private note it never contains.
+- `noon-moon/vault` — your private vault: real notes tracked flat at the repo root. The braindance instance resolves it via the single-root (`BD_ROOT`) model and the admin API commits captures into it — the private source of truth. Deployed to the VPS.
+- `noon-moon/noon-moon-net` — **public** repo holding only the generated `content/` (a projection of the vault's `publish`-tagged notes) plus Quartz config. This is what builds into `noon-moon.net/garden`. `/garden` is a *separate published repo*, not a slice of this one — see `ctx/noon-moon-net.md` for the full publish-subsystem design. The isolation is structural: the public repo cannot leak a private note it never contains.
 
 ---
 
@@ -71,17 +71,17 @@ Follow this order exactly — UFW before Docker, Tailscale before UFW enable.
   sudo mkdir -p /srv/braindance /srv/www /srv/garden
   sudo chown -R tiernan:tiernan /srv
   ```
-- [ ] Clone `braindance-usr` into `/srv/braindance` — one clone, everything's tracked directly, no nesting:
+- [ ] Clone `braindance` into `/srv/braindance` — the serving stack + admin API:
   ```bash
-  git clone https://muttzi:<PAT>@github.com/noon-moon/braindance-usr.git /srv/braindance
+  git clone https://muttzi:<PAT>@github.com/noon-moon/braindance.git /srv/braindance
   ```
 - [ ] Create `/srv/.env` — the infra is now env-substituted (post template unification), so `DOMAIN` and `API_IMAGE` are **required** alongside the secrets:
   ```bash
   cat > /srv/.env <<EOF
   DOMAIN=noon-moon.net
-  API_IMAGE=ghcr.io/noon-moon/braindance-usr/api:latest
+  API_IMAGE=ghcr.io/noon-moon/braindance/api:latest
   GITHUB_TOKEN=<PAT>
-  GITHUB_REPO=noon-moon/braindance-usr
+  GITHUB_REPO=noon-moon/vault
   EOF
   chmod 600 /srv/.env
   ```
@@ -114,7 +114,7 @@ Follow this order exactly — UFW before Docker, Tailscale before UFW enable.
 
 ## Phase 3: Repo Structure
 
-Work done locally in `noon-moon/braindance-usr`, then pushed. Everything's tracked directly — no gitignore split.
+Work done locally in `noon-moon/braindance`, then pushed. Everything's tracked directly — no gitignore split.
 
 ### docker-compose.yml
 - [x] Create `docker-compose.yml` at repo root:
@@ -133,7 +133,7 @@ Work done locally in `noon-moon/braindance-usr`, then pushed. Everything's track
       restart: unless-stopped
 
     api:
-      image: ghcr.io/noon-moon/braindance-usr/api:latest
+      image: ghcr.io/noon-moon/braindance/api:latest
       ports:
         - "3000:3000"
       env_file: /srv/.env
@@ -184,7 +184,7 @@ Work done locally in `noon-moon/braindance-usr`, then pushed. Everything's track
 
 ## Phase 4: GitHub Actions
 
-Create `.github/workflows/` in `noon-moon/braindance-usr`. **Note:** neither the homepage nor garden ships from here — `www/` and the garden both live in `noon-moon-net` (Phase 6). This repo's only workflow builds the `api` image.
+Create `.github/workflows/` in `noon-moon/braindance`. **Note:** neither the homepage nor garden ships from here — `www/` and the garden both live in `noon-moon-net` (Phase 6). This repo's only workflow builds the `api` image.
 
 - [ ] `api.yml` — triggered on `api/**` or `docker-compose.yml` changes:
   1. Build the Docker image and push to `ghcr.io/<org>/<repo>/api:latest`.
@@ -211,7 +211,7 @@ The projection from private vault → `noon-moon-net`. Full design in `ctx/noon-
 - [ ] **Gate** — parse wikilinks/transclusions per note; classify targets (public / private / asset / external). Default `--strict`: block on any link to a non-published note (privacy boundary). `--scrub`: downgrade private links to alias-or-text. Also gate `todo`/stub notes.
 - [ ] **Transform** — frontmatter **whitelist** (drop everything but a safe key set; strip `Contains`/`Contained By`, todo fields); apply link scrub; rewrite asset paths
 - [ ] **Mirror** — three-way sync of `noon-moon-net/content/`: add / update / **delete** (un-tagging removes from the site); copy only referenced assets
-- [ ] **Commit** — provenance message (`Publish: sync N notes from braindance-usr@<sha>`); no auto-push by default (`--push` opts in)
+- [ ] **Commit** — provenance message (`Publish: sync N notes from vault@<sha>`); no auto-push by default (`--push` opts in)
 - [ ] Optional: thin `/publish` skill in `ctx/skills/` wrapping the tool
 
 ---
@@ -227,14 +227,14 @@ The public repo. Created once, then fed by the publish tool.
   - Content path: `content/`
 - [ ] **Commit `content/`** (do *not* gitignore it — the public repo must be self-contained so its Action builds without touching the private repo). `content/` is generated by the publish tool and never hand-edited.
 - [ ] `.github/workflows/deploy.yml` — on push to `content/**` or config: `npx quartz build --output /tmp/garden` → SSH to VPS → `rsync /tmp/garden/ /srv/garden`. Add the same VPS secrets as Phase 4 (`VPS_SSH_KEY`, `VPS_HOST`, `VPS_USER`).
-- [ ] First manual publish from `braindance-usr` → push `noon-moon-net` → verify build → check `noon-moon.net/garden`
+- [ ] First manual publish from the vault → push `noon-moon-net` → verify build → check `noon-moon.net/garden`
 
 ---
 
 ## Phase 7: Braindance Mobile API
 
 - [ ] Implement `GET /scopes`: read `ctx/vault/` from `/srv/braindance`, filter by `tags: [scope]` in frontmatter, return names
-- [ ] Implement `POST /notes`: call the GitHub REST API against `noon-moon/braindance-usr` (per `GITHUB_REPO` in `/srv/.env`) to create a file in `ctx/vault/inbox/` on the `inbox` branch
+- [ ] Implement `POST /notes`: call the GitHub REST API against `noon-moon/vault` (per `GITHUB_REPO` in `/srv/.env`) to create a file in `inbox/` on the `inbox` branch
 - [ ] Write `Dockerfile` (Node.js slim base)
 - [ ] Push first image to GHCR manually to verify the pipeline
 - [ ] Trigger `api.yml` deploy and verify the service is reachable on the Tailscale IP
@@ -244,7 +244,7 @@ The public repo. Created once, then fed by the publish tool.
 ## Phase 8: Homepage
 
 - [ ] Design `www/index.html` (and any assets)
-- [ ] Push to `noon-moon/braindance-usr`, verify `www.yml` deploys it, check `noon-moon.net/`
+- [ ] Push to `noon-moon/braindance`, verify `www.yml` deploys it, check `noon-moon.net/`
 
 ---
 

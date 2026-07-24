@@ -2,7 +2,7 @@
   "name": "noon-moon-net-tool",
   "private": true,
   "type": "module",
-  "description": "Projects publish-tagged braindance-usr notes flat into noon-moon-net/garden/content",
+  "description": "Projects publish-tagged vault notes flat into noon-moon-net/garden/content",
   "scripts": {
     "publish": "tsx src/publish.ts",
     "typecheck": "tsc --noEmit"

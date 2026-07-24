@@ -12,7 +12,7 @@ Projects notes tagged `publish: true` from this vault into `noon-moon-net`'s Qua
 1. **Tag notes.** A note publishes only with `publish: true` in its frontmatter. Internal scaffolding (`Created:`/`Status:`/`Tags:` preamble lines, `# References` / `# Connections` backlinks sections, `dataview` blocks) is stripped automatically, and workflow frontmatter (`Contains`/`Contained By`, todo fields, `year`, …) is dropped by a whitelist — so scope links never leak or block.
    - **Privacy gate:** a wikilink in real prose to a *non-published* note **blocks** the publish (strict mode). Resolve by publishing the target, unlinking, or re-running with `--scrub` (downgrades such links to plain text).
 
-2. **Project** (from a `braindance-usr` checkout):
+2. **Project** (from a `braindance` checkout, with the vault resolved via `--vault`/`VAULT_REPO`):
    ```bash
    npm --prefix ctx/tools/pub run publish -- --dry   # preview: what would publish + warnings
    npm --prefix ctx/tools/pub run publish            # write it

@@ -46,7 +46,7 @@ import sys
 from datetime import datetime, timezone
 
 DEFAULT_PROJECTS_DIR = os.path.expanduser(
-    "~/.claude/projects/-Users-tiernan-dev-braindance-usr"
+    "~/.claude/projects/-Users-tiernan-dev-braindance"
 )
 
 

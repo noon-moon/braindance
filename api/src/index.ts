@@ -28,8 +28,14 @@ function control(f: Field, scopes: string[], value = "") {
   if (f.type === "textarea") return html`<textarea name="${f.key}"${req} placeholder="${ph}">${value}</textarea>`;
   if (f.type === "select")
     return html`<select name="${f.key}"${req}>${f.required ? "" : html`<option value=""></option>`}${(f.options ?? []).map((o) => html`<option${sel(o)}>${o}</option>`)}</select>`;
-  if (f.type === "scope")
-    return html`<select name="${f.key}"${req}><option value=""></option>${scopes.map((s) => html`<option${sel(s)}>${s}</option>`)}</select>`;
+  if (f.type === "scope") {
+    // Autocomplete over the live MOC list (scope notes): a text input whose <datalist>
+    // suggestions are limited to existing MOCs, so triage tagging is type-to-filter rather
+    // than scrolling a long <select>. Suggest-but-allow — a brand-new MOC name can still be
+    // typed (validated only by being a valid link target on file).
+    const list = `moc-${f.key}`;
+    return html`<input name="${f.key}"${req} list="${list}" value="${value}" autocomplete="off" placeholder="${f.placeholder ?? "type to find a MOC…"}"><datalist id="${list}">${scopes.map((s) => html`<option value="${s}"></option>`)}</datalist>`;
+  }
   const t = f.type === "url" ? "url" : f.type === "date" ? "date" : f.type === "number" ? "number" : "text";
   return html`<input type="${t}" name="${f.key}"${req} placeholder="${ph}" value="${value}">`;
 }

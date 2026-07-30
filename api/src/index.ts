@@ -29,22 +29,29 @@ function control(f: Field, scopes: string[], value = "") {
   if (f.type === "select")
     return html`<select name="${f.key}"${req}>${f.required ? "" : html`<option value=""></option>`}${(f.options ?? []).map((o) => html`<option${sel(o)}>${o}</option>`)}</select>`;
   if (f.type === "scope") {
-    // Autocomplete over the live MOC list (scope notes): a text input whose <datalist>
-    // suggestions are limited to existing MOCs, so triage tagging is type-to-filter rather
-    // than scrolling a long <select>. Suggest-but-allow — a brand-new MOC name can still be
-    // typed (validated only by being a valid link target on file).
-    const list = `moc-${f.key}`;
-    return html`<input name="${f.key}"${req} list="${list}" value="${value}" autocomplete="off" placeholder="${f.placeholder ?? "type to find a MOC…"}"><datalist id="${list}">${scopes.map((s) => html`<option value="${s}"></option>`)}</datalist>`;
+    // A dropdown over the live MOC list (every `scope`-tagged note, alphabetical) —
+    // pick the most relevant one and it becomes the note's leading `Tags: [[MOC]]`
+    // link. A native <select> beats a text input on the phone: no typing, and iOS
+    // gives its own scrollable picker. `_meta/` scopes (scope_kind: system) never
+    // appear — the flat index only reads the vault root.
+    // A current value that ISN'T a live scope (a carried-over capture whose MOC was
+    // since renamed) is kept as an extra option rather than silently dropped.
+    const opts = value && !scopes.includes(value) ? [value, ...scopes] : scopes;
+    const blank = f.required ? "— pick a scope —" : "— none —";
+    return html`<select name="${f.key}"${req}><option value="">${blank}</option>${opts.map((s) => html`<option${sel(s)}>${s}</option>`)}</select>`;
   }
   const t = f.type === "url" ? "url" : f.type === "date" ? "date" : f.type === "number" ? "number" : "text";
   return html`<input type="${t}" name="${f.key}"${req} placeholder="${ph}" value="${value}">`;
 }
 
-// The capture screen: a funnel-type dropdown + that funnel's fields. Changing
-// the dropdown reloads with the selected type's fields (server-rendered).
-// Web capture is untyped: everything drops into the inbox as a raw memo.
-// The memo/todo/media/resource sorting now happens at triage/review, not here.
-// (The typed funnel schema still lives on the JSON /ingest API.)
+// The capture screen: title + body + a scope dropdown.
+// Web capture is untyped: everything drops into the inbox as a raw memo, and the
+// memo/todo/media/resource sorting happens at triage/review, not here. The one
+// classification worth making at capture time is WHICH SCOPE the thought belongs
+// to — you know it then, and reconstructing it at the desk is guesswork — so the
+// memo funnel carries a scope field that lands as the note's leading
+// `Tags: [[MOC]]` link. It stays optional: a scopeless thought still captures in
+// one tap. (The typed funnel schema still lives on the JSON /ingest API.)
 function captureForm() {
   const f = funnelById("memo") ?? FUNNELS[0];
   const scopes = getScopes();
@@ -255,7 +262,7 @@ async function renderReview(flash?: { ok: boolean; msg: string }) {
             (n) => html`
               <div class="card">
                 <a href="/review/triage/${encodeURIComponent(n.name)}"><strong>${n.title}</strong></a>
-                <div class="meta">${n.createdISO ? fmtDate(n.createdISO) : ""}</div>
+                <div class="meta">${n.createdISO ? fmtDate(n.createdISO) : ""}${n.scope ? html` <span class="tag">${n.scope}</span>` : ""}</div>
                 ${n.text ? html`<p class="muted snippet">${n.text.slice(0, 200)}</p>` : ""}
                 <div class="actions">
                   <a class="btn" href="/review/triage/${encodeURIComponent(n.name)}">→ triage</a>
@@ -361,9 +368,11 @@ function renderEditForm(p: Proposal) {
 const URL_RE = /https?:\/\/[^\s)]+/;
 
 // Deterministic pre-fill (no LLM): the memo title → a `title` field, the memo
-// body → the funnel's main text field, and a URL in the body → a `url` field.
+// body → the funnel's main text field, a URL in the body → a `url` field, and the
+// scope picked at capture time → the scope dropdown (so it survives re-typing).
 function prefillFor(f: Field, memo: InboxNote): string {
   if (f.key === "title") return memo.title;
+  if (f.type === "scope") return memo.scope ?? "";
   if (f.type === "textarea") return memo.text;
   if (f.type === "url") return memo.text.match(URL_RE)?.[0] ?? "";
   return "";
@@ -388,7 +397,7 @@ function renderTriageForm(memo: InboxNote, funnelId: string, scopes: string[], v
       <p><a href="/review">← back to review</a></p>
       ${error ? html`<p class="flash err">${error}</p>` : ""}
       <div class="card">
-        <div class="meta">from inbox · ${memo.createdISO ? fmtDate(memo.createdISO) : ""} · <code>${memo.name}</code></div>
+        <div class="meta">from inbox · ${memo.createdISO ? fmtDate(memo.createdISO) : ""} · <code>${memo.name}</code>${memo.scope ? html` <span class="tag">${memo.scope}</span>` : ""}</div>
         ${memo.text ? html`<p class="muted snippet">${memo.text.slice(0, 400)}</p>` : ""}
       </div>
       <form method="post" action="${act}" class="capture-form">

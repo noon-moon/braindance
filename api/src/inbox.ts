@@ -24,10 +24,13 @@ export interface InboxNote {
   name: string;
   /** Human title: the first `# heading`, else a humanised filename slug. */
   title: string;
-  /** Body with the leading `# title` heading stripped — the actual content. */
+  /** Body with the leading scope link + `# title` heading stripped — the actual content. */
   text: string;
   /** Original capture time (ISO-8601), reconstructed from the filename stamp. */
   createdISO: string | null;
+  /** Scope MOC chosen at capture time (the leading `Tags: [[…]]` link), else null.
+   *  Carried into the triage form's scope dropdown so the pick isn't re-made. */
+  scope: string | null;
 }
 
 // A capture filename is `${stamp()}-${slug}.md` where stamp() is an ISO string
@@ -53,6 +56,22 @@ function splitHeading(body: string): { title: string; text: string } {
   return { title: h[1].trim(), text: lines.slice(i + 1).join("\n").trim() };
 }
 
+/** Pull a leading `Tags: [[Scope]]` line (the scope-link convention written by
+ *  `funnels.ts`'s scopeLink) off the top of a body — it sits ABOVE the `# title`,
+ *  so it has to come off before splitHeading can see the heading. */
+const SCOPE_LINE = /^Tags:\s*\[\[([^\]]+)\]\]\s*$/;
+
+function splitScope(body: string): { scope: string | null; rest: string } {
+  const lines = body.split("\n");
+  let i = 0;
+  while (i < lines.length && lines[i].trim() === "") i++;
+  const m = lines[i]?.trim().match(SCOPE_LINE);
+  if (!m) return { scope: null, rest: body };
+  // Strip any alias/anchor, matching how vault.ts resolves a wikilink target.
+  const scope = m[1].split("|")[0].split("#")[0].trim();
+  return { scope: scope || null, rest: lines.slice(i + 1).join("\n") };
+}
+
 const humanise = (s: string): string => s.replace(/[-_]+/g, " ").trim() || "untitled";
 
 function toInboxNote(fileName: string): InboxNote | null {
@@ -64,9 +83,10 @@ function toInboxNote(fileName: string): InboxNote | null {
     return null;
   }
   const { content } = matter(raw);
-  const { title, text } = splitHeading(content);
+  const { scope, rest } = splitScope(content);
+  const { title, text } = splitHeading(rest);
   const { createdISO, slugPart } = parseStamp(name);
-  return { name, title: title || humanise(slugPart), text, createdISO };
+  return { name, title: title || humanise(slugPart), text, createdISO, scope };
 }
 
 /** All untriaged inbox notes, newest capture first. */

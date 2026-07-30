@@ -10,6 +10,8 @@ On-demand detail for the serving stack, referenced compactly from [`CLAUDE.md`](
 
 ## Capture pipeline
 
+The capture form is untyped — title, body, and an optional **scope dropdown** listing every `scope`-tagged note in the vault root (so `_meta/` `scope_kind: system` scopes never appear). The pick lands as the note's leading `Tags: [[MOC]]` line, the vault's scope-link convention, so a capture joins its hub's backlinks immediately; the desk keeps the pick (the triage form pre-selects it) and can change it. Scope is the one classification worth making at capture time — you know it then — while memo/todo/media/resource typing still happens at triage.
+
 The `api` captures notes **directly to `main`**, into `ctx/vault/inbox/` (so they show up in Obsidian and the read-only vault viewer immediately, no merge step); the desk-side `Process Inbox` routine then triages each capture in-vault — an `inbox/` → flat-vault file move, no git. Writing `main` directly is safe because the api is **Tailscale-only** with no public exposure and **no built-in auth** (it must sit behind a VPN/tunnel); the old `inbox`-branch isolation was belt-and-suspenders and is now retired.
 
 This capture ingress is orthogonal to the worktree landing flow ([`worktrees.md`](worktrees.md)): both now target `main`, but captures arrive funnel-shaped and are triaged in-vault at the desk, while agent work lands via squash-merge PRs.

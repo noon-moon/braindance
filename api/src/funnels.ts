@@ -44,6 +44,12 @@ const yaml = (fm: Record<string, unknown>): string => {
 export const compose = (n: BuiltNote): string =>
   `${yaml(n.frontmatter)}\n\n${n.body.trim()}\n`;
 
+/** The vault's scope-link convention: a `Tags: [[MOC]]` line as the FIRST body
+ *  line, above the `# title`, so the note joins its hub's backlinks. Empty when
+ *  no scope was picked. Parsed back out by `inbox.ts` for triage pre-fill. */
+export const scopeLink = (scope?: string): string =>
+  scope?.trim() ? `Tags: [[${scope.trim()}]]\n` : "";
+
 const MEDIA_SCOPE: Record<string, string> = {
   Game: "Video Games",
   Book: "Books",
@@ -55,15 +61,16 @@ export const FUNNELS: Funnel[] = [
   {
     id: "memo",
     label: "Memo",
-    hint: "an unaffiliated thought → inbox",
+    hint: "a thought → inbox, optionally linked to a scope",
     fields: [
       { key: "title", label: "title", type: "text" },
       { key: "body", label: "body", type: "textarea", required: true },
+      { key: "scope", label: "scope", type: "scope" },
     ],
     build: (i) => ({
       title: i.title || "memo",
       frontmatter: { tags: ["memo"] },
-      body: `# ${i.title || "memo"}\n\n${i.body}`,
+      body: `${scopeLink(i.scope)}# ${i.title || "memo"}\n\n${i.body}`,
     }),
   },
   {
@@ -80,7 +87,7 @@ export const FUNNELS: Funnel[] = [
     build: (i) => ({
       title: i.title,
       frontmatter: { tags: ["memo", "todo"], status: i.status || "open", due: i.due || undefined },
-      body: `${i.scope ? `Tags: [[${i.scope}]]\n` : ""}# ${i.title}\n\n${i.body || ""}`,
+      body: `${scopeLink(i.scope)}# ${i.title}\n\n${i.body || ""}`,
     }),
   },
   {
@@ -99,7 +106,7 @@ export const FUNNELS: Funnel[] = [
       title: i.title,
       frontmatter: { tags: ["memo"], kind: i.kind, status: i.status || "want", url: i.url || undefined },
       body:
-        `Tags: [[${MEDIA_SCOPE[i.kind] ?? "Media"}]]\n# ${i.title}\n\n` +
+        `${scopeLink(MEDIA_SCOPE[i.kind] ?? "Media")}# ${i.title}\n\n` +
         `${i.creator ? `*${i.creator}*\n\n` : ""}${i.why || ""}`,
     }),
   },
@@ -116,7 +123,7 @@ export const FUNNELS: Funnel[] = [
     build: (i) => ({
       title: i.title,
       frontmatter: { tags: ["memo", "reference"], url: i.url || undefined },
-      body: `Tags: [[${i.activity}]]\n# ${i.title}\n\n${i.note || ""}`,
+      body: `${scopeLink(i.activity)}# ${i.title}\n\n${i.note || ""}`,
     }),
   },
 ];

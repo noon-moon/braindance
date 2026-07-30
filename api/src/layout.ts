@@ -91,6 +91,29 @@ details.diff { margin:.2rem 0 .1rem; }
 details.diff summary { cursor:pointer; color:var(--muted); font-size:.85rem; }
 details.diff pre { background:var(--bg); border:1px solid var(--border); border-radius:4px; padding:.5rem; max-width:100%; overflow-x:auto; margin:.3rem 0 0; }
 .dataview-skipped { opacity:.6; }
+/* /todo — Reminders-style date sections over the vault's #task lines. */
+.tg { margin:1.15rem 0 0; }
+.tg:first-of-type { margin-top:.5rem; }
+.tg > h2 { display:flex; gap:.5rem; align-items:baseline; font-size:1rem; margin:0;
+           padding-bottom:.25rem; border-bottom:1px solid var(--border); }
+.tg.overdue > h2 { color:var(--danger); }
+.tg.today > h2 { color:var(--accent); }
+.tg > h2 .n { color:var(--muted); font-weight:400; font-size:.85rem; }
+ul.tasks { list-style:none; padding:0; margin:0; }
+ul.tasks li { display:flex; gap:.55rem; align-items:flex-start; padding:.45rem .1rem;
+              border-bottom:1px solid var(--border); }
+ul.tasks .box { flex:none; color:var(--muted); }
+.tg.overdue ul.tasks .box { color:var(--danger); }
+.t-main { flex:1; min-width:0; }
+.t-text { overflow-wrap:anywhere; }
+.t-meta { display:flex; flex-wrap:wrap; gap:.45rem; align-items:baseline;
+          margin:.1rem 0 0; font-size:.8rem; color:var(--muted); }
+.t-meta a { color:var(--muted); border-bottom:1px dotted var(--border); }
+.t-meta a:hover { color:var(--accent); border-bottom-color:var(--accent); }
+.t-meta .late { color:var(--danger); }
+.pri { flex:none; font-size:.85rem; }
+ul.tasks li.done .t-text { color:var(--muted); text-decoration:line-through; }
+.todo-foot { margin-top:1.3rem; }
 ul.notes { list-style:none; padding:0; margin:.5rem 0; }
 ul.notes li { padding:.2rem 0; border-bottom:1px solid var(--border); overflow-wrap:break-word; }
 .bar { align-items:center; }
@@ -132,9 +155,10 @@ const ICON: Record<string, ReturnType<typeof svg>> = {
   book: svg('<path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/>'),
   search: svg('<path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5A6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5S14 7.01 14 9.5S11.99 14 9.5 14z"/>'),
   clock: svg('<path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8s8 3.58 8 8s-3.58 8-8 8z"/><path d="M12.5 7H11v6l5.25 3.15l.75-1.23l-4.5-2.67z"/>'),
+  checklist: svg('<path d="M22 7h-9v2h9V7zm0 8h-9v2h9v-2zM5.54 11L2 7.46l1.41-1.41l2.12 2.12l4.24-4.24l1.41 1.41L5.54 11zm0 8L2 15.46l1.41-1.41l2.12 2.12l4.24-4.24l1.41 1.41L5.54 19z"/>'),
 };
 
-/** `active` marks the current tab (capture | vault | review | history). */
+/** `active` marks the current tab (capture | vault | todo | review | history). */
 export function layout(title: string, body: Html | string, active?: string): Html {
   const nav = (id: string, href: string, icon: keyof typeof ICON) =>
     html`<a href="${href}" class="${active === id ? "nav-active" : ""}" title="${id}" aria-label="${id}"><span class="nav-ic">${ICON[icon]}</span><span class="nav-tx">${id}</span></a>`;
@@ -152,7 +176,7 @@ export function layout(title: string, body: Html | string, active?: string): Htm
 <body>
   <header class="bar">
     <a href="/" class="brand">braindance</a>
-    <nav>${nav("capture", "/", "inbox")}${nav("vault", "/vault", "book")}${nav("review", "/review", "search")}${nav("history", "/history", "clock")}</nav>
+    <nav>${nav("capture", "/", "inbox")}${nav("vault", "/vault", "book")}${nav("todo", "/todo", "checklist")}${nav("review", "/review", "search")}${nav("history", "/history", "clock")}</nav>
   </header>
   <main>${body}</main>
 </body>

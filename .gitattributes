@@ -1,0 +1,30 @@
+# Upstream-sync merge policy for this personal fork.
+#
+# These attributes pin how `git merge upstream/master` resolves the handful of
+# files this fork intentionally diverges on, so syncs from the core template
+# (noon-moon/braindance@master) auto-resolve instead of stopping on conflicts.
+# The `.github/workflows/sync-upstream.yml` workflow relies on them.
+#
+# The `ours`/`theirs` drivers must be registered in git config for the
+# attributes to take effect. The workflow does this; to get the same behaviour
+# for a LOCAL `git merge upstream/master`, run once per clone:
+#
+#     git config merge.ours.driver   true
+#     git config merge.theirs.driver 'cp -f "%B" "%A"'
+#
+# `union` and the default 3-way merge are built in and need no config. The
+# modify/delete on ctx/vault/.gitignore can't be expressed here — the workflow
+# resolves it with an explicit `git rm`.
+
+# CLAUDE.md is template-owned. Generic guidance lives in the core template and
+# is never diverged in a fork, so always take the upstream version on sync.
+CLAUDE.md            merge=theirs
+
+# Instance-customised in this fork — keep the fork's version on sync:
+#   README.md          personal-instance docs (tracks vault notes, no admin-app section)
+#   ctx/tools/sys/wt.sh the bd helper, pinned to push PRs to origin (skips the upstream remote)
+README.md            merge=ours
+ctx/tools/sys/wt.sh  merge=ours
+
+# Root .gitignore is append-only on both sides — union keeps fork + template rules.
+.gitignore           merge=union

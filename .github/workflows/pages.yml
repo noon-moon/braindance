@@ -1,0 +1,115 @@
+name: Deploy site to GitHub Pages
+
+# Builds ctx/www (homepage + static pages + the Quartz garden) and deploys it to
+# GitHub Pages via the official Pages artifact — no gh-pages branch.
+#
+# BUILD-SCOPE ISOLATION (privacy enforcement point (a)): every step below reads
+# ONLY ctx/www and ctx/tools/pub. NO step reads ctx/vault. The vault is never an
+# input to the deployed artifact. The publish tool's PROJECTOR (which does read the
+# vault) is run locally by a human and its output committed under ctx/www — CI only
+# builds already-committed, already-gated content, then re-audits it vault-blind
+# with the verify gate (enforcement point (b)).
+#
+# One-time setup in the repo: Settings → Pages → Source = "GitHub Actions".
+# Optional: set a repo variable SITE_CUSTOM_DOMAIN (e.g. example.com) for a custom
+# domain; unset → served at https://<owner>.github.io/<repo>/ with zero config.
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'ctx/www/**'
+      - 'ctx/tools/pub/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ctx/www/garden/.node-version # Quartz pins Node 22
+          cache: npm
+          cache-dependency-path: |
+            ctx/www/garden/package-lock.json
+            ctx/tools/pub/package-lock.json
+
+      # Fail-closed publish gate (enforcement point (b)) — VAULT-BLIND. Re-audits
+      # the committed public projection (ctx/www/garden/content only); a leaked
+      # private link/embed, a dangling asset, or a disallowed frontmatter key exits
+      # nonzero and BREAKS THE DEPLOY before anything is built or uploaded.
+      - name: Verify publish gate (vault-blind)
+        working-directory: ctx/tools/pub
+        run: |
+          npm ci
+          npm run verify
+
+      - name: Compute Quartz baseUrl
+        id: base
+        env:
+          SITE_CUSTOM_DOMAIN: ${{ vars.SITE_CUSTOM_DOMAIN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          owner_lc=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
+          if [ -n "$SITE_CUSTOM_DOMAIN" ]; then
+            baseurl="${SITE_CUSTOM_DOMAIN}/garden"
+          elif [ "$REPO" = "${owner_lc}.github.io" ]; then
+            # user/org page → served at domain root, no /<repo> prefix
+            baseurl="${owner_lc}.github.io/garden"
+          else
+            baseurl="${owner_lc}.github.io/${REPO}/garden"
+          fi
+          echo "baseurl=$baseurl" >> "$GITHUB_OUTPUT"
+          echo "Computed Quartz baseUrl: $baseurl"
+          sed -i "s|^  baseUrl:.*|  baseUrl: ${baseurl}|" ctx/www/garden/quartz.config.yaml
+
+      - name: Build garden (Quartz)
+        working-directory: ctx/www/garden
+        run: |
+          npm ci
+          npx quartz plugin install   # fetch pinned plugin commits from quartz.lock.json
+          npx quartz build            # -> ctx/www/garden/public
+
+      - name: Assemble _site
+        env:
+          SITE_CUSTOM_DOMAIN: ${{ vars.SITE_CUSTOM_DOMAIN }}
+        run: |
+          mkdir -p _site
+          # Everything in ctx/www EXCEPT the garden project + the internal README →
+          # site root, verbatim (homepage + any static pages/assets).
+          rsync -a --exclude 'garden' --exclude 'README.md' ctx/www/ _site/
+          # Quartz build output → /garden subpath.
+          mkdir -p _site/garden
+          cp -r ctx/www/garden/public/. _site/garden/
+          # Pages must not run Jekyll over Quartz's _-prefixed assets.
+          touch _site/.nojekyll
+          # Root CNAME drives Pages custom-domain routing when configured.
+          if [ -n "$SITE_CUSTOM_DOMAIN" ]; then echo "$SITE_CUSTOM_DOMAIN" > _site/CNAME; fi
+          echo "Assembled _site:"; ls -A _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

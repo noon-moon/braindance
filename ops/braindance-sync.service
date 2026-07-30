@@ -1,0 +1,15 @@
+# Braindance VPS self-update (oneshot; driven by braindance-sync.timer).
+# Pulls the vault so the admin API reflects `main`, and rolls the api
+# container if a new image was pushed to GHCR by .github/workflows/api.yml.
+# CI never SSHes in — the box pulls itself. See ops/README.md to install.
+[Unit]
+Description=Braindance VPS sync (pull vault + roll api image)
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+# ← Set to your non-root deploy user (the one in the `docker` group).
+User=deploy
+WorkingDirectory=/srv/braindance
+ExecStart=/srv/braindance/ops/sync.sh

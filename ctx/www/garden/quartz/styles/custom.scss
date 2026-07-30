@@ -1,0 +1,46 @@
+@use "./variables.scss" as *;
+
+// noon·moon design language — minimal, monospace (Courier Prime), mint accent.
+// Fonts + palette live in quartz.config.yaml; these are small reinforcing touches.
+
+body {
+  letter-spacing: -0.01em;
+}
+
+// The theme's `typography` only sets header/body/code fonts; the page-title
+// component reads `--titleFont`, which would otherwise fall back off-family.
+// Pin it so the site title matches every other header (Courier Prime).
+:root {
+  --titleFont: "Courier Prime", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+// Site title: render the two-tone "noon·moon" mark (mint "moon") to match the
+// homepage, since pageTitle is plain text and we can't inject a <span> or fork
+// the fetched page-title plugin. Hide the literal text; draw it via pseudo-els.
+.page-title a {
+  font-size: 0;
+
+  &::before,
+  &::after {
+    font-size: 1.75rem;
+  }
+  &::before {
+    content: "noon";
+    color: var(--dark);
+  }
+  &::after {
+    content: "moon";
+    color: var(--secondary);
+  }
+}
+
+// Internal links: drop Quartz's pill background for a cleaner, terminal look —
+// keep the mint accent with a subtle underline instead.
+a.internal {
+  background-color: transparent;
+  padding: 0;
+  border-radius: 0;
+  color: var(--secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

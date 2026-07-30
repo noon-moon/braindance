@@ -1,0 +1,31 @@
+# This directory doubles as a live Obsidian vault on contributors' machines.
+# Only base scaffolding (Obsidian config + note templates) belongs to the
+# template — actual notes are personal and are never tracked here.
+*
+!.gitignore
+!.obsidian/
+!.obsidian/**
+!_templates/
+!_templates/**
+!_meta/
+!_meta/**
+!TODO.md
+
+# Ephemeral scratch dir — track the explanatory README only; its contents are
+# gitignored (Obsidian-visible workbench, never canonical). See ctx/vault/_ephemeral/.
+!_ephemeral/
+!_ephemeral/README.md
+
+# Mobile-capture inbox — the admin app commits captures here on `main`; the
+# Process Inbox routine triages them into the flat vault. Track the folder (via
+# .gitkeep) and whatever captures land in it (they're triaged, not permanent).
+!inbox/
+!inbox/**
+
+# Obsidian per-machine state (not portable between installs)
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+
+# Community plugin binaries — installed per-machine via Obsidian's UI
+# (community-plugins.json is tracked, so a fresh checkout knows what to install)
+.obsidian/plugins/

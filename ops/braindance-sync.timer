@@ -1,0 +1,13 @@
+# Runs braindance-sync.service shortly after boot and every few minutes after.
+# Adjust OnUnitActiveSec to taste (how quickly the box picks up a new push).
+[Unit]
+Description=Run braindance-sync periodically
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

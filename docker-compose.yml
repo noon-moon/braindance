@@ -1,0 +1,41 @@
+# Braindance public + admin stack. Run via ./deploy.sh (not bare
+# `docker compose`) so ${VAR} interpolation reads /srv/.env. Note the two
+# distinct env mechanisms:
+#   - ${VAR} below is *interpolation*, resolved from --env-file /srv/.env
+#     (which ./deploy.sh always passes) — NOT from `env_file:`.
+#   - `env_file:` only injects *container runtime* env (e.g. $DOMAIN for
+#     Caddy, GITHUB_TOKEN for the api).
+services:
+  caddy:
+    image: caddy:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    env_file: /srv/.env            # provides $DOMAIN to the Caddyfile
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - /srv/www:/srv/www:ro
+      - /srv/garden:/srv/garden:ro
+    restart: unless-stopped
+
+  api:
+    image: ${API_IMAGE:?set API_IMAGE in /srv/.env}
+    ports:
+      # Bind to the Tailscale IP ONLY. The API has no auth, so it must never
+      # publish on the public interface — and Docker's iptables would bypass UFW
+      # if this were plain "3000:3000". Set TAILSCALE_IP in /srv/.env.
+      - "${TAILSCALE_IP:?set TAILSCALE_IP in /srv/.env}:3000:3000"
+    # GITHUB_TOKEN / GITHUB_REPO (push+pull creds), REPO_PATH, GIT_AUTHOR_*.
+    env_file: /srv/.env
+    volumes:
+      # Local-first: mount the writable checkout the api owns (sees `.git`,
+      # commits captures locally, then pulls --rebase + pushes asynchronously).
+      # The mount follows $REPO_PATH so the v2 cutover — pointing the api at the
+      # standalone vault repo — is a pure /srv/.env flip (REPO_PATH=/srv/vault),
+      # no compose edit. Defaults to /srv/braindance (pre-cutover behaviour).
+      - ${REPO_PATH:-/srv/braindance}:${REPO_PATH:-/srv/braindance}
+    restart: unless-stopped
+
+volumes:
+  caddy_data:

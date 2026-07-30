@@ -1,0 +1,10 @@
+{$DOMAIN} {
+  root * /srv/www
+  handle /garden/* {
+    root * /srv/garden
+    file_server
+  }
+  handle {
+    file_server
+  }
+}

@@ -11,8 +11,12 @@ import { randomUUID } from "node:crypto";
 import { submitProposal, listProposals, getProposal, setStatus, updateProposal, type Proposal, type ProposalStatus } from "./proposals.js";
 import { getScopes, getNote, listNotes, backlinksFor, invalidate, noteExists } from "./vault.js";
 import { listInbox, getInboxNote, type InboxNote } from "./inbox.js";
-import { renderMarkdown } from "./render.js";
+import { renderMarkdown, renderInline } from "./render.js";
 import { gitStore } from "./git.js";
+import {
+  listTasks, groupByDue, completedTasks, todayISO, daysBetween, effectiveDate,
+  type Task, type TaskGroup,
+} from "./tasks.js";
 
 const app = new Hono();
 
@@ -168,6 +172,72 @@ app.get("/vault/:name", (c) => {
     <div class="meta">${note.tags.map((t) => html`<span class="tag">${t}</span>`)}</div>
     <article class="note-body">${raw(renderMarkdown(note.body))}</article>
     ${backlinks.length ? html`<hr><h3>backlinks <span class="muted">(${backlinks.length})</span></h3><ul class="notes">${backlinks.map((b) => html`<li><a href="/vault/${encodeURIComponent(b)}">${b}</a></li>`)}</ul>` : ""}`, "vault"));
+});
+
+// ── TODO: every #task atom in the vault, in Reminders-style date sections ────
+// The roll-up [[TODO]] does in Obsidian, done natively here — the vault's `tasks`
+// query blocks can't render in this viewer, and this is the mobile surface for
+// "what's due". Read-only: completing an atom is a vault write, done in Obsidian.
+const PRI_GLYPH: Record<string, string> = {
+  highest: "🔺", high: "⏫", medium: "🔼", low: "🔽", lowest: "⏬",
+};
+
+function taskRow(t: Task, group: TaskGroup, today: string) {
+  const date = effectiveDate(t);
+  // The date is redundant under a dated heading, but load-bearing under Overdue
+  // (a mixed bucket) — so show it there, with how late it is.
+  const late = group.kind === "overdue" && date ? daysBetween(date, today) : 0;
+  return html`<li class="${t.status === "done" ? "done" : ""}">
+    <span class="box">${t.status === "done" ? "☑" : "☐"}</span>
+    <div class="t-main">
+      <div class="t-text">${raw(renderInline(t.text))}</div>
+      <div class="t-meta">
+        <a href="/vault/${encodeURIComponent(t.note)}">${t.note}</a>
+        ${group.kind === "overdue" && date
+          ? html`<span>📅 ${date}</span><span class="late">${late}d late</span>`
+          : ""}
+        ${t.status === "done" && t.completed ? html`<span>✅ ${t.completed}</span>` : ""}
+        ${!t.due && t.scheduled ? html`<span>⏳ scheduled</span>` : ""}
+        ${t.recurrence ? html`<span>🔁 ${t.recurrence}</span>` : ""}
+        ${t.unfiled ? html`<span class="tag">unfiled</span>` : ""}
+      </div>
+    </div>
+    ${t.priority ? html`<span class="pri" title="${t.priority}">${PRI_GLYPH[t.priority]}</span>` : ""}
+  </li>`;
+}
+
+app.get("/todo", (c) => {
+  const all = listTasks();
+  const today = todayISO();
+  const groups = groupByDue(all, today);
+  const showDone = c.req.query("done") === "1";
+  const done = showDone ? completedTasks(all).slice(0, 50) : [];
+  const open = groups.reduce((n, g) => n + g.tasks.length, 0);
+  const overdue = groups.find((g) => g.kind === "overdue")?.tasks.length ?? 0;
+
+  const section = (g: TaskGroup) => html`
+    <section class="tg ${g.kind}">
+      <h2>${g.label} <span class="n">${g.tasks.length}</span></h2>
+      <ul class="tasks">${g.tasks.map((t) => taskRow(t, g, today))}</ul>
+    </section>`;
+
+  return c.html(layout("todo", html`
+    <h1>todo <span class="muted">(${open})</span></h1>
+    <div class="meta">${today}${overdue ? html` · <span class="late">${overdue} overdue</span>` : ""}</div>
+    ${open === 0
+      ? html`<p class="muted">nothing open — every <code>#task</code> atom is done.</p>`
+      : groups.map(section)}
+    <p class="todo-foot">
+      ${showDone
+        ? html`<a href="/todo">hide completed</a>`
+        : html`<a href="/todo?done=1">show completed</a>`}
+    </p>
+    ${done.length
+      ? html`<section class="tg">
+          <h2>Completed <span class="n">${done.length}</span></h2>
+          <ul class="tasks">${done.map((t) => taskRow(t, { kind: "undated", label: "", date: null, tasks: [] }, today))}</ul>
+        </section>`
+      : ""}`, "todo"));
 });
 
 // ── History: operation log + undo ───────────────────────────────────────────

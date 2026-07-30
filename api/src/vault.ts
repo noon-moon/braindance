@@ -7,6 +7,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import matter from "gray-matter";
 import { REPO_PATH, VAULT_SUBDIR } from "./config.js";
+import { invalidateTasks } from "./tasks.js";
 
 // Defaults to <REPO_PATH>/<VAULT_SUBDIR> so the viewer reads exactly the checkout
 // the git store commits to. VAULT_PATH still overrides for standalone/legacy
@@ -65,10 +66,13 @@ export function index(): Index {
   return idx;
 }
 
-/** Drop the cached index so the next read re-scans the working tree. Called
- *  after a capture commits, so just-written notes are visible immediately. */
+/** Drop the viewer's cached indexes so the next read re-scans the working tree.
+ *  Called after a capture/triage commits, so just-written notes are visible
+ *  immediately. Covers the task scan too — filing a note moves its `#task` lines,
+ *  so /todo must not serve a pre-commit view. */
 export const invalidate = (): void => {
   cache = null;
+  invalidateTasks();
 };
 
 export const getScopes = (): string[] =>

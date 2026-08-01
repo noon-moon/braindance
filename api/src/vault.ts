@@ -87,3 +87,16 @@ export const listNotes = (): VaultNote[] =>
   [...index().notes.values()].sort((a, b) => a.name.localeCompare(b.name));
 
 export const noteExists = (name: string): boolean => index().notes.has(name);
+
+/** A root note's file EXACTLY as it sits on disk. The index hands back PARSED
+ *  frontmatter, so rewriting a note from it would re-serialise (and reformat)
+ *  YAML the user wrote by hand — an edit has to start from the raw bytes.
+ *  Only names the flat index already knows resolve, so no path escapes. */
+export function readNoteRaw(name: string): string | null {
+  if (!noteExists(name)) return null;
+  try {
+    return readFileSync(join(VAULT_PATH, `${name}.md`), "utf8");
+  } catch {
+    return null;
+  }
+}

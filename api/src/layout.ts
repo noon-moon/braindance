@@ -74,6 +74,20 @@ hr { border:none; border-top:1px solid var(--border); margin:1rem 0; }
 .tag { display:inline-block; border:1px solid var(--border); border-radius:3px; padding:0 .4em; margin-right:.3em; font-size:.8rem; color:var(--muted); }
 .flash { border:1px solid var(--accent); border-radius:4px; padding:.55rem .8rem; margin-bottom:.8rem; color:var(--accent); }
 .flash.err { border-color:var(--danger); color:var(--danger); }
+/* Capture confirmation. A capture redirects back to the form, so the receipt has
+   to be transient — it floats over the page and dismisses itself in CSS (no JS
+   in this app, and nothing left to clean up on the next navigation). */
+.toast {
+  position:fixed; top:.6rem; left:50%; transform:translateX(-50%); z-index:20;
+  max-width:min(34rem,calc(100% - 1.4rem)); padding:.5rem .8rem;
+  border:1px solid var(--accent); border-radius:4px; background:var(--surface);
+  color:var(--accent); font-size:.85rem; overflow-wrap:anywhere;
+  box-shadow:0 2px 12px rgba(0,0,0,.35);
+  animation:toast-out .45s ease 4.5s forwards;
+}
+.toast.dup { border-color:var(--muted); color:var(--muted); }
+@keyframes toast-out { to { opacity:0; visibility:hidden; } }
+@media (prefers-reduced-motion: reduce) { .toast { animation-duration:.01s; } }
 .op { border:1px solid var(--border); border-radius:5px; padding:.55rem .7rem; margin:.35rem 0; background:var(--surface); display:flex; justify-content:space-between; gap:.7rem; align-items:flex-start; }
 .op .msg { overflow-wrap:anywhere; }
 .op form { margin:0; flex:none; }
@@ -138,6 +152,9 @@ ul.notes li { padding:.2rem 0; border-bottom:1px solid var(--border); overflow-w
   .bar nav a .nav-ic { display:block; }
   .bar nav a .nav-tx { display:none; }
   main { padding-bottom:calc(4.5rem + env(safe-area-inset-bottom, 0px)); }
+  /* The form sits at the thumb, so the receipt does too — just above the tab bar
+     rather than off at the top of the screen where it'd be missed. */
+  .toast { top:auto; bottom:calc(3.6rem + env(safe-area-inset-bottom, 0px)); }
   /* Capture: anchor the form to the bottom so inputs build up from the thumb. */
   main:has(.capture-form) { display:flex; flex-direction:column; min-height:100dvh; }
   main:has(.capture-form) h1 { display:none; }

@@ -56,18 +56,43 @@ function control(f: Field, scopes: string[], value = "") {
 // memo funnel carries a scope field that lands as the note's leading
 // `Tags: [[MOC]]` link. It stays optional: a scopeless thought still captures in
 // one tap. (The typed funnel schema still lives on the JSON /ingest API.)
-function captureForm() {
+//
+// The screen never becomes a dead end: a capture posts, redirects, and lands back
+// HERE with a self-dismissing toast (see POST /ingest), so consecutive thoughts
+// go in without a tap in between. A rejected submission re-renders in place with
+// its text intact — losing a typed thought to a validation error is the one
+// failure this pipeline must not have.
+interface CaptureView {
+  /** Set when a capture just landed → success toast. Names the note by its
+   *  TITLE, not its timestamped filename — the receipt has to read at a glance
+   *  on a phone — and untitled memos (the one-tap path) just say "to inbox". */
+  ok?: { title: string };
+  /** The capture was a de-dup no-op → neutral toast. */
+  dup?: boolean;
+  /** Submitted values to re-fill after a rejection. */
+  values?: Record<string, string>;
+  error?: string;
+}
+
+function captureForm(v: CaptureView = {}) {
   const f = funnelById("memo") ?? FUNNELS[0];
   const scopes = getScopes();
+  const toast = v.ok
+    ? html`<div class="toast">✓ captured${v.ok.title ? html` → “${v.ok.title}”` : " to inbox"}</div>`
+    : v.dup
+      ? html`<div class="toast dup">↩ duplicate ignored — this matches a capture just made.</div>`
+      : "";
   return layout(
     "capture",
     html`
+      ${toast}
       <h1>capture</h1>
+      ${v.error ? html`<p class="flash err">${v.error}</p>` : ""}
       <form method="post" action="/ingest" class="capture-form">
         <input type="hidden" name="idem" value="${randomUUID()}">
         <input type="hidden" name="funnel" value="${f.id}">
         <div class="cap-fields">
-          ${f.fields.map((fl) => html`<label>${fl.label} ${fl.required ? html`<span class="req">*</span>` : ""}</label>${control(fl, scopes)}`)}
+          ${f.fields.map((fl) => html`<label>${fl.label} ${fl.required ? html`<span class="req">*</span>` : ""}</label>${control(fl, scopes, v.values?.[fl.key] ?? "")}`)}
         </div>
         <div class="cap-actions">
           <button class="btn" type="submit">capture</button>
@@ -77,14 +102,18 @@ function captureForm() {
   );
 }
 
-app.get("/", (c) => c.html(captureForm()));
+// `?ok=` (even empty) means "a capture just landed" — the toast is the receipt.
+app.get("/", (c) => {
+  const ok = c.req.query("ok");
+  return c.html(captureForm({ ok: ok === undefined ? undefined : { title: ok }, dup: c.req.query("dup") === "1" }));
+});
 // old per-funnel URLs fold into the single untyped capture form
 app.get("/new/:funnel", (c) => c.redirect("/"));
 
 // Shared capture: validate → build → de-dup → commit. Used by the web form
 // (HTML) and the JSON API alike, so both behave identically.
 type CaptureResult =
-  | { kind: "ok"; path: string }
+  | { kind: "ok"; path: string; title: string }
   | { kind: "duplicate" }
   | { kind: "error"; message: string };
 
@@ -105,7 +134,9 @@ async function doCapture(funnelId: string, raw: Record<string, unknown>, idem?: 
 
   const path = vaultRel(VAULT_SUBDIR, "inbox", `${stamp()}-${slug(note.title)}.md`);
   await commitCapture(path, composed, `inbox: ${funnel.id} capture`);
-  return { kind: "ok", path };
+  // The TYPED title (may be empty — a memo captures untitled), not the note's
+  // fallback "memo": the toast reads it back, and "memo" reads as noise.
+  return { kind: "ok", path, title: input.title ?? "" };
 }
 
 // ── Capture: ingest → inbox/ (web form → HTML; JSON body → JSON, for the iOS
@@ -124,18 +155,18 @@ app.post("/ingest", async (c) => {
     if (res.kind === "duplicate") return c.json({ status: "duplicate" }, 200);
     return c.json({ error: res.message }, 400);
   }
+  // Rejected: re-render the form with what was typed, rather than bouncing to a
+  // dead end that drops it.
   if (res.kind === "error") {
-    const back = funnelId ? `/?funnel=${encodeURIComponent(funnelId)}` : "/";
-    return c.html(layout("missing", html`<p class="flash">${res.message}</p><p><a href="${back}">← back</a></p>`, "capture"), 400);
+    const funnel = funnelById(funnelId) ?? funnelById("memo")!;
+    const values: Record<string, string> = {};
+    for (const fl of funnel.fields) values[fl.key] = String(raw[fl.key] ?? "");
+    return c.html(captureForm({ values, error: res.message }), 400);
   }
-  if (res.kind === "duplicate") {
-    return c.html(layout("duplicate", html`
-      <p class="flash">↩ duplicate ignored — this matches a capture just made.</p>
-      <p><a href="/">＋ capture another</a> · <a href="/vault">browse vault</a></p>`, "capture"));
-  }
-  return c.html(layout("captured", html`
-    <p class="flash">✓ captured → <code>${res.path}</code></p>
-    <p><a href="/">＋ capture another</a> · <a href="/vault">browse vault</a></p>`, "capture"));
+  // Post/redirect/get back to the capture screen — a reload can't re-submit, and
+  // the next thought needs no "capture another" tap. The toast rides the query.
+  const q = res.kind === "duplicate" ? "dup=1" : `ok=${encodeURIComponent(res.title)}`;
+  return c.redirect(`/?${q}`, 303);
 });
 
 // ── Vault viewer ────────────────────────────────────────────────────────────

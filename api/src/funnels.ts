@@ -41,6 +41,24 @@ const yaml = (fm: Record<string, unknown>): string => {
   return lines.join("\n");
 };
 
+/** Append a `#task` atom to an existing note's raw text — how the desk FILES a
+ *  task, since a task belongs to the scope whose note it physically lives in.
+ *  Lands at the end of a `## Tasks` section when the note has one, else at the
+ *  end of the note. Operates on raw file text (frontmatter included) so nothing
+ *  round-trips through a YAML re-serialiser. */
+export function appendTaskLine(raw: string, line: string): string {
+  const lines = raw.replace(/\s+$/, "").split("\n");
+  const heading = lines.findIndex((l) => /^#{1,6}\s+tasks\s*$/i.test(l));
+  if (heading === -1) return `${lines.join("\n")}\n\n${line}\n`;
+  // End of that section = the next heading of any level, blank lines trimmed
+  // back so the atom joins the list rather than floating below it.
+  let end = lines.findIndex((l, i) => i > heading && /^#{1,6}\s/.test(l));
+  if (end === -1) end = lines.length;
+  while (end > heading + 1 && lines[end - 1].trim() === "") end--;
+  lines.splice(end, 0, line);
+  return `${lines.join("\n")}\n`;
+}
+
 export const compose = (n: BuiltNote): string =>
   `${yaml(n.frontmatter)}\n\n${n.body.trim()}\n`;
 
@@ -49,6 +67,27 @@ export const compose = (n: BuiltNote): string =>
  *  no scope was picked. Parsed back out by `inbox.ts` for triage pre-fill. */
 export const scopeLink = (scope?: string): string =>
   scope?.trim() ? `Tags: [[${scope.trim()}]]\n` : "";
+
+/** Obsidian Tasks' five priority levels → their signifiers. No entry = normal. */
+export const PRIORITY_SIGNIFIER: Record<string, string> = {
+  highest: "🔺", high: "⏫", medium: "🔼", low: "🔽", lowest: "⏬",
+};
+
+/** Render one `#task` atom — the vault's task unit is this LINE, so it is built
+ *  once here and reused by capture (which wraps it in an inbox note) and triage
+ *  (which appends it to a scope note). Field order follows Obsidian Tasks:
+ *  description → priority → dates → the `#task` global filter last.
+ *
+ *  The description is flattened to a single line and stripped of a `#task` the
+ *  user typed themselves — two of them on one line is a malformed atom. */
+export function taskLine(i: Record<string, string>): string {
+  const text = (i.title ?? "")
+    .replace(/(?:^|\s)#task(?![\w/-])/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const parts = [text, PRIORITY_SIGNIFIER[i.priority ?? ""] ?? "", i.due ? `📅 ${i.due}` : "", "#task"];
+  return `- [ ] ${parts.filter(Boolean).join(" ")}`;
+}
 
 const MEDIA_SCOPE: Record<string, string> = {
   Game: "Video Games",
@@ -74,20 +113,23 @@ export const FUNNELS: Funnel[] = [
     }),
   },
   {
-    id: "todo",
-    label: "TODO",
-    hint: "a task with status + due",
+    id: "task",
+    label: "Task",
+    hint: "a dated atom — one next action",
     fields: [
-      { key: "title", label: "title", type: "text", required: true },
-      { key: "body", label: "detail", type: "textarea" },
-      { key: "status", label: "status", type: "select", options: ["open", "in-progress"] },
+      { key: "title", label: "what needs doing", type: "text", required: true },
       { key: "due", label: "due", type: "date" },
+      { key: "priority", label: "priority", type: "select", options: Object.keys(PRIORITY_SIGNIFIER) },
       { key: "scope", label: "scope", type: "scope" },
     ],
+    // A task is a LINE, not a note (see [[Tags]]) — so this builds the smallest
+    // note that CARRIES one. Captured, it lands in `inbox/` and `/todo` shows it
+    // as an unfiled atom straight away; triage then lifts the line out and
+    // appends it to its scope note, which is what "filed" means.
     build: (i) => ({
       title: i.title,
-      frontmatter: { tags: ["memo", "todo"], status: i.status || "open", due: i.due || undefined },
-      body: `${scopeLink(i.scope)}# ${i.title}\n\n${i.body || ""}`,
+      frontmatter: { tags: ["memo"] },
+      body: `${scopeLink(i.scope)}# ${i.title}\n\n${taskLine(i)}`,
     }),
   },
   {
@@ -128,4 +170,9 @@ export const FUNNELS: Funnel[] = [
   },
 ];
 
-export const funnelById = (id: string): Funnel | undefined => FUNNELS.find((f) => f.id === id);
+/** Retired funnel ids, kept resolvable so an existing caller (an iOS Shortcut
+ *  posting `funnel: "todo"` to /ingest) doesn't start 400ing on a rename. */
+const ALIASES: Record<string, string> = { todo: "task" };
+
+export const funnelById = (id: string): Funnel | undefined =>
+  FUNNELS.find((f) => f.id === (ALIASES[id] ?? id));

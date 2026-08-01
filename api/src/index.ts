@@ -3,18 +3,18 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { html, raw } from "hono/html";
 import { layout } from "./layout.js";
-import { FUNNELS, funnelById, compose, type Field } from "./funnels.js";
+import { FUNNELS, funnelById, compose, taskLine, appendTaskLine, type Field } from "./funnels.js";
 import { commitCapture, createNote, stamp, slug } from "./notes.js";
 import { VAULT_SUBDIR, vaultRel } from "./config.js";
 import { seenRecently, contentHash } from "./dedup.js";
 import { randomUUID } from "node:crypto";
 import { submitProposal, listProposals, getProposal, setStatus, updateProposal, type Proposal, type ProposalStatus } from "./proposals.js";
-import { getScopes, getNote, listNotes, backlinksFor, invalidate, noteExists } from "./vault.js";
+import { getScopes, getNote, listNotes, backlinksFor, invalidate, noteExists, readNoteRaw } from "./vault.js";
 import { listInbox, getInboxNote, type InboxNote } from "./inbox.js";
 import { renderMarkdown, renderInline } from "./render.js";
 import { gitStore } from "./git.js";
 import {
-  listTasks, groupByDue, completedTasks, todayISO, daysBetween, effectiveDate,
+  listTasks, groupByDue, completedTasks, todayISO, daysBetween, effectiveDate, parseTaskLine,
   type Task, type TaskGroup,
 } from "./tasks.js";
 
@@ -468,12 +468,26 @@ function renderEditForm(p: Proposal) {
 // memo at the root, or discard — each as one atomic op (revertable via /history).
 const URL_RE = /https?:\/\/[^\s)]+/;
 
+/** The `#task` atom a memo already carries, if it was captured through the task
+ *  funnel. Re-typing at the desk rebuilds the line from the form, so without
+ *  this its due date and priority would be silently dropped on the way in. */
+function memoAtom(memo: InboxNote): Task | null {
+  const lines = memo.text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const t = parseTaskLine(lines[i], memo.name, "inbox", i + 1);
+    if (t) return t;
+  }
+  return null;
+}
+
 // Deterministic pre-fill (no LLM): the memo title → a `title` field, the memo
 // body → the funnel's main text field, a URL in the body → a `url` field, and the
 // scope picked at capture time → the scope dropdown (so it survives re-typing).
 function prefillFor(f: Field, memo: InboxNote): string {
-  if (f.key === "title") return memo.title;
+  if (f.key === "title") return memoAtom(memo)?.text || memo.title;
   if (f.type === "scope") return memo.scope ?? "";
+  if (f.key === "due") return memoAtom(memo)?.due ?? "";
+  if (f.key === "priority") return memoAtom(memo)?.priority ?? "";
   if (f.type === "textarea") return memo.text;
   if (f.type === "url") return memo.text.match(URL_RE)?.[0] ?? "";
   return "";
@@ -560,6 +574,34 @@ app.post("/review/triage/:name", async (c) => {
   const missing = funnel.fields.filter((fl) => fl.required && !input[fl.key]).map((fl) => fl.label);
   if (missing.length) {
     return c.html(renderTriageForm(memo, funnelId, getScopes(), input, `missing required: ${missing.join(", ")}`), 400);
+  }
+
+  // Filing a TASK is not "make a note" — a task is a line, and it is filed by
+  // living in its scope's note ([[Tags]]). So the changeset appends the atom to
+  // that note and drops the inbox memo, in one op. With no scope picked there's
+  // nothing to append to, so it falls through and files as its own note, which
+  // still leaves a real (if scopeless) atom rather than losing the capture.
+  const scopeKey = funnel.fields.find((fl) => fl.type === "scope")?.key;
+  const target = scopeKey ? input[scopeKey] : "";
+  if (funnel.id === "task" && target && noteExists(target)) {
+    const raw = readNoteRaw(target);
+    if (!raw) return c.html(await renderReview({ ok: false, msg: `✗ could not read “${target}”` }), 409);
+    const line = taskLine(input);
+    try {
+      const res = await gitStore().commit(
+        {
+          ops: [
+            { op: "delete", path: inboxRel },
+            { op: "put", path: vaultRel(VAULT_SUBDIR, `${target}.md`), content: appendTaskLine(raw, line) },
+          ],
+        },
+        { message: `triage: task → ${target} ← inbox/${memo.name}` },
+      );
+      invalidate();
+      return c.html(await renderReview({ ok: true, msg: `✓ filed atom → ${target} (op ${res.id.slice(0, 8)})` }));
+    } catch (e) {
+      return c.html(await renderReview({ ok: false, msg: `✗ file failed: ${(e as Error).message}` }), 409);
+    }
   }
 
   const note = funnel.build(input);

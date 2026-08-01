@@ -6,13 +6,14 @@
     "dev": "tsx src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "npm run test:git && npm run test:proposals && npm run test:dedup && npm run test:object && npm run test:migrate && npm run test:tasks",
+    "test": "npm run test:git && npm run test:proposals && npm run test:dedup && npm run test:object && npm run test:migrate && npm run test:tasks && npm run test:funnels",
     "test:git": "tsx test/git.test.ts",
     "test:proposals": "tsx test/proposals.test.ts",
     "test:dedup": "tsx test/dedup.test.ts",
     "test:object": "tsx test/objectadapter.test.ts",
     "test:migrate": "tsx test/migrate.test.ts",
-    "test:tasks": "tsx test/tasks.test.ts"
+    "test:tasks": "tsx test/tasks.test.ts",
+    "test:funnels": "tsx test/funnels.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",

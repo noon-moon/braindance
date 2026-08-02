@@ -393,7 +393,7 @@ const WEEKDAY: Record<string, number> = {
   thursday: 4, thu: 4, thur: 4, thurs: 4, friday: 5, fri: 5, saturday: 6, sat: 6,
 };
 
-type Recur =
+export type Recur =
   | { kind: "interval"; step: number; unit: "day" | "week" | "month" | "year"; whenDone: boolean }
   | { kind: "weekday"; days: number[]; step: number; whenDone: boolean }
   /** `day` is 1–31, or 0 meaning "last day of the month". */

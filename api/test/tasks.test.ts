@@ -11,6 +11,7 @@ process.env.VAULT_PATH = vault;
 process.env.TZ = "UTC"; // deterministic "today"
 const {
   parseTaskLine, listTasks, groupByDue, completedTasks, addDays, daysBetween, todayISO,
+  completeLine, completeInFile, nextRecurrence, canComplete, recurrenceSupported,
 } = await import("../src/tasks.js");
 
 let passed = 0;
@@ -118,6 +119,68 @@ async function main() {
   check("daysBetween is negative backwards", daysBetween("2026-07-29", "2026-07-20") === -9);
   check("todayISO returns a YYYY-MM-DD date", /^\d{4}-\d{2}-\d{2}$/.test(todayISO()));
   check("todayISO honours TZ (UTC fixture)", todayISO(new Date("2026-07-29T23:30:00Z")) === "2026-07-29");
+
+  console.log("test: nextRecurrence");
+  check("every day steps one day", nextRecurrence("every day", "2026-07-20", "2026-07-25") === "2026-07-21");
+  check("…from the COMPLETION date when the rule says when done",
+    nextRecurrence("every day when done", "2026-07-20", "2026-07-25") === "2026-07-26");
+  check("every 3 weeks steps 21 days", nextRecurrence("every 3 weeks", "2026-07-20", "x") === "2026-08-10");
+  check("every month shifts the month, not 30 days", nextRecurrence("every month", "2026-01-15", "x") === "2026-02-15");
+  check("a day-of-month that doesn't exist clamps", nextRecurrence("every month", "2026-01-31", "x") === "2026-02-28");
+  check("every year shifts the year", nextRecurrence("every year", "2026-02-28", "x") === "2027-02-28");
+  check("an undated recurring atom falls back to today",
+    nextRecurrence("every week", "", "2026-07-25") === "2026-08-01");
+  check("a rule we don't handle is refused, not guessed", nextRecurrence("every Sunday", "2026-07-20", "x") === null);
+  check("…and recurrenceSupported agrees", !recurrenceSupported("every 3rd Thursday") && recurrenceSupported("every 2 days"));
+
+  console.log("test: completeLine");
+  const done1 = completeLine("- [ ] Renew domain 📅 2026-07-20 #task", "2026-07-25");
+  check("the box is ticked", done1!.done.startsWith("- [x] Renew domain"));
+  check("the done date lands before the trailing #task",
+    done1!.done === "- [x] Renew domain 📅 2026-07-20 ✅ 2026-07-25 #task");
+  check("a one-shot atom spawns no next instance", done1!.next === null);
+  check("indentation and bullet style survive",
+    completeLine("  * [ ] Sub-atom #task", "2026-07-25")!.done === "  * [x] Sub-atom ✅ 2026-07-25 #task");
+  check("a line that tags mid-text still gets its done date",
+    completeLine("- [ ] #task with trailing prose", "2026-07-25")!.done === "- [x] #task with trailing prose ✅ 2026-07-25");
+  check("an already-done atom is refused", completeLine("- [x] Done ✅ 2026-07-01 #task", "2026-07-25") === null);
+  check("a non-task line is refused", completeLine("- [ ] just a checkbox", "2026-07-25") === null);
+
+  const recDone = completeLine("- [ ] Process inbox 🔁 every day when done 📅 2026-07-20 #task", "2026-07-25");
+  check("a recurring atom is completed", recDone!.done.includes("✅ 2026-07-25"));
+  check("…and spawns the next instance", recDone!.next === "- [ ] Process inbox 🔁 every day when done 📅 2026-07-26 #task");
+  const multi = completeLine("- [ ] Backup 🔁 every week ⏳ 2026-07-18 📅 2026-07-20 #task", "2026-07-25");
+  check("every date shifts by the same delta, keeping its offset",
+    multi!.next === "- [ ] Backup 🔁 every week ⏳ 2026-07-25 📅 2026-07-27 #task");
+  const undatedRec = completeLine("- [ ] Water plants 🔁 every 2 days #task", "2026-07-25");
+  check("an undated recurring atom gains a date, or it'd never come due",
+    undatedRec!.next === "- [ ] Water plants 🔁 every 2 days 📅 2026-07-27 #task");
+  check("a rule we won't roll forward blocks completion entirely",
+    completeLine("- [ ] Church 🔁 every Sunday #task", "2026-07-25") === null);
+  check("canComplete gates the UI on the same rule",
+    !canComplete(parseTaskLine("- [ ] Church 🔁 every Sunday #task", "n", "", 1)!) &&
+    canComplete(parseTaskLine("- [ ] Plain #task", "n", "", 1)!));
+
+  console.log("test: completeInFile");
+  const file = ["---", "tags:", "  - scope", "---", "", "# Loon", "", "- [ ] Alpha #task", "- [ ] Beta #task", ""].join("\n");
+  const atoms = parseTaskLine("- [ ] Beta #task", "Loon", "", 4)!;
+  const out = completeInFile(file, 4, atoms.raw, "2026-07-25");
+  check("the right line is rewritten, by body-relative number",
+    out!.includes("- [ ] Alpha #task\n- [x] Beta ✅ 2026-07-25 #task"));
+  check("frontmatter is left alone", out!.startsWith("---\ntags:\n  - scope\n---"));
+  check("a line number that no longer matches falls back to a unique text match",
+    completeInFile(file, 99, "- [ ] Beta #task", "2026-07-25")!.includes("- [x] Beta"));
+  check("an atom that changed under us is refused",
+    completeInFile(file, 4, "- [ ] Beta rewritten in Obsidian #task", "2026-07-25") === null);
+  const dupes = ["- [ ] Same #task", "- [ ] Same #task", ""].join("\n");
+  check("an ambiguous duplicate line is refused rather than guessed",
+    completeInFile(dupes, 9, "- [ ] Same #task", "2026-07-25") === null);
+  check("…but the recorded line number resolves the duplicate",
+    completeInFile(dupes, 1, "- [ ] Same #task", "2026-07-25") === "- [x] Same ✅ 2026-07-25 #task\n- [ ] Same #task\n");
+  const recFile = ["- [ ] Daily 🔁 every day 📅 2026-07-20 #task", ""].join("\n");
+  check("a new instance is inserted ABOVE the completed line",
+    completeInFile(recFile, 1, "- [ ] Daily 🔁 every day 📅 2026-07-20 #task", "2026-07-25")!.split("\n")[0]
+      === "- [ ] Daily 🔁 every day 📅 2026-07-21 #task");
 
   console.log(`\n${passed} checks passed`);
 }

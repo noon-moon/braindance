@@ -15,6 +15,7 @@ import { renderMarkdown, renderInline } from "./render.js";
 import { gitStore } from "./git.js";
 import {
   listTasks, groupByDue, completedTasks, todayISO, daysBetween, effectiveDate, parseTaskLine,
+  canComplete, completeInFile, readTaskFile,
   type Task, type TaskGroup,
 } from "./tasks.js";
 
@@ -208,18 +209,38 @@ app.get("/vault/:name", (c) => {
 // ── TODO: every #task atom in the vault, in Reminders-style date sections ────
 // The roll-up [[TODO]] does in Obsidian, done natively here — the vault's `tasks`
 // query blocks can't render in this viewer, and this is the mobile surface for
-// "what's due". Read-only: completing an atom is a vault write, done in Obsidian.
+// "what's due". Ticking a box writes the vault (POST /todo/complete): the atom is
+// the line, so completion rewrites that line in place, as one revertable op.
 const PRI_GLYPH: Record<string, string> = {
   highest: "🔺", high: "⏫", medium: "🔼", low: "🔽", lowest: "⏬",
 };
 
-function taskRow(t: Task, group: TaskGroup, today: string) {
+/** The checkbox. A real one for an atom we can complete — a tiny form, because
+ *  this app runs no JS — and an inert glyph otherwise: done already, or a `🔁`
+ *  rule we won't roll forward (see canComplete), where ticking here would drop
+ *  the recurrence. Those stay Obsidian's job, and say so. */
+function taskBox(t: Task, showDone: boolean) {
+  if (!canComplete(t)) {
+    const why = t.status === "done" ? "" : "recurring — complete in Obsidian";
+    return html`<span class="box" title="${why}">${t.status === "done" ? "☑" : "☐"}</span>`;
+  }
+  return html`<form class="tick" method="post" action="/todo/complete">
+    <input type="hidden" name="note" value="${t.note}">
+    <input type="hidden" name="dir" value="${t.dir}">
+    <input type="hidden" name="line" value="${t.line}">
+    <input type="hidden" name="raw" value="${t.raw}">
+    ${showDone ? html`<input type="hidden" name="done" value="1">` : ""}
+    <button class="box" type="submit" title="complete" aria-label="complete “${t.text}”">☐</button>
+  </form>`;
+}
+
+function taskRow(t: Task, group: TaskGroup, today: string, showDone = false) {
   const date = effectiveDate(t);
   // The date is redundant under a dated heading, but load-bearing under Overdue
   // (a mixed bucket) — so show it there, with how late it is.
   const late = group.kind === "overdue" && date ? daysBetween(date, today) : 0;
   return html`<li class="${t.status === "done" ? "done" : ""}">
-    <span class="box">${t.status === "done" ? "☑" : "☐"}</span>
+    ${taskBox(t, showDone)}
     <div class="t-main">
       <div class="t-text">${raw(renderInline(t.text))}</div>
       <div class="t-meta">
@@ -249,10 +270,15 @@ app.get("/todo", (c) => {
   const section = (g: TaskGroup) => html`
     <section class="tg ${g.kind}">
       <h2>${g.label} <span class="n">${g.tasks.length}</span></h2>
-      <ul class="tasks">${g.tasks.map((t) => taskRow(t, g, today))}</ul>
+      <ul class="tasks">${g.tasks.map((t) => taskRow(t, g, today, showDone))}</ul>
     </section>`;
 
+  // Same post/redirect/get receipt the capture screen uses.
+  const ok = c.req.query("ok");
+  const err = c.req.query("err");
   return c.html(layout("todo", html`
+    ${ok !== undefined ? html`<div class="toast">✓ completed${ok ? html` → “${ok}”` : ""}</div>` : ""}
+    ${err ? html`<div class="toast err">✗ ${err}</div>` : ""}
     <h1>todo <span class="muted">(${open})</span></h1>
     <div class="meta">${today}${overdue ? html` · <span class="late">${overdue} overdue</span>` : ""}</div>
     ${open === 0
@@ -269,6 +295,35 @@ app.get("/todo", (c) => {
           <ul class="tasks">${done.map((t) => taskRow(t, { kind: "undated", label: "", date: null, tasks: [] }, today))}</ul>
         </section>`
       : ""}`, "todo"));
+});
+
+// Tick a box → rewrite that line in its note, as one atomic op. The whole write
+// is guarded on the line still reading exactly as the page rendered it, so a
+// stale tab can never complete an atom the vault has since moved or edited.
+// There's no un-complete button: a mis-tap is one revert away in /history.
+app.post("/todo/complete", async (c) => {
+  const b = await c.req.parseBody();
+  const back = b.done === "1" ? "/todo?done=1" : "/todo";
+  const sep = back.includes("?") ? "&" : "?";
+  const bounce = (q: string) => c.redirect(`${back}${sep}${q}`, 303);
+
+  const file = readTaskFile(String(b.dir ?? ""), String(b.note ?? ""));
+  if (!file) return bounce("err=no+such+note");
+
+  const updated = completeInFile(file.text, Number(b.line ?? 0), String(b.raw ?? ""), todayISO());
+  if (!updated) return bounce("err=that+line+changed+—+reload+and+try+again");
+
+  const t = parseTaskLine(String(b.raw ?? ""), "", "", 0);
+  try {
+    await gitStore().commit(
+      { ops: [{ op: "put", path: vaultRel(VAULT_SUBDIR, file.rel), content: updated }] },
+      { message: `todo: complete ${t?.text ?? "atom"}` },
+    );
+    invalidate();
+    return bounce(`ok=${encodeURIComponent(t?.text ?? "")}`);
+  } catch (e) {
+    return bounce(`err=${encodeURIComponent((e as Error).message)}`);
+  }
 });
 
 // ── History: operation log + undo ───────────────────────────────────────────

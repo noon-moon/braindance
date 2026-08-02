@@ -8,7 +8,7 @@ On-demand detail for the serving stack, referenced compactly from [`CLAUDE.md`](
 - `www/` — the static homepage Caddy serves at your domain (from `/srv/www`), on the VPS path.
 - `Caddyfile`, `docker-compose.yml`, `deploy.sh` — the serving stack.
 
-> **`www/` is not `ctx/www/`.** The repo-root `www/` above is the VPS path. **`ctx/www/` is the published site that ships to GitHub Pages** — homepage, static pages, and the Quartz garden at `/garden` — and is the *recommended* way to have a public site, with no server at all. The two are independent: you do not need the VPS stack to publish, and publishing is not what the api does. See [`ctx/noon-moon-net.md`](../ctx/noon-moon-net.md).
+> **Three different `www`-ish things — keep them straight.** The repo-root **`www/`** above is this VPS path: the homepage Caddy serves from `/srv/www`, and **this instance's actual homepage**. **`ctx/www/`** is a *separate* site — the template's zero-server GitHub Pages path for forks, opt-in via the repo variable `ENABLE_PAGES` and **unused here**. Publishing *notes* is a third thing again: the projection into the public `noon-moon-net` repo, which the VPS serves at `/garden`. None of the three is what the api does. See [`ctx/noon-moon-net.md`](../ctx/noon-moon-net.md).
 
 ## Capture pipeline
 

@@ -2,17 +2,23 @@
 
 Projects `publish: true` notes from your vault flat into a Quartz garden's `garden/content` (served at `/garden/<slug>`). Deterministic; run it, review the diff, commit. Full design & rationale: [`ctx/noon-moon-net.md`](../../noon-moon-net.md).
 
-**The default target is the in-repo garden, `ctx/www/garden/`**, which `.github/workflows/pages.yml` builds and deploys to GitHub Pages. Point `--pub` at a separate garden repo instead if you want the stronger *structural* isolation of a public repo that never contains a private note (see "Two topologies" below).
+**Two topologies — and the default is not the one this instance uses.** `--pub` defaults to the in-repo garden `ctx/www/garden/`, the zero-server path a fresh fork gets (GitHub Pages). **This instance publishes into the separate public repo `noon-moon/noon-moon-net`** for the stronger *structural* isolation, so **set `PUB_REPO` (or pass `--pub`)** rather than relying on the default. Both are supported and use the same code; see "Two topologies" below.
 
 ```bash
 npm install                                  # first time
+export VAULT_REPO=~/dev/vault                # external vault (see below)
+export PUB_REPO=~/dev/noon-moon-net          # this instance's garden repo
+
 npm run publish -- --dry                     # report what would publish, write nothing
-npm run publish                              # project into ctx/www (→ ctx/www/garden/content)
+npm run publish                              # write it
 npm run publish -- --scrub                   # downgrade private links to text instead of blocking
-npm run publish -- --pub /path --vault /path
+npm run publish -- --pub /path --vault /path # or be explicit per-run
 
 npm run verify                               # re-audit the COMMITTED projection, vault-blind
+npm run verify -- --pub ~/dev/noon-moon-net  # …against the garden repo
 ```
+
+Every run prints the `vault:` and `pub:` it resolved — check that line before trusting a dry run.
 
 `--pub` names the directory *containing* `garden/`, not the garden itself.
 
@@ -35,9 +41,9 @@ Pipeline (per note): `stripScaffolding` (drop `Created:`/`Tags:` preamble, `# Re
 
 ## Two topologies
 
-**In-repo (default).** The garden lives at `ctx/www/garden/` and ships to GitHub Pages. The repo stays private; only the built artifact is public. Isolation is enforced by three checks rather than by construction: `pages.yml` is build-scope-isolated (no step reads `ctx/vault`), the publish gate re-audits the committed projection vault-blind, and `disjoint-www.yml` fails any PR mixing `ctx/www/**` with anything outside it. Zero servers, nothing to provision.
+**Separate garden repo — what this instance uses.** Point `--pub`/`PUB_REPO` at a public Quartz repo (`noon-moon/noon-moon-net`), review the diff there, and let that repo's own Action build and deploy it — here, rsync to the VPS behind Caddy at `/garden`. The guarantee is **structural**: a public repo cannot leak a note it never contains, and that holds even if every check fails. Cost is a second repo and a second deploy. This is the topology `ctx/noon-moon-net.md` is designed around.
 
-**Separate garden repo.** Point `--pub`/`PUB_REPO` at a public Quartz repo, review the diff there, and let that repo's own Action build and deploy it. The guarantee is structural — a public repo cannot leak a note it never contains — at the cost of a second repo and its deploy. This is the topology `ctx/noon-moon-net.md` was originally designed around.
+**In-repo — the tool's default, and what a fresh fork gets.** The garden lives at `ctx/www/garden/` and ships to GitHub Pages with zero servers. The repo stays private; only the built artifact is public. Isolation there is procedural, so it's enforced three ways: `pages.yml` is build-scope-isolated (no step reads `ctx/vault`), `verify` re-audits the committed projection vault-blind as the first CI step, and `disjoint-www.yml` fails any PR mixing `ctx/www/**` with anything outside it. **Its deploy is opt-in** — `pages.yml`'s deploy job is skipped unless the repo variable `ENABLE_PAGES` is `true`.
 
 ## The gate runs twice
 

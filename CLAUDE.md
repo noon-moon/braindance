@@ -14,7 +14,7 @@ ctx/
     _ephemeral/  Non-persisted scratch — transient inputs & outputs; gitignored but Obsidian-visible
   skills/    LLM-agnostic skill prompts; installed into a harness via ctx/tools/sys/sync.sh
   tools/     Lifecycle tooling (sys/), orchestration/ (multi-agent fleet helpers), pub/ (the publish tool), + standalone tools (e.g. music/)
-  www/       The PUBLISHED site → GitHub Pages: homepage, static pages, garden/ (vendored Quartz; content/ is machine-owned)
+  www/       GitHub Pages site (homepage + vendored Quartz garden) — the template's zero-server publishing path for forks; opt-in, unused on this instance
 api/         Admin app: mobile note-capture API + read-only vault viewer (Hono/Node)
 www/         Static homepage for the optional VPS path — distinct from ctx/www/ (see below)
 Caddyfile, docker-compose.yml, deploy.sh   Serving stack
@@ -75,6 +75,6 @@ Full discipline (R1–R7), the `bd` workflow, and fleet tooling: [`AGENTS.md`](A
 - **Template, not fork** — generic/guideline/tooling/skill/doc changes land on the core template (`noon-moon/braindance`, `master`); a fork carries only instance-specific content and pulls the rest via `git merge upstream/master`. (See the note at the top of this file.)
 - **Output format** — write Markdown, and put every span of code, console/terminal output, query, config, or structured data in a fenced code block with a language hint (```python, ```sql, ```console, ```json, …). This holds for what we write to `_ephemeral`, to vault notes, and back to the user — never paste code or command output as bare prose.
 - **Edit skills in `ctx/skills/`, never the installed harness copy** under `.claude/commands/` — the change would be lost or hit the wrong file. (Mechanics: [`docs/vault.md`](docs/vault.md).)
-- **A `ctx/www/` change ships on its own.** `ctx/www/` is the *published* site (→ GitHub Pages); the repo-root `www/` is the separate, optional VPS homepage. `disjoint-www.yml` **fails any PR touching `ctx/www/**` and anything outside it** — that's a privacy control (a vault edit must never ride along with a publish), not a nuisance. Never hand-edit `ctx/www/garden/content/<slug>.md`: those are machine-owned by `ctx/tools/pub`. (Detail: [`ctx/noon-moon-net.md`](ctx/noon-moon-net.md).)
+- **Two publishing topologies — don't mix them up.** This instance projects `publish: true` notes into the **separate public repo `noon-moon/noon-moon-net`**, served by the VPS at `/garden`; run the publish tool with `PUB_REPO`/`--pub` set, since its default points elsewhere. `ctx/www/` + `pages.yml` is the **zero-server GitHub Pages path the template ships for forks** — opt-in via the repo variable `ENABLE_PAGES`, unset here, so its deploy self-skips. (The repo-root `www/` is a third thing: the Caddy homepage.) If you do touch `ctx/www/`, it ships **on its own** — `disjoint-www.yml` fails any PR mixing it with anything else, a privacy control rather than a nuisance. Never hand-edit `garden/content/<slug>.md` in either topology: machine-owned by `ctx/tools/pub`. (Detail: [`ctx/noon-moon-net.md`](ctx/noon-moon-net.md).)
 - **Don't touch** `.obsidian/` config unless explicitly asked (it's the Obsidian workspace, easy to corrupt).
 - **Don't** fold the flat vault into folders, or mass-rewrite existing notes.

@@ -177,12 +177,19 @@ static pages you drop in, and a [Quartz](https://quartz.jzhao.xyz) digital garde
 `/garden` — deployed to **GitHub Pages** with zero servers. This is the recommended
 default; the VPS/Caddy stack below is the advanced alternative.
 
-**One-time setup:** in the repo, **Settings → Pages → Source = "GitHub Actions"**.
-That's it — push and `.github/workflows/pages.yml` builds `ctx/www` and deploys it to
+**One-time setup**, because publishing this way is **opt-in** — the deploy job self-skips
+until you turn it on, so a fork using the VPS/Caddy topology instead doesn't go red on a
+deploy it never wanted:
+
+1. **Settings → Pages → Source = "GitHub Actions"**.
+2. Set the repo **variable** `ENABLE_PAGES` = `true`.
+
+Then push: `.github/workflows/pages.yml` builds `ctx/www` and deploys it to
 `https://<owner>.github.io/<repo>/`. For a custom domain, set the repo **variable**
 `SITE_CUSTOM_DOMAIN` (e.g. `example.com`); the workflow computes Quartz's `baseUrl` and
 emits a `CNAME` for you. (Pages auto-resolves `/about` → `/about.html`, so no rewrite
-shim is needed.)
+shim is needed.) The **build** job — including the publish gate — runs either way, so
+`ctx/www` stays validated even with deploys off.
 
 **Design your site:** edit `ctx/www/index.html`, and drop any static file/folder under
 `ctx/www/` to add a page (`ctx/www/about.html` → `/about`). The one authoring rule: use

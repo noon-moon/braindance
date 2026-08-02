@@ -11,13 +11,20 @@ ctx/vault/_ephemeral/*
 # Harness-generated sync targets (created by ctx/tools/sys/sync.sh)
 .claude/*
 .cursor/
-# ...except the canonical R1 write-guard hook + its self-test, which are real
+# ...except the canonical guard hooks + their self-tests, which are real
 # source-of-truth carried by the template (not sync-generated). Consumed by a
-# fork's .claude/settings.json PreToolUse hook.
+# fork's .claude/settings.json PreToolUse / SessionStart hooks.
 !.claude/hooks/
 .claude/hooks/*
 !.claude/hooks/block-loon-main-writes.py
 !.claude/hooks/test_block_loon_main_writes.py
+# active-instance model (docs/instances.md): shared registry lib, the C2
+# cross-instance PreToolUse guard, the SessionStart context hook, + their tests.
+!.claude/hooks/_bd_registry.py
+!.claude/hooks/block-cross-instance-writes.py
+!.claude/hooks/test_block_cross_instance_writes.py
+!.claude/hooks/resolve-instance.py
+!.claude/hooks/test_resolve_instance.py
 
 # Node
 node_modules/

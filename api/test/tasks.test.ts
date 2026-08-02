@@ -12,7 +12,7 @@ process.env.TZ = "UTC"; // deterministic "today"
 const {
   parseTaskLine, listTasks, groupByDue, completedTasks, addDays, daysBetween, todayISO,
   completeLine, completeInFile, nextRecurrence, canComplete, recurrenceSupported, groupByScope,
-  parseRecurrence, occurrencesBetween, occurrencesByDate, timeSpan,
+  parseRecurrence, occurrencesBetween, occurrencesByDate, timeSpan, monthWindow, shiftMonth,
 } = await import("../src/tasks.js");
 
 let passed = 0;
@@ -305,6 +305,24 @@ async function main() {
   ], "2026-08-05")[0];
   check("a day reads as a schedule: timed atoms in clock order, all-day last",
     dayOrder.tasks.map((t) => t.text).join(",") === "Standup,Dentist,All-day thing");
+
+  console.log("test: monthWindow");
+  const w = monthWindow("2026-08", "2026-08-02");
+  check("the month's own bounds", w.first === "2026-08-01" && w.last === "2026-08-31");
+  check("the grid starts on the Sunday on or before the 1st", w.gridFrom === "2026-07-26");
+  check("…and ends on the Saturday on or after the last", w.gridTo === "2026-09-05");
+  check("the grid is a whole number of weeks",
+    (daysBetween(w.gridFrom, w.gridTo) + 1) % 7 === 0);
+  const feb = monthWindow("2026-02", "2026-08-02");
+  check("February's length is its own", feb.last === "2026-02-28");
+  const leap = monthWindow("2028-02", "2026-08-02");
+  check("…and a leap February gets its 29th", leap.last === "2028-02-29");
+  check("a month that already starts on Sunday doesn't grow a blank week",
+    monthWindow("2026-11", "2026-08-02").gridFrom === "2026-11-01");
+  check("garbage falls back to today's month", monthWindow("nope", "2026-08-02").month === "2026-08");
+  check("…as does an impossible month", monthWindow("2026-13", "2026-08-02").month === "2026-08");
+  check("shiftMonth crosses a year boundary", shiftMonth("2026-12", 1) === "2027-01");
+  check("…backwards too", shiftMonth("2026-01", -1) === "2025-12");
 
   console.log(`\n${passed} checks passed`);
 }

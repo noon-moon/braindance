@@ -23,6 +23,9 @@
 #   bd wip [msg]    checkpoint uncommitted work in this worktree (rebasable commit)
 #   bd land         rebase onto trunk, push branch, open + squash-merge a PR (audit trail)
 #   bd rm <task>    remove the worktree and its local branch
+#   bd use [<name>] pin this shell to instance <name> (no arg / --auto: back to auto)
+#   bd where        show which instance is current for $PWD, and how it resolved
+#   bd ls-instances list registered instances (* = active, marks the default)
 #
 # "trunk" is origin's default branch (main, master, …), resolved dynamically —
 # never hardcoded — so `bd` works whatever the instance named its trunk.
@@ -44,6 +47,33 @@ unset _bd_self
 BD_REPOS="${REPOS_PATH:-${BD_ROOT:-$BD_CORE/repo}}"
 export BD_REPOS
 BD_WT="${BD_WT:-$HOME/dev/bd-wt}"
+
+# --- active-instance resolution (the multi-instance model; docs/instances.md) -
+# Which braindance is "current" is resolved from where you are, per-shell. The
+# resolver (resolve.sh) walks the ladder and prints the env contract on a hit;
+# _bd_apply exports it. Resolution is STICKY for the shell: a hit switches the
+# active instance, but wandering into neutral dirs (no match) leaves the last one
+# in place — the strict "stop, don't guess" is enforced for agents by the guard
+# hook, not by nagging every prompt. `bd use` pins/overrides explicitly.
+BD_RESOLVE="$BD_CORE/ctx/tools/sys/resolve.sh"
+
+_bd_apply() {  # resolve for $PWD and export what the resolver emits (if any)
+  [ -x "$BD_RESOLVE" ] || return 0
+  local out rc line
+  out="$("$BD_RESOLVE" "$PWD" 2>/dev/null)"; rc=$?
+  [ "$rc" -eq 0 ] && [ -n "$out" ] || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] && export "${line%%=*}=${line#*=}"
+  done <<EOF
+$out
+EOF
+}
+
+_bd_chpwd() {  # cheap: only re-resolve when the directory actually changed
+  [ "$PWD" = "${_BD_LAST_PWD:-}" ] && return 0
+  _BD_LAST_PWD="$PWD"
+  _bd_apply
+}
 
 # Resolve origin's default branch (main, master, …) — never assume `main`, so
 # `bd` works on master-based instances too. Try local origin/HEAD first (no
@@ -107,8 +137,86 @@ bd() {
       cd "$BD_CORE" || return 1
       git worktree remove "$BD_WT/$2" && git branch -D "wt/$2" 2>/dev/null
       ;;
+    use)
+      # bd use <name>  -> pin this shell to <name> (wins over location)
+      # bd use --auto  -> clear the pin; resume location-based resolution
+      case "${2:-}" in
+        ""|--auto|-a)
+          unset BD_USE
+          _bd_apply
+          bd where
+          ;;
+        *)
+          export BD_USE="$2"
+          _bd_apply
+          if [ "${BD_ACTIVE_INSTANCE:-}" = "$2" ]; then
+            bd where
+          else
+            printf "bd: could not activate '%s'.\n" "$2" >&2
+            if [ -z "${BD_ACTIVE_INSTANCE:-}" ] && { [ -n "${VAULT_PATH:-}" ] || [ -n "${REPOS_PATH:-}" ]; }; then
+              printf "    a manual VAULT_PATH/REPOS_PATH is set — resolver is in escape-hatch mode.\n" >&2
+              printf "    unset it (or migrate this shell to the registry) to hand control to the resolver.\n" >&2
+            else
+              printf "    no such instance — see: bd ls-instances\n" >&2
+            fi
+            unset BD_USE
+            return 1
+          fi
+          ;;
+      esac
+      ;;
+    where)
+      # report the instance current for $PWD (and how it was resolved)
+      local _rc _out
+      _out="$("$BD_RESOLVE" "$PWD" 2>&1)"; _rc=$?
+      if [ "$_rc" -eq 3 ]; then
+        printf "instance: (none — no match for %s)\n" "$PWD"
+        printf "  %s\n" "$_out"
+        return 0
+      fi
+      if [ -n "${BD_ACTIVE_INSTANCE:-}" ]; then
+        printf "instance: %s%s\n" "$BD_ACTIVE_INSTANCE" "${BD_USE:+ (pinned)}"
+        printf "  core  = %s\n  vault = %s\n  repos = %s\n" \
+          "${BD_CORE:-<unset>}" "${VAULT_PATH:-<unset>}" "${REPOS_PATH:-<unset>}"
+      elif [ -n "${VAULT_PATH:-}${REPOS_PATH:-}" ]; then
+        printf "instance: (none — manual VAULT_PATH/REPOS_PATH in effect)\n"
+        printf "  vault = %s\n  repos = %s\n" "${VAULT_PATH:-<unset>}" "${REPOS_PATH:-<unset>}"
+      else
+        printf "instance: (none — legacy nested defaults)\n"
+      fi
+      ;;
+    ls-instances)
+      local _reg _f _n _def
+      _reg="${BD_REGISTRY:-${XDG_CONFIG_HOME:-$HOME/.config}/braindance}"
+      if [ -d "$_reg/instances" ]; then
+        _def="$(cat "$_reg/default" 2>/dev/null)"
+        for _f in "$_reg/instances"/*.conf; do
+          [ -e "$_f" ] || continue
+          _n="$(basename "$_f" .conf)"
+          printf "%s%s%s\n" "$_n" \
+            "$([ "$_n" = "${BD_ACTIVE_INSTANCE:-}" ] && printf ' *')" \
+            "$([ "$_n" = "$_def" ] && printf ' (default)')"
+        done
+      else
+        printf "(no instances registered — run ./configure in a clone root)\n"
+      fi
+      ;;
     *)
-      echo "usage: bd {new <task>|ls|wip [msg]|land|rm <task>}"
+      echo "usage: bd {new <task>|ls|wip [msg]|land|rm <task>|use [<name>|--auto]|where|ls-instances}"
       ;;
   esac
 }
+
+# Auto-resolve the active instance on cd, without clobbering existing hooks.
+# Non-disruptive: in escape-hatch/legacy mode the resolver emits nothing, so this
+# is a no-op until you register instances and hand control to the resolver.
+if [ -n "${ZSH_VERSION:-}" ]; then
+  autoload -Uz add-zsh-hook 2>/dev/null && add-zsh-hook chpwd _bd_chpwd
+elif [ -n "${BASH_VERSION:-}" ]; then
+  case "${PROMPT_COMMAND:-}" in
+    *_bd_chpwd*) ;;
+    "")  PROMPT_COMMAND="_bd_chpwd" ;;
+    *)   PROMPT_COMMAND="_bd_chpwd;${PROMPT_COMMAND}" ;;
+  esac
+fi
+_BD_LAST_PWD=""; _bd_chpwd   # resolve once for the shell's starting directory

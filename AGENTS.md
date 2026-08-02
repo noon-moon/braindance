@@ -37,6 +37,17 @@ Full doctrine, the motivating pattern, and the topics-manifest / scope-grant mod
 
 Full R1–R7 mechanics + rationale, the `bd` workflow, and the fleet tooling (`wt.sh`, `orchestration/`): [`docs/worktrees.md`](docs/worktrees.md).
 
+## Active-instance discipline (C1–C4)
+
+One machine may host several braindance clones at once, each governing a different **scope** — its own vault + repos. Which one is **current** is resolved from *where you are*, never a global default. (Registry-backed; `./configure` registers a clone, the shell resolver + `SessionStart` hook set the active instance, and a `PreToolUse` guard enforces C2. Portable across tools even where the hook doesn't run.)
+
+- **C1 — Resolve the active instance before doing work.** Determine which instance governs your cwd — an explicit `bd use <name>` pin, else the nearest owning territory (registry longest-prefix, incl. a worktree's main checkout), else the registry `default`. Never assume a global singleton. The `SessionStart` hook surfaces it; `bd where` reports it on demand.
+- **C2 — Stay inside the active instance.** Reads and writes touch only its resolved `VAULT_PATH` / `REPOS_PATH`. Never reach into another instance's vault or repos — the cross-instance `PreToolUse` guard blocks such a write.
+- **C3 — Ambiguity ⇒ stop, don't guess.** If no instance resolves, or a pin disagrees with cwd, halt and surface it — never silently fall back to the checkout's empty `ctx/vault` scaffolding.
+- **C4 — One command bootstraps a clone.** `./configure` registers the instance (validating the disjoint-territory invariant) and installs the resolver hook — idempotent, per-clone, so N clones coexist and none is "the" global default.
+
+Full mechanics — the registry, the resolution ladder, `configure`, `bd use`/`where`, and the two hooks: [`docs/instances.md`](docs/instances.md).
+
 ## Output conventions
 
 Two defaults hold for the outputs we produce:

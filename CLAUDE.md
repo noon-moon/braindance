@@ -23,6 +23,8 @@ docs/        On-demand detail this core points to (see map below)
 
 **Single external root (`$BD_ROOT`).** The vault and the repos dir are *external resources* the core resolves off one optional knob. Unset ⇒ today's nested layout, byte-for-byte: vault at `<core>/ctx/vault`, repos at `<core>/repo/<name>`. Set `BD_ROOT` and the core, `vault/`, and repos become siblings under it (vault → `$BD_ROOT/vault`, repos → `$BD_ROOT/<name>`); `VAULT_PATH` / `REPOS_PATH` are explicit per-resource overrides. Scratch (`$vault/_ephemeral/`) always rides with the vault so it stays Obsidian-visible. Below, `ctx/vault` and `repo/` name the **default** locations — read them as "the resolved vault / repos dir."
 
+**Multiple instances on one machine.** When several braindance clones coexist (each a different scope), which one is *current* is resolved **per-context, not globally** — from where you are, via a registry `./configure` writes. Manually-exported `BD_ROOT`/`VAULT_PATH`/`REPOS_PATH` are the escape hatch that pins resolution (and keep the resolver dormant). Follow the active-instance discipline (C1–C4) in [`AGENTS.md`](AGENTS.md); mechanics in [`docs/instances.md`](docs/instances.md).
+
 ## Map — pull detail only when the task needs it
 
 The common path (a coding task, a vault lookup, a worktree session) is fully served by this core. Read the matching `docs/` file **only** when you're actually doing that thing:
@@ -33,6 +35,7 @@ The common path (a coding task, a vault lookup, a worktree session) is fully ser
 | orchestrating a fleet of sub-agents (delegation doctrine O1–O9, model right-sizing) | [`docs/orchestration.md`](docs/orchestration.md) |
 | searching/creating/restructuring vault notes, or writing scratch (ontology, triage tree, `_ephemeral` naming, daily notes, skills mechanics) | [`docs/vault.md`](docs/vault.md) |
 | working on the api / homepage / serving stack / capture pipeline | [`docs/serving.md`](docs/serving.md) |
+| resolving which braindance instance is current, or bootstrapping a clone (`./configure`, `bd use`/`where`, the resolver + guard hooks; C1–C4) | [`docs/instances.md`](docs/instances.md) |
 
 ## `ctx/vault` is the working context
 

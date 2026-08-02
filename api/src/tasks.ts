@@ -563,6 +563,29 @@ export function occurrencesBetween(t: Task, from: string, to: string, cap = 400)
   return out;
 }
 
+/** The month a calendar page covers, and the wider window its grid actually
+ *  shows — a month grid always spills into the weeks either side of it, and
+ *  those days carry real atoms that must not silently vanish. Weeks start
+ *  Sunday. `month` is `YYYY-MM`; an unparseable one falls back to `today`'s. */
+export function monthWindow(month: string, today: string): {
+  month: string; first: string; last: string; gridFrom: string; gridTo: string;
+} {
+  const m = /^(\d{4})-(0[1-9]|1[0-2])$/.test(month) ? month : today.slice(0, 7);
+  const first = `${m}-01`;
+  const last = addMonths(first, 0, 0); // same month, day 0 = its last day
+  return {
+    month: m,
+    first,
+    last,
+    gridFrom: addDays(first, -new Date(`${first}T00:00:00Z`).getUTCDay()),
+    gridTo: addDays(last, 6 - new Date(`${last}T00:00:00Z`).getUTCDay()),
+  };
+}
+
+/** Shift a `YYYY-MM` by whole months. */
+export const shiftMonth = (month: string, by: number): string =>
+  addMonths(`${month}-01`, by).slice(0, 7);
+
 /** Every occurrence of every open atom in the window, grouped by date. Undated
  *  atoms are absent by construction — a calendar can't place them. */
 export function occurrencesByDate(tasks: Task[], from: string, to: string): Map<string, Occurrence[]> {

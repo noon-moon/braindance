@@ -15,8 +15,9 @@ import { renderMarkdown, renderInline } from "./render.js";
 import { gitStore } from "./git.js";
 import {
   listTasks, groupByDue, completedTasks, todayISO, daysBetween, effectiveDate, parseTaskLine,
-  canComplete, completeInFile, readTaskFile, groupByScope, timeSpan,
-  type Task, type TaskGroup, type ScopeGroup,
+  canComplete, completeInFile, readTaskFile, groupByScope, timeSpan, addDays,
+  occurrencesByDate, monthWindow, shiftMonth,
+  type Task, type TaskGroup, type ScopeGroup, type Occurrence,
 } from "./tasks.js";
 
 const app = new Hono();
@@ -258,6 +259,22 @@ app.get("/vault/:name", (c) => {
 // query blocks can't render in this viewer, and this is the mobile surface for
 // "what's due". Ticking a box writes the vault (POST /todo/complete): the atom is
 // the line, so completion rewrites that line in place, as one revertable op.
+/** "August 2026" — the calendar's month heading. */
+const monthLabel = (month: string): string =>
+  new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "long", year: "numeric" })
+    .format(new Date(`${month}-01T00:00:00Z`));
+
+/** "Today" / "Tomorrow" / "Wednesday, August 5" — the selected day's heading. */
+function dayLabel(iso: string, today: string): string {
+  if (iso === today) return "Today";
+  if (iso === addDays(today, 1)) return "Tomorrow";
+  if (iso === addDays(today, -1)) return "Yesterday";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC", weekday: "long", month: "long", day: "numeric",
+    ...(iso.slice(0, 4) === today.slice(0, 4) ? {} : { year: "numeric" }),
+  }).format(new Date(`${iso}T00:00:00Z`));
+}
+
 const PRI_GLYPH: Record<string, string> = {
   highest: "🔺", high: "⏫", medium: "🔼", low: "🔽", lowest: "⏬",
 };
@@ -266,7 +283,10 @@ const PRI_GLYPH: Record<string, string> = {
  *  this app runs no JS — and an inert glyph otherwise: done already, or a `🔁`
  *  rule we won't roll forward (see canComplete), where ticking here would drop
  *  the recurrence. Those stay Obsidian's job, and say so. */
-function taskBox(t: Task, showDone: boolean, byScope: boolean) {
+function taskBox(t: Task, showDone: boolean, byScope: boolean, projected = false) {
+  // A projected occurrence has no line in the vault to rewrite — the atom exists
+  // once, on its current date. Tick THAT one and the recurrence rolls forward.
+  if (projected) return html`<span class="box proj" title="a future occurrence — complete the current one">☐</span>`;
   if (!canComplete(t)) {
     const why = t.status === "done" ? "" : "recurring — complete in Obsidian";
     return html`<span class="box" title="${why}">${t.status === "done" ? "☑" : "☐"}</span>`;
@@ -291,13 +311,15 @@ interface RowOpts {
   showDone?: boolean;
   /** Carried into the tick form so completing an atom returns to THIS lens. */
   byScope?: boolean;
+  /** A computed future occurrence rather than the atom's own line. */
+  projected?: boolean;
 }
 
 function taskRow(t: Task, o: RowOpts) {
   const date = effectiveDate(t);
   const late = date ? daysBetween(date, o.today) : 0;
-  return html`<li class="${t.status === "done" ? "done" : ""}">
-    ${taskBox(t, o.showDone ?? false, o.byScope ?? false)}
+  return html`<li class="${t.status === "done" ? "done" : ""}${o.projected ? " projected" : ""}">
+    ${taskBox(t, o.showDone ?? false, o.byScope ?? false, o.projected)}
     <div class="t-main">
       <div class="t-text">${raw(renderInline(t.text))}</div>
       <div class="t-meta">
@@ -324,7 +346,16 @@ app.get("/todo", (c) => {
   const all = listTasks();
   const today = todayISO();
   const byScope = c.req.query("by") === "scope";
+  const byCal = c.req.query("by") === "calendar";
   const showDone = c.req.query("done") === "1";
+  const win = monthWindow(c.req.query("month") ?? "", today);
+  // Default to today when the month on screen contains it, else the 1st — so
+  // paging to another month lands somewhere real rather than on an empty day.
+  const wanted = c.req.query("day") ?? "";
+  const selected = wanted >= win.first && wanted <= win.last ? wanted
+    : today >= win.first && today <= win.last ? today : win.first;
+  const byDay: Map<string, Occurrence[]> = byCal ? occurrencesByDate(all, win.gridFrom, win.gridTo) : new Map();
+  const undated = all.filter((t) => t.status === "open" && !effectiveDate(t)).length;
   const done = showDone ? completedTasks(all).slice(0, 50) : [];
   const open = all.filter((t) => t.status === "open").length;
   const overdue = groupByDue(all, today).find((g) => g.kind === "overdue")?.tasks.length ?? 0;
@@ -348,9 +379,59 @@ app.get("/todo", (c) => {
     const q = parts.filter(Boolean).join("&");
     return q ? `/todo?${q}` : "/todo";
   };
-  const here = byScope ? "by=scope" : "";
+  const here = byScope ? "by=scope" : byCal ? `by=calendar&month=${win.month}` : "";
   const lens = (on: boolean, q: string, label: string) =>
     on ? html`<strong>${label}</strong>` : html`<a href="${url(q, showDone ? "done=1" : "")}">${label}</a>`;
+
+  // ── The month grid ────────────────────────────────────────────────────────
+  // A calendar answers a question the two list lenses can't: what does the month
+  // LOOK like — which days are loaded, which are free. So the grid carries only
+  // density (a dot per occurrence), and the selected day's atoms render beneath
+  // it as an ordinary task list, tick buttons and all.
+  const DOW = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+  const cell = (d: string) => {
+    const occ = byDay.get(d) ?? [];
+    const out = d < win.first || d > win.last;
+    const cls = [
+      out ? "out" : "",
+      d === today ? "today" : "",
+      d === selected ? "sel" : "",
+      occ.length && d < today ? "late" : "",
+    ].filter(Boolean).join(" ");
+    return html`<a class="cal-day ${cls}" href="${url(`by=calendar&month=${win.month}`, `day=${d}`)}"
+        aria-label="${d} — ${occ.length} task${occ.length === 1 ? "" : "s"}">
+      <span class="dnum">${Number(d.slice(8))}</span>
+      <span class="dots">${occ.slice(0, 4).map((o) => html`<span class="dot ${o.projected ? "proj" : ""}"></span>`)}</span>
+    </a>`;
+  };
+  const grid = () => {
+    const weeks: string[][] = [];
+    for (let d = win.gridFrom; d <= win.gridTo; ) {
+      const week: string[] = [];
+      for (let i = 0; i < 7; i++) { week.push(d); d = addDays(d, 1); }
+      weeks.push(week);
+    }
+    const sel = byDay.get(selected) ?? [];
+    return html`
+      <div class="cal-head">
+        <a href="${url(`by=calendar&month=${shiftMonth(win.month, -1)}`)}" aria-label="previous month">‹</a>
+        <strong>${monthLabel(win.month)}</strong>
+        <a href="${url(`by=calendar&month=${shiftMonth(win.month, 1)}`)}" aria-label="next month">›</a>
+      </div>
+      <div class="cal-grid">
+        ${DOW.map((d) => html`<span class="cal-dow">${d}</span>`)}
+        ${weeks.flat().map(cell)}
+      </div>
+      <section class="tg">
+        <h2>${dayLabel(selected, today)} <span class="n">${sel.length}</span></h2>
+        ${sel.length === 0
+          ? html`<p class="muted">nothing on this day.</p>`
+          : html`<ul class="tasks">${sel.map((o) =>
+              taskRow(o.task, { today, projected: o.projected, showDate: false }))}</ul>`}
+      </section>
+      ${undated ? html`<p class="muted cal-undated">${undated} undated atom${undated === 1 ? "" : "s"} —
+        not on the calendar. <a href="${url("")}">see them by date</a>.</p>` : ""}`;
+  };
 
   // Same post/redirect/get receipt the capture screen uses.
   const ok = c.req.query("ok");
@@ -360,12 +441,15 @@ app.get("/todo", (c) => {
     ${err ? html`<div class="toast err">✗ ${err}</div>` : ""}
     <h1>todo <span class="muted">(${open})</span></h1>
     <div class="meta">${today}${overdue ? html` · <span class="late">${overdue} overdue</span>` : ""}
-      · ${lens(!byScope, "", "by date")} · ${lens(byScope, "by=scope", "by scope")}</div>
-    ${open === 0
-      ? html`<p class="muted">nothing open — every <code>#task</code> atom is done.</p>`
-      : byScope
-        ? groupByScope(all, today).map(scopeSection)
-        : groupByDue(all, today).map(dateSection)}
+      · ${lens(!byScope && !byCal, "", "by date")} · ${lens(byScope, "by=scope", "by scope")}
+      · ${lens(byCal, "by=calendar", "calendar")}</div>
+    ${byCal
+      ? grid()
+      : open === 0
+        ? html`<p class="muted">nothing open — every <code>#task</code> atom is done.</p>`
+        : byScope
+          ? groupByScope(all, today).map(scopeSection)
+          : groupByDue(all, today).map(dateSection)}
     <p class="todo-foot">
       ${showDone
         ? html`<a href="${url(here)}">hide completed</a>`

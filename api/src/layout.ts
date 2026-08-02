@@ -154,6 +154,33 @@ ul.tasks .box[title]:not(button) { cursor:help; }
 .pri { flex:none; font-size:.85rem; }
 ul.tasks li.done .t-text { color:var(--muted); text-decoration:line-through; }
 .todo-foot { margin-top:1.3rem; }
+/* Calendar lens. The grid carries DENSITY only — a dot per occurrence — because
+   a phone cell can't hold text; the selected day's atoms render below it as an
+   ordinary task list, tick buttons and all. */
+.cal-head { display:flex; align-items:center; justify-content:space-between; gap:.5rem; margin:.6rem 0 .5rem; }
+.cal-head a { padding:.1rem .7rem; border:1px solid var(--border); border-radius:4px; }
+.cal-head a:hover { border-color:var(--accent); }
+.cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; }
+.cal-dow { text-align:center; font-size:.7rem; color:var(--muted); padding-bottom:.2rem; }
+.cal-day {
+  display:flex; flex-direction:column; align-items:center; gap:.15rem;
+  min-height:2.9rem; padding:.25rem .1rem; border:1px solid transparent;
+  border-radius:4px; background:var(--surface); color:var(--fg);
+}
+.cal-day:hover { border-color:var(--accent); color:var(--fg); }
+.cal-day.out { background:transparent; color:var(--muted); opacity:.45; }
+.cal-day.today .dnum { color:var(--accent); font-weight:600; }
+.cal-day.sel { border-color:var(--accent); }
+.cal-day .dnum { font-size:.8rem; line-height:1.1; }
+.cal-day .dots { display:flex; flex-wrap:wrap; gap:2px; justify-content:center; }
+.cal-day .dot { width:5px; height:5px; border-radius:50%; background:var(--accent); }
+/* A computed occurrence is hollow — it has no line in the vault yet. */
+.cal-day .dot.proj { background:transparent; box-shadow:inset 0 0 0 1px var(--accent); }
+.cal-day.late .dot { background:var(--danger); }
+.cal-day.late .dot.proj { background:transparent; box-shadow:inset 0 0 0 1px var(--danger); }
+.cal-undated { margin-top:1rem; font-size:.85rem; }
+ul.tasks li.projected .t-text { color:var(--muted); }
+ul.tasks .box.proj { opacity:.45; cursor:help; }
 ul.notes { list-style:none; padding:0; margin:.5rem 0; }
 ul.notes li { padding:.2rem 0; border-bottom:1px solid var(--border); overflow-wrap:break-word; }
 .bar { align-items:center; }

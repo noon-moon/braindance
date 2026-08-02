@@ -148,6 +148,9 @@ ul.tasks .box[title]:not(button) { cursor:help; }
 .t-meta a { color:var(--muted); border-bottom:1px dotted var(--border); }
 .t-meta a:hover { color:var(--accent); border-bottom-color:var(--accent); }
 .t-meta .late { color:var(--danger); }
+/* A timed atom reads as an appointment — the one thing on the row that isn't
+   metadata about the task, but about the day. */
+.t-meta .at { color:var(--fg); border:1px solid var(--border); border-radius:3px; padding:0 .35em; }
 .pri { flex:none; font-size:.85rem; }
 ul.tasks li.done .t-text { color:var(--muted); text-decoration:line-through; }
 .todo-foot { margin-top:1.3rem; }

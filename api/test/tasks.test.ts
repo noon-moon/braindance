@@ -12,7 +12,7 @@ process.env.TZ = "UTC"; // deterministic "today"
 const {
   parseTaskLine, listTasks, groupByDue, completedTasks, addDays, daysBetween, todayISO,
   completeLine, completeInFile, nextRecurrence, canComplete, recurrenceSupported, groupByScope,
-  parseRecurrence, occurrencesBetween, occurrencesByDate,
+  parseRecurrence, occurrencesBetween, occurrencesByDate, timeSpan,
 } = await import("../src/tasks.js");
 
 let passed = 0;
@@ -273,6 +273,38 @@ async function main() {
   const grid = occurrencesByDate([weekly, once], "2026-08-01", "2026-08-31");
   check("occurrences group by day", grid.get("2026-08-04")!.length === 1 && grid.get("2026-08-10")!.length === 1);
   check("…and a day with nothing on it is simply absent", !grid.has("2026-08-05"));
+
+  console.log("test: time of day");
+  const timed = parseTaskLine("- [ ] Dentist @14:00 📅 2026-08-05 #task", "N", "", 1)!;
+  check("a start time parses", timed.time?.start === "14:00" && timed.time?.end === null);
+  check("…and is stripped from the display text", timed.text === "Dentist");
+  check("…with the default duration applied", JSON.stringify(timeSpan(timed)) === '{"start":"14:00","end":"14:30"}');
+  const ranged = parseTaskLine("- [ ] Standup @09:30-10:00 #task", "N", "", 1)!;
+  check("an explicit range parses", JSON.stringify(timeSpan(ranged)) === '{"start":"09:30","end":"10:00"}');
+  check("…and leaves clean text", ranged.text === "Standup");
+  check("a single-digit hour normalises", parseTaskLine("- [ ] Gym @7:05 #task", "N", "", 1)!.time?.start === "07:05");
+  check("an all-day atom has no time", parseTaskLine("- [ ] Whenever #task", "N", "", 1)!.time === null);
+  check("a bare clock time in prose is NOT a time",
+    parseTaskLine("- [ ] Read John 3:16 #task", "N", "", 1)!.time === null);
+  check("…and stays in the text", parseTaskLine("- [ ] Read John 3:16 #task", "N", "", 1)!.text === "Read John 3:16");
+  check("an @mention is not a time", parseTaskLine("- [ ] Email @bob #task", "N", "", 1)!.time === null);
+  const bad = parseTaskLine("- [ ] Typo @99:00 #task", "N", "", 1)!;
+  check("an impossible hour is left visible as the typo it is", bad.time === null && bad.text.includes("@99:00"));
+  check("an end before the start is dropped, not inverted",
+    parseTaskLine("- [ ] Backwards @14:00-09:00 #task", "N", "", 1)!.time?.end === null);
+  check("the day's last minutes don't spill into tomorrow",
+    timeSpan(parseTaskLine("- [ ] Late @23:50 #task", "N", "", 1)!)!.end === "23:59");
+  check("a time survives the round trip through the completion rewrite",
+    completeLine("- [ ] Dentist @14:00 📅 2026-08-05 #task", "2026-08-05")!.done
+      === "- [x] Dentist @14:00 📅 2026-08-05 ✅ 2026-08-05 #task");
+
+  const dayOrder = groupByDue([
+    parseTaskLine("- [ ] All-day thing ⏫ 📅 2026-08-05 #task", "N", "", 1)!,
+    parseTaskLine("- [ ] Dentist @14:00 📅 2026-08-05 #task", "N", "", 2)!,
+    parseTaskLine("- [ ] Standup @09:30 📅 2026-08-05 #task", "N", "", 3)!,
+  ], "2026-08-05")[0];
+  check("a day reads as a schedule: timed atoms in clock order, all-day last",
+    dayOrder.tasks.map((t) => t.text).join(",") === "Standup,Dentist,All-day thing");
 
   console.log(`\n${passed} checks passed`);
 }

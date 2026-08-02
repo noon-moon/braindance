@@ -4,11 +4,13 @@ name: Deploy site to GitHub Pages
 # GitHub Pages via the official Pages artifact — no gh-pages branch.
 #
 # BUILD-SCOPE ISOLATION (privacy enforcement point (a)): every step below reads
-# ONLY ctx/www and ctx/tools/pub. NO step reads ctx/vault. The vault is never an
-# input to the deployed artifact. The publish tool's PROJECTOR (which does read the
-# vault) is run locally by a human and its output committed under ctx/www — CI only
-# builds already-committed, already-gated content, then re-audits it vault-blind
-# with the verify gate (enforcement point (b)).
+# ONLY ctx/www. NO step reads ctx/vault. The vault is never an input to the
+# deployed artifact. The publish tool's PROJECTOR (which does read the vault) is
+# run locally by a human and its output committed under ctx/www — CI only builds
+# already-committed, already-gated content.
+#
+# See the note further down: the vault-blind CI re-audit (enforcement point (b))
+# is specified but unimplemented, so the gate runs at projection time only.
 #
 # One-time setup in the repo: Settings → Pages → Source = "GitHub Actions".
 # Optional: set a repo variable SITE_CUSTOM_DOMAIN (e.g. example.com) for a custom
@@ -42,19 +44,21 @@ jobs:
         with:
           node-version-file: ctx/www/garden/.node-version # Quartz pins Node 22
           cache: npm
-          cache-dependency-path: |
-            ctx/www/garden/package-lock.json
-            ctx/tools/pub/package-lock.json
+          cache-dependency-path: ctx/www/garden/package-lock.json
 
-      # Fail-closed publish gate (enforcement point (b)) — VAULT-BLIND. Re-audits
-      # the committed public projection (ctx/www/garden/content only); a leaked
-      # private link/embed, a dangling asset, or a disallowed frontmatter key exits
-      # nonzero and BREAKS THE DEPLOY before anything is built or uploaded.
-      - name: Verify publish gate (vault-blind)
-        working-directory: ctx/tools/pub
-        run: |
-          npm ci
-          npm run verify
+      # NOTE — enforcement point (b), the vault-blind CI re-audit, is NOT RUN here.
+      # It was specified as `npm run verify` in ctx/tools/pub (re-check the committed
+      # projection alone: leaked private links, dangling assets, disallowed
+      # frontmatter keys → nonzero → break the deploy before anything is built), but
+      # that script was never written and CI failed on the missing script. It is
+      # removed rather than left broken.
+      #
+      # The gate therefore runs ONLY at projection time, inside `npm run publish`.
+      # That is a real reduction in the privacy model: hand-edit a file under
+      # ctx/www/garden/content and nothing re-checks it. Points (a) build-scope
+      # isolation and (c) disjoint-www still hold, and the projection diff is
+      # human-reviewed before merge. Write verify and restore this step when the
+      # garden gets more than one publisher — see ctx/noon-moon-net.md.
 
       - name: Compute Quartz baseUrl
         id: base

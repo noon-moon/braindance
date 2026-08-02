@@ -204,14 +204,16 @@ remove) and re-run to delete it.
 ### Privacy — the vault stays private, only the built site is public
 
 The repo is **private**; only the deployed **Pages artifact** is public. Because the
-vault and the site live in one repo, the boundary is enforced fail-closed at three
-points (see [`CLAUDE.md`](CLAUDE.md) for the full rationale):
+vault and the site live in one repo, the boundary is enforced at three points (see
+[`CLAUDE.md`](CLAUDE.md) for the full rationale):
 
 1. **Build-scope isolation** — `pages.yml` builds only from `ctx/www`; **no step reads
-   `ctx/vault`**.
+   `ctx/vault`**. CI cannot leak what it never opens.
 2. **Fail-closed publish gate** — the publish tool blocks (nonzero exit) on any link or
-   embed/transclusion to an unpublished note and any unresolvable asset, and CI re-audits
-   the committed projection *vault-blind* (`npm run verify`) so a leak breaks the deploy.
+   embed/transclusion to an unpublished note and any unresolvable asset. ⚠️ This runs at
+   **projection time only**: the specified CI re-audit of the committed projection was
+   never implemented, so a hand-edit under `ctx/www/garden/content/` is re-checked by
+   nothing but your eyes on the diff. Never hand-edit machine-owned files there.
 3. **Disjoint-`www` PR check** — `disjoint-www.yml` fails any PR that mixes `ctx/www/**`
    with changes outside it, keeping every publish an isolated, reviewable changeset.
 

@@ -5,8 +5,10 @@ On-demand detail for the serving stack, referenced compactly from [`CLAUDE.md`](
 `api/`, `www/`, `Caddyfile`, `docker-compose.yml`, and `deploy.sh` are the optional admin-app + public-serving stack, not vault content:
 
 - `api/` — a mobile note-capture API + read-only vault viewer (Hono/Node).
-- `www/` — the static homepage served at your domain.
+- `www/` — the static homepage Caddy serves at your domain (from `/srv/www`), on the VPS path.
 - `Caddyfile`, `docker-compose.yml`, `deploy.sh` — the serving stack.
+
+> **`www/` is not `ctx/www/`.** The repo-root `www/` above is the VPS path. **`ctx/www/` is the published site that ships to GitHub Pages** — homepage, static pages, and the Quartz garden at `/garden` — and is the *recommended* way to have a public site, with no server at all. The two are independent: you do not need the VPS stack to publish, and publishing is not what the api does. See [`ctx/noon-moon-net.md`](../ctx/noon-moon-net.md).
 
 ## Capture pipeline
 

@@ -27,7 +27,7 @@ updating them.
 ## Post-merge ritual (do this after the human squash-merges a target-project PR)
 
 ```sh
-export PROJECT_DIR=~/dev/braindance-usr/repo/<project>
+export PROJECT_DIR="${REPOS_PATH:-${BD_ROOT:-$BD_CORE/repo}}/<project>"   # e.g. ~/dev/repo/<project>
 # 1. sync + see what drifted
 ctx/tools/orchestration/rebase-open-prs.sh
 # 2. rebase the clean, stale worktrees (dirty ones are skipped — land/'bd wip' them first)

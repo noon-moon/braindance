@@ -13,9 +13,10 @@ ctx/
   vault/     Obsidian vault — your knowledge base and working context (see below)
     _ephemeral/  Non-persisted scratch — transient inputs & outputs; gitignored but Obsidian-visible
   skills/    LLM-agnostic skill prompts; installed into a harness via ctx/tools/sys/sync.sh
-  tools/     Lifecycle tooling (sys/), orchestration/ (multi-agent fleet helpers), + standalone tools (e.g. music/)
+  tools/     Lifecycle tooling (sys/), orchestration/ (multi-agent fleet helpers), pub/ (the publish tool), + standalone tools (e.g. music/)
+  www/       The PUBLISHED site → GitHub Pages: homepage, static pages, garden/ (vendored Quartz; content/ is machine-owned)
 api/         Admin app: mobile note-capture API + read-only vault viewer (Hono/Node)
-www/         Static homepage served at your domain
+www/         Static homepage for the optional VPS path — distinct from ctx/www/ (see below)
 Caddyfile, docker-compose.yml, deploy.sh   Serving stack
 repo/        Default (nested) home for target repos you're working on — gitignored
 docs/        On-demand detail this core points to (see map below)
@@ -35,6 +36,7 @@ The common path (a coding task, a vault lookup, a worktree session) is fully ser
 | orchestrating a fleet of sub-agents (delegation doctrine O1–O9, model right-sizing) | [`docs/orchestration.md`](docs/orchestration.md) |
 | searching/creating/restructuring vault notes, or writing scratch (ontology, triage tree, `_ephemeral` naming, daily notes, skills mechanics) | [`docs/vault.md`](docs/vault.md) |
 | working on the api / homepage / serving stack / capture pipeline | [`docs/serving.md`](docs/serving.md) |
+| publishing vault notes to the public site, or touching `ctx/www/` or the publish tool | [`ctx/noon-moon-net.md`](ctx/noon-moon-net.md) |
 | resolving which braindance instance is current, or bootstrapping a clone (`./configure`, `bd use`/`where`, the resolver + guard hooks; C1–C4) | [`docs/instances.md`](docs/instances.md) |
 
 ## `ctx/vault` is the working context
@@ -61,7 +63,7 @@ Target repos you're actively working on resolve under `${REPOS_PATH:-$BD_ROOT}/<
 
 Multiple agent sessions must **never share the one working tree** — a shared index/HEAD means one session's `git add -A` sweeps another's half-written files, commits interleave, and `index.lock` contention stalls git. The rule: **one terminal = one git worktree = one branch.**
 
-- The main tree (the braindance checkout, e.g. `~/dev/braindance-usr`) is **sacred and read-only to agents**: it stays on `main`, it's the Obsidian window and the integration point. **Agents don't write here.**
+- The main tree (the braindance checkout, e.g. `~/dev/braindance`) is **sacred and read-only to agents**: it stays on `main`, it's the Obsidian window and the integration point. **Agents don't write here.**
 - Agent sessions work in sibling worktrees under `~/dev/bd-wt/<task>` (outside the vault, so Obsidian never indexes them), cut off **freshly-fetched `origin/main`** and **rebased before every push**. Helper `bd` (in `ctx/tools/sys/wt.sh`) bakes this in: `bd new <task>` → work → `bd land` → `bd rm <task>`.
 - **Always address a worktree by its ABSOLUTE path**; never rely on an ambient `cwd` that could resolve into the sacred main tree.
 
@@ -73,5 +75,6 @@ Full discipline (R1–R7), the `bd` workflow, and fleet tooling: [`AGENTS.md`](A
 - **Template, not fork** — generic/guideline/tooling/skill/doc changes land on the core template (`noon-moon/braindance`, `master`); a fork carries only instance-specific content and pulls the rest via `git merge upstream/master`. (See the note at the top of this file.)
 - **Output format** — write Markdown, and put every span of code, console/terminal output, query, config, or structured data in a fenced code block with a language hint (```python, ```sql, ```console, ```json, …). This holds for what we write to `_ephemeral`, to vault notes, and back to the user — never paste code or command output as bare prose.
 - **Edit skills in `ctx/skills/`, never the installed harness copy** under `.claude/commands/` — the change would be lost or hit the wrong file. (Mechanics: [`docs/vault.md`](docs/vault.md).)
+- **A `ctx/www/` change ships on its own.** `ctx/www/` is the *published* site (→ GitHub Pages); the repo-root `www/` is the separate, optional VPS homepage. `disjoint-www.yml` **fails any PR touching `ctx/www/**` and anything outside it** — that's a privacy control (a vault edit must never ride along with a publish), not a nuisance. Never hand-edit `ctx/www/garden/content/<slug>.md`: those are machine-owned by `ctx/tools/pub`. (Detail: [`ctx/noon-moon-net.md`](ctx/noon-moon-net.md).)
 - **Don't touch** `.obsidian/` config unless explicitly asked (it's the Obsidian workspace, easy to corrupt).
 - **Don't** fold the flat vault into folders, or mass-rewrite existing notes.

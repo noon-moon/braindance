@@ -435,6 +435,58 @@ export function completeInFile(file: string, bodyLine: number, rawLine: string, 
   return lines.join("\n");
 }
 
+// ── Grouping (the scope lens) ────────────────────────────────────────────────
+
+export interface ScopeGroup {
+  /** The note the atoms live in — which IS their scope, by containment. */
+  note: string;
+  /** True for the single bucket of atoms still loose in `inbox/` or `daily/`. */
+  unfiled: boolean;
+  /** How many of them are past due — the "this area needs attention" signal. */
+  overdue: number;
+  tasks: Task[];
+}
+
+/** The same open atoms, grouped by the note they live in — the "by area" view
+ *  [[TODO]] builds with `group by filename`. It answers a different question
+ *  than the date lens ("what's on this area's plate", not "what's due when"),
+ *  so scopes are listed ALPHABETICALLY: a stable, scannable order rather than a
+ *  second urgency ranking. Urgency shows up inside a section, where atoms sort
+ *  by date, and in the per-section overdue count.
+ *
+ *  Every unfiled atom collapses into ONE leading bucket — it's the task-level
+ *  inbox, and one section per timestamped capture file would be noise. */
+export function groupByScope(tasks: Task[], today: string = todayISO()): ScopeGroup[] {
+  const open = tasks.filter((t) => t.status === "open");
+  const byNote = new Map<string, Task[]>();
+  const unfiled: Task[] = [];
+  for (const t of open) {
+    if (t.unfiled) unfiled.push(t);
+    else (byNote.get(t.note) ?? byNote.set(t.note, []).get(t.note)!).push(t);
+  }
+
+  // Undated atoms sit at the bottom of their section — a section is a plate, and
+  // the dated work on it is what's actually next.
+  const byDate = (a: Task, b: Task) => {
+    const [x, y] = [effectiveDate(a), effectiveDate(b)];
+    if (x && y && x !== y) return x.localeCompare(y);
+    if (x !== null && y === null) return -1;
+    if (x === null && y !== null) return 1;
+    return rank(a) - rank(b) || a.note.localeCompare(b.note) || a.line - b.line;
+  };
+  const countOverdue = (ts: Task[]) => ts.filter((t) => (effectiveDate(t) ?? "") < today && effectiveDate(t)).length;
+
+  const groups: ScopeGroup[] = [];
+  if (unfiled.length) {
+    groups.push({ note: "Unfiled", unfiled: true, overdue: countOverdue(unfiled), tasks: unfiled.sort(byDate) });
+  }
+  for (const note of [...byNote.keys()].sort((a, b) => a.localeCompare(b))) {
+    const ts = byNote.get(note)!.sort(byDate);
+    groups.push({ note, unfiled: false, overdue: countOverdue(ts), tasks: ts });
+  }
+  return groups;
+}
+
 /** Completed tasks, most recently done first (undated done tasks last). */
 export const completedTasks = (tasks: Task[]): Task[] =>
   tasks

@@ -11,7 +11,7 @@ process.env.VAULT_PATH = vault;
 process.env.TZ = "UTC"; // deterministic "today"
 const {
   parseTaskLine, listTasks, groupByDue, completedTasks, addDays, daysBetween, todayISO,
-  completeLine, completeInFile, nextRecurrence, canComplete, recurrenceSupported,
+  completeLine, completeInFile, nextRecurrence, canComplete, recurrenceSupported, groupByScope,
 } = await import("../src/tasks.js");
 
 let passed = 0;
@@ -181,6 +181,33 @@ async function main() {
   check("a new instance is inserted ABOVE the completed line",
     completeInFile(recFile, 1, "- [ ] Daily 🔁 every day 📅 2026-07-20 #task", "2026-07-25")!.split("\n")[0]
       === "- [ ] Daily 🔁 every day 📅 2026-07-21 #task");
+
+  console.log("test: groupByScope");
+  const sg = groupByScope(all, "2026-07-25");
+  check("unfiled atoms lead, in one bucket", sg[0].note === "Unfiled" && sg[0].unfiled);
+  check("…collapsing inbox/ and daily/ together", sg[0].tasks.length === 2);
+  check("filed scopes follow, alphabetically",
+    sg.slice(1).map((g) => g.note).join(",") === "Broken,Loon");
+  check("a section holds only its own note's atoms",
+    sg.find((g) => g.note === "Loon")!.tasks.every((t) => t.note === "Loon"));
+  check("done and cancelled atoms are excluded, like the date lens",
+    sg.every((g) => g.tasks.every((t) => t.status === "open")));
+  check("atoms sort by date within a section",
+    sg.find((g) => g.note === "Loon")!.tasks.map((t) => t.text).join(",")
+      === "Ship the wgpu CI fix,Nested atom");
+  check("a section counts its own overdue atoms", sg.find((g) => g.note === "Loon")!.overdue === 1);
+  check("…and reports zero when nothing is late", sg.find((g) => g.note === "Broken")!.overdue === 0);
+  const undatedLast = groupByScope(
+    [
+      parseTaskLine("- [ ] No date #task", "N", "", 1)!,
+      parseTaskLine("- [ ] Dated 📅 2026-08-01 #task", "N", "", 2)!,
+    ],
+    "2026-07-25",
+  )[0];
+  check("undated atoms sink to the bottom of a section",
+    undatedLast.tasks.map((t) => t.text).join(",") === "Dated,No date");
+  check("every open atom appears in exactly one section",
+    sg.reduce((n, g) => n + g.tasks.length, 0) === all.filter((x) => x.status === "open").length);
 
   console.log(`\n${passed} checks passed`);
 }

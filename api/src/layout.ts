@@ -113,6 +113,12 @@ details.diff pre { background:var(--bg); border:1px solid var(--border); border-
 .tg.overdue > h2 { color:var(--danger); }
 .tg.today > h2 { color:var(--accent); }
 .tg > h2 .n { color:var(--muted); font-weight:400; font-size:.85rem; }
+/* Scope lens: the heading links to the scope note, and carries its own overdue
+   count — a section is an area, and this is whether the area is behind. */
+.tg > h2 a { color:inherit; }
+.tg > h2 a:hover { color:var(--accent); }
+.tg > h2 .late { font-weight:400; font-size:.85rem; }
+.meta strong { color:var(--accent); font-weight:600; }
 ul.tasks { list-style:none; padding:0; margin:0; }
 ul.tasks li { display:flex; gap:.55rem; align-items:flex-start; padding:.45rem .1rem;
               border-bottom:1px solid var(--border); }

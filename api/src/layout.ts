@@ -55,6 +55,13 @@ textarea { min-height:7rem; resize:vertical; }
 input:focus,select:focus,textarea:focus { outline:none; border-color:var(--accent); }
 .req { color:var(--danger); }
 .capture-form { display:flex; flex-direction:column; }
+/* "this is a task" reveals due + priority. Pure CSS — the app ships no JS —
+   so the disclosure is the checkbox's own :checked state, read from the form. */
+.as-task { display:flex; align-items:center; gap:.45rem; margin:.7rem 0 0; }
+.as-task input { width:auto; margin:0; accent-color:var(--accent); }
+.as-task label { margin:0; color:var(--fg); font-size:.9rem; cursor:pointer; }
+.task-fields { display:none; }
+.capture-form:has(#as-task:checked) .task-fields { display:block; }
 .cap-actions { display:flex; gap:.5rem; align-items:center; margin-top:.7rem; }
 .cap-actions .btn { flex:1; }
 h2.section { font-size:1rem; font-weight:600; color:var(--muted); margin:1.4rem 0 .4rem; }

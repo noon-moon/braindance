@@ -41,6 +41,9 @@ const yaml = (fm: Record<string, unknown>): string => {
   return lines.join("\n");
 };
 
+/** A checklist item — any indent, `-`/`*`/`+` bullet, a status box. */
+const CHECKLIST_ITEM = /^\s*[-*+]\s+\[.?\]/;
+
 /** Append a `#task` atom to an existing note's raw text — how the desk FILES a
  *  task, since a task belongs to the scope whose note it physically lives in.
  *  Lands at the end of a `## Tasks` section when the note has one, else at the
@@ -49,7 +52,12 @@ const yaml = (fm: Record<string, unknown>): string => {
 export function appendTaskLine(raw: string, line: string): string {
   const lines = raw.replace(/\s+$/, "").split("\n");
   const heading = lines.findIndex((l) => /^#{1,6}\s+tasks\s*$/i.test(l));
-  if (heading === -1) return `${lines.join("\n")}\n\n${line}\n`;
+  if (heading === -1) {
+    // Join an existing trailing list rather than starting a second one — a blank
+    // line between two atoms makes them separate (loose) Markdown lists.
+    const gap = CHECKLIST_ITEM.test(lines[lines.length - 1] ?? "") ? "" : "\n";
+    return `${lines.join("\n")}\n${gap}${line}\n`;
+  }
   // End of that section = the next heading of any level, blank lines trimmed
   // back so the atom joins the list rather than floating below it.
   let end = lines.findIndex((l, i) => i > heading && /^#{1,6}\s/.test(l));
@@ -118,6 +126,7 @@ export const FUNNELS: Funnel[] = [
     hint: "a dated atom — one next action",
     fields: [
       { key: "title", label: "what needs doing", type: "text", required: true },
+      { key: "body", label: "detail", type: "textarea" },
       { key: "due", label: "due", type: "date" },
       { key: "priority", label: "priority", type: "select", options: Object.keys(PRIORITY_SIGNIFIER) },
       { key: "scope", label: "scope", type: "scope" },
@@ -126,10 +135,14 @@ export const FUNNELS: Funnel[] = [
     // note that CARRIES one. Captured, it lands in `inbox/` and `/todo` shows it
     // as an unfiled atom straight away; triage then lifts the line out and
     // appends it to its scope note, which is what "filed" means.
+    //
+    // `detail` is prose the atom can't hold (a task is one line). It rides along
+    // in the capture note so nothing typed is dropped, and triage decides where
+    // it goes — the line to the scope, the prose to a memo of its own.
     build: (i) => ({
       title: i.title,
       frontmatter: { tags: ["memo"] },
-      body: `${scopeLink(i.scope)}# ${i.title}\n\n${taskLine(i)}`,
+      body: `${scopeLink(i.scope)}# ${i.title}\n\n${taskLine(i)}${i.body ? `\n\n${i.body}` : ""}`,
     }),
   },
   {

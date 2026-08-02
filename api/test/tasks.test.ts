@@ -12,6 +12,7 @@ process.env.TZ = "UTC"; // deterministic "today"
 const {
   parseTaskLine, listTasks, groupByDue, completedTasks, addDays, daysBetween, todayISO,
   completeLine, completeInFile, nextRecurrence, canComplete, recurrenceSupported, groupByScope,
+  parseRecurrence, occurrencesBetween, occurrencesByDate,
 } = await import("../src/tasks.js");
 
 let passed = 0;
@@ -130,7 +131,7 @@ async function main() {
   check("every year shifts the year", nextRecurrence("every year", "2026-02-28", "x") === "2027-02-28");
   check("an undated recurring atom falls back to today",
     nextRecurrence("every week", "", "2026-07-25") === "2026-08-01");
-  check("a rule we don't handle is refused, not guessed", nextRecurrence("every Sunday", "2026-07-20", "x") === null);
+  check("a rule we don't handle is refused, not guessed", nextRecurrence("every 3rd Thursday", "2026-07-20", "x") === null);
   check("…and recurrenceSupported agrees", !recurrenceSupported("every 3rd Thursday") && recurrenceSupported("every 2 days"));
 
   console.log("test: completeLine");
@@ -156,9 +157,12 @@ async function main() {
   check("an undated recurring atom gains a date, or it'd never come due",
     undatedRec!.next === "- [ ] Water plants 🔁 every 2 days 📅 2026-07-27 #task");
   check("a rule we won't roll forward blocks completion entirely",
-    completeLine("- [ ] Church 🔁 every Sunday #task", "2026-07-25") === null);
+    completeLine("- [ ] Book club 🔁 every 3rd thursday #task", "2026-07-25") === null);
+  check("…but a weekday rule now completes and rolls forward",
+    completeLine("- [ ] Church 🔁 every sunday #task", "2026-07-25")!.next
+      === "- [ ] Church 🔁 every sunday 📅 2026-07-26 #task");
   check("canComplete gates the UI on the same rule",
-    !canComplete(parseTaskLine("- [ ] Church 🔁 every Sunday #task", "n", "", 1)!) &&
+    !canComplete(parseTaskLine("- [ ] Book club 🔁 every 3rd thursday #task", "n", "", 1)!) &&
     canComplete(parseTaskLine("- [ ] Plain #task", "n", "", 1)!));
 
   console.log("test: completeInFile");
@@ -208,6 +212,67 @@ async function main() {
     undatedLast.tasks.map((t) => t.text).join(",") === "Dated,No date");
   check("every open atom appears in exactly one section",
     sg.reduce((n, g) => n + g.tasks.length, 0) === all.filter((x) => x.status === "open").length);
+
+  console.log("test: recurrence grammar");
+  // 2026-08-02 is a Sunday; 2026-08-03 a Monday.
+  check("every Sunday lands on the next Sunday", nextRecurrence("every Sunday", "2026-08-02", "x") === "2026-08-09");
+  check("a bare weekday from mid-week finds that weekday",
+    nextRecurrence("every Sunday", "2026-08-04", "x") === "2026-08-09");
+  check("abbreviations parse", nextRecurrence("every mon", "2026-08-03", "x") === "2026-08-10");
+  check("every weekday skips the weekend",
+    nextRecurrence("every weekday", "2026-08-07", "x") === "2026-08-10"); // Fri -> Mon
+  check("…and steps one day inside the week",
+    nextRecurrence("every weekday", "2026-08-03", "x") === "2026-08-04");
+  check("a multi-day rule hits each listed day",
+    nextRecurrence("every week on monday and friday", "2026-08-03", "x") === "2026-08-07");
+  check("…then wraps to the next week", nextRecurrence("every week on monday and friday", "2026-08-07", "x") === "2026-08-10");
+  check("every 2 weeks on monday leaves a fortnight",
+    nextRecurrence("every 2 weeks on monday", "2026-08-03", "x") === "2026-08-17");
+  check("every month on the 1st", nextRecurrence("every month on the 1st", "2026-08-01", "x") === "2026-09-01");
+  check("…from mid-month it's the coming 1st", nextRecurrence("every month on the 1st", "2026-08-15", "x") === "2026-09-01");
+  check("every month on the 15th", nextRecurrence("every month on the 15th", "2026-08-15", "x") === "2026-09-15");
+  check("every month on the last day clamps per month",
+    nextRecurrence("every month on the last", "2026-01-31", "x") === "2026-02-28");
+  check("every 3 months on the 10th", nextRecurrence("every 3 months on the 10th", "2026-08-10", "x") === "2026-11-10");
+  check("interval rules still work", nextRecurrence("every 2 days", "2026-08-01", "x") === "2026-08-03");
+  check("when done still reads from the completion date",
+    nextRecurrence("every monday when done", "2026-01-01", "2026-08-03") === "2026-08-10");
+  check("a rule we still can't parse is refused",
+    nextRecurrence("every 3rd thursday", "2026-08-01", "x") === null);
+  check("…and a half-understood day list is refused whole",
+    parseRecurrence("every week on monday and blursday") === null);
+  check("garbage is refused", parseRecurrence("whenever I feel like it") === null);
+  check("canComplete now accepts a weekday rule",
+    canComplete(parseTaskLine("- [ ] Bins out 🔁 every tuesday 📅 2026-08-04 #task", "N", "", 1)!));
+
+  console.log("test: occurrencesBetween");
+  const weekly = parseTaskLine("- [ ] Bins out 🔁 every tuesday 📅 2026-08-04 #task", "N", "", 1)!;
+  const occ = occurrencesBetween(weekly, "2026-08-01", "2026-08-31");
+  check("a weekly atom projects across the month", occ.map((o) => o.date).join(",")
+    === "2026-08-04,2026-08-11,2026-08-18,2026-08-25");
+  check("only the vault's own instance is real", occ.filter((o) => !o.projected).length === 1);
+  check("…and it's the first one", occ[0].date === "2026-08-04" && !occ[0].projected);
+  check("occurrences before the window are excluded",
+    occurrencesBetween(weekly, "2026-08-12", "2026-08-31").map((o) => o.date).join(",")
+      === "2026-08-18,2026-08-25");
+  const once = parseTaskLine("- [ ] File taxes 📅 2026-08-10 #task", "N", "", 1)!;
+  check("a one-shot yields exactly itself", occurrencesBetween(once, "2026-08-01", "2026-08-31").length === 1);
+  check("…and nothing outside the window", occurrencesBetween(once, "2026-09-01", "2026-09-30").length === 0);
+  const undated = parseTaskLine("- [ ] Someday #task", "N", "", 1)!;
+  check("an undated atom can't be placed on a calendar", occurrencesBetween(undated, "2026-08-01", "2026-08-31").length === 0);
+  const unparseable = parseTaskLine("- [ ] Book club 🔁 every 3rd thursday 📅 2026-08-20 #task", "N", "", 1)!;
+  check("an unparseable rule still shows its real instance, and only that",
+    occurrencesBetween(unparseable, "2026-08-01", "2026-12-31").map((o) => o.date).join(",") === "2026-08-20");
+  const daily = parseTaskLine("- [ ] Ping 🔁 every day 📅 2026-08-01 #task", "N", "", 1)!;
+  check("the cap truncates a runaway projection rather than hanging",
+    occurrencesBetween(daily, "2026-08-01", "2036-08-01", 10).length === 11);
+  check("a done atom projects nothing",
+    occurrencesBetween(parseTaskLine("- [x] Done 🔁 every day ✅ 2026-08-01 📅 2026-08-01 #task", "N", "", 1)!,
+      "2026-08-01", "2026-08-31").length === 0);
+
+  const grid = occurrencesByDate([weekly, once], "2026-08-01", "2026-08-31");
+  check("occurrences group by day", grid.get("2026-08-04")!.length === 1 && grid.get("2026-08-10")!.length === 1);
+  check("…and a day with nothing on it is simply absent", !grid.has("2026-08-05"));
 
   console.log(`\n${passed} checks passed`);
 }

@@ -301,45 +301,146 @@ export function groupByDue(tasks: Task[], today: string = todayISO()): TaskGroup
 // other change and shows up in /history with one-click revert (which is also the
 // undo for a mis-tap — there is deliberately no un-complete button).
 
-/** Recurrence rules we will roll forward ourselves. Obsidian Tasks' grammar is
- *  far larger (`every Sunday`, `every 3rd Thursday`, …) and reimplementing it is
- *  a reliable way to silently corrupt a schedule — so we handle the intervals
- *  that are unambiguous and refuse the rest, rather than guessing. */
-const RECUR_RE = /^every\s+(?:(\d+)\s+)?(day|week|month|year)s?(\s+when\s+done)?$/i;
+// Recurrence rules we roll forward ourselves. Obsidian Tasks is rrule-backed and
+// its grammar is larger still (`every 3rd Thursday`, …); we parse the shapes real
+// obligations actually take and REFUSE the rest rather than guess, because a
+// silently wrong schedule is worse than one the plugin has to handle.
+//
+//   every [N] day|week|month|year [when done]
+//   every [N] week[s] on <weekday>[, <weekday> …]     ── also `every Sunday`
+//   every weekday                                     ── Mon–Fri
+//   every [N] month[s] on the <1st…31st|last> [day]
+//
+// Projection (occurrencesBetween) is what makes a calendar possible: the vault
+// holds only the CURRENT instance of a recurring atom, so a weekly chore exists
+// exactly once on disk and would otherwise appear on a calendar exactly once.
 
-const UNIT_DAYS: Record<string, number> = { day: 1, week: 7 };
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const UNIT_DAYS: Record<string, number> = { day: 1, week: 7 };
+
+const WEEKDAY: Record<string, number> = {
+  sunday: 0, sun: 0, monday: 1, mon: 1, tuesday: 2, tue: 2, tues: 2, wednesday: 3, wed: 3,
+  thursday: 4, thu: 4, thur: 4, thurs: 4, friday: 5, fri: 5, saturday: 6, sat: 6,
+};
+
+type Recur =
+  | { kind: "interval"; step: number; unit: "day" | "week" | "month" | "year"; whenDone: boolean }
+  | { kind: "weekday"; days: number[]; step: number; whenDone: boolean }
+  /** `day` is 1–31, or 0 meaning "last day of the month". */
+  | { kind: "monthday"; day: number; step: number; whenDone: boolean };
+
+const INTERVAL_RE = /^every\s+(?:(\d+)\s+)?(day|week|month|year)s?$/i;
+const WEEK_ON_RE = /^every\s+(?:(\d+)\s+)?weeks?\s+on\s+(.+)$/i;
+const BARE_WEEKDAY_RE = /^every\s+(.+)$/i;
+const MONTH_ON_RE = /^every\s+(?:(\d+)\s+)?months?\s+on\s+the\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+day)?$/i;
+const MONTH_LAST_RE = /^every\s+(?:(\d+)\s+)?months?\s+on\s+the\s+last(?:\s+day)?$/i;
+
+/** Split `monday, wednesday and friday` into weekday numbers, or null if any
+ *  token isn't a weekday — so a rule we half-understand is refused whole. */
+function parseWeekdays(list: string): number[] | null {
+  const parts = list.split(/\s*(?:,|and|&)\s*/i).map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (!parts.length) return null;
+  const days: number[] = [];
+  for (const p of parts) {
+    const d = WEEKDAY[p];
+    if (d === undefined) return null;
+    if (!days.includes(d)) days.push(d);
+  }
+  return days.sort((a, b) => a - b);
+}
+
+/** Parse a `🔁` rule, or null when it isn't one we handle. */
+export function parseRecurrence(rule: string): Recur | null {
+  let s = rule.trim().replace(/\s+/g, " ");
+  const whenDone = /\s+when\s+done$/i.test(s);
+  if (whenDone) s = s.replace(/\s+when\s+done$/i, "");
+
+  const step = (n?: string) => {
+    const v = Number(n ?? 1);
+    return Number.isFinite(v) && v >= 1 ? v : null;
+  };
+
+  let m = s.match(MONTH_LAST_RE);
+  if (m) {
+    const k = step(m[1]);
+    return k === null ? null : { kind: "monthday", day: 0, step: k, whenDone };
+  }
+  m = s.match(MONTH_ON_RE);
+  if (m) {
+    const k = step(m[1]);
+    const day = Number(m[2]);
+    return k === null || day < 1 || day > 31 ? null : { kind: "monthday", day, step: k, whenDone };
+  }
+  m = s.match(WEEK_ON_RE);
+  if (m) {
+    const k = step(m[1]);
+    const days = parseWeekdays(m[2]);
+    return k === null || !days ? null : { kind: "weekday", days, step: k, whenDone };
+  }
+  m = s.match(INTERVAL_RE);
+  if (m) {
+    const k = step(m[1]);
+    return k === null ? null : { kind: "interval", step: k, unit: m[2].toLowerCase() as "day", whenDone };
+  }
+  // `every weekday` (Mon–Fri) and the bare `every Sunday` / `every mon and fri`.
+  m = s.match(BARE_WEEKDAY_RE);
+  if (m) {
+    if (/^weekdays?$/i.test(m[1].trim())) return { kind: "weekday", days: [1, 2, 3, 4, 5], step: 1, whenDone };
+    const days = parseWeekdays(m[1]);
+    if (days) return { kind: "weekday", days, step: 1, whenDone };
+  }
+  return null;
+}
 
 /** Whether a `🔁` rule is one we roll forward. Drives both the write and the
  *  UI — an atom we'd refuse gets no button rather than a button that fails. */
-export const recurrenceSupported = (rule: string): boolean => {
-  const m = rule.trim().match(RECUR_RE);
-  return !!m && Number(m[1] ?? 1) >= 1;
-};
+export const recurrenceSupported = (rule: string): boolean => parseRecurrence(rule) !== null;
+
+/** Shift a `YYYY-MM-DD` by whole months, clamping a day-of-month the target
+ *  month doesn't have (Jan 31 + 1 month → Feb 28) rather than rolling over. */
+function addMonths(iso: string, months: number, dayOfMonth?: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  const want = dayOfMonth ?? d.getUTCDate();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + months);
+  const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(want === 0 ? last : Math.min(want, last));
+  return d.toISOString().slice(0, 10);
+}
+
+const dayOfWeek = (iso: string): number => new Date(`${iso}T00:00:00Z`).getUTCDay();
+
+/** The first occurrence strictly AFTER `from`. Pure date arithmetic — `from` is
+ *  the previous occurrence (or, for `when done`, the completion date). */
+function advance(r: Recur, from: string): string {
+  if (r.kind === "interval") {
+    if (r.unit === "day" || r.unit === "week") return addDays(from, r.step * UNIT_DAYS[r.unit]);
+    return addMonths(from, r.unit === "month" ? r.step : r.step * 12);
+  }
+  if (r.kind === "weekday") {
+    // Every matching weekday within a week, then a step-week gap. With step 1
+    // that's simply "the next matching weekday"; with step N the gap is measured
+    // from the previous occurrence, which is what `from` is.
+    let d = r.step > 1 ? addDays(from, (r.step - 1) * 7) : from;
+    for (let i = 0; i < 7; i++) {
+      d = addDays(d, 1);
+      if (r.days.includes(dayOfWeek(d))) return d;
+    }
+    return d;
+  }
+  // monthday: the target day in this month if it's still ahead, else step months on.
+  const same = addMonths(from, 0, r.day);
+  return same > from ? same : addMonths(from, r.step, r.day);
+}
 
 /** The next occurrence of `rule` after `base` (`YYYY-MM-DD`), or null when the
  *  rule isn't one we handle. `when done` means the interval runs from the
  *  completion date rather than from the date the atom carried — as does a base
  *  that isn't a real date, which is the undated-recurring case. */
 export function nextRecurrence(rule: string, base: string, today: string): string | null {
-  const m = rule.trim().match(RECUR_RE);
-  if (!m) return null;
-  const [, n, unit, whenDone] = m;
-  const step = Number(n ?? 1);
-  if (!Number.isFinite(step) || step < 1) return null;
-  const from = whenDone || !ISO_DATE.test(base) ? today : base;
-  if (unit === "day" || unit === "week") return addDays(from, step * UNIT_DAYS[unit]);
-  // Months and years shift the field, not a day count — and a day-of-month that
-  // doesn't exist in the target month (Jan 31 → Feb) clamps to its last day
-  // rather than rolling into the next one.
-  const d = new Date(`${from}T00:00:00Z`);
-  const day = d.getUTCDate();
-  d.setUTCDate(1);
-  if (unit === "month") d.setUTCMonth(d.getUTCMonth() + step);
-  else d.setUTCFullYear(d.getUTCFullYear() + step);
-  const lastOfMonth = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
-  d.setUTCDate(Math.min(day, lastOfMonth));
-  return d.toISOString().slice(0, 10);
+  const r = parseRecurrence(rule);
+  if (!r) return null;
+  return advance(r, r.whenDone || !ISO_DATE.test(base) ? today : base);
 }
 
 /** Can this atom be completed from the web at all? A recurring atom whose rule
@@ -347,6 +448,65 @@ export function nextRecurrence(rule: string, base: string, today: string): strin
  *  recurrence on the floor, which is worse than not offering the button. */
 export const canComplete = (t: Task): boolean =>
   t.status === "open" && (!t.recurrence || recurrenceSupported(t.recurrence));
+
+// ── Projection ───────────────────────────────────────────────────────────────
+
+export interface Occurrence {
+  task: Task;
+  /** `YYYY-MM-DD` this occurrence falls on. */
+  date: string;
+  /** False for the instance that actually exists in the vault; true for every
+   *  one we computed. Only the real one can be ticked — completing a projection
+   *  would write a line that isn't there. */
+  projected: boolean;
+}
+
+/** Every occurrence of `t` landing in `[from, to]`, real instance included.
+ *
+ *  The vault holds only the current instance of a recurring atom (Obsidian Tasks
+ *  writes the next one when you complete it), so without this a weekly chore
+ *  appears on a calendar exactly once. Non-recurring atoms yield their own date;
+ *  a rule we can't parse yields only the real instance, which is the honest
+ *  answer — we don't know when it next falls.
+ *
+ *  `when done` rules are projected on their nominal cadence: the true next date
+ *  depends on when you actually finish, but a calendar is asking about the
+ *  PATTERN, and "every day when done" genuinely means roughly daily.
+ *
+ *  `cap` bounds a pathological rule (`every day` over a decade); hitting it
+ *  truncates rather than hangs. */
+export function occurrencesBetween(t: Task, from: string, to: string, cap = 400): Occurrence[] {
+  const start = effectiveDate(t);
+  if (!start || t.status !== "open") return [];
+  const out: Occurrence[] = [];
+  if (start >= from && start <= to) out.push({ task: t, date: start, projected: false });
+
+  const r = t.recurrence ? parseRecurrence(t.recurrence) : null;
+  if (!r) return out;
+
+  let d = start;
+  for (let i = 0; i < cap && d <= to; i++) {
+    d = advance(r, d);
+    if (d > to) break;
+    if (d >= from) out.push({ task: t, date: d, projected: true });
+  }
+  return out;
+}
+
+/** Every occurrence of every open atom in the window, grouped by date. Undated
+ *  atoms are absent by construction — a calendar can't place them. */
+export function occurrencesByDate(tasks: Task[], from: string, to: string): Map<string, Occurrence[]> {
+  const byDate = new Map<string, Occurrence[]>();
+  for (const t of tasks) {
+    for (const o of occurrencesBetween(t, from, to)) {
+      (byDate.get(o.date) ?? byDate.set(o.date, []).get(o.date)!).push(o);
+    }
+  }
+  for (const list of byDate.values()) {
+    list.sort((a, b) => rank(a.task) - rank(b.task) || a.task.note.localeCompare(b.task.note) || a.task.line - b.task.line);
+  }
+  return byDate;
+}
 
 /** Dates a new recurrence instance carries forward. `➕ created` stays put — it
  *  records when the atom was written, not when it next comes round. */

@@ -1,12 +1,13 @@
 # Active-instance resolution (C1–C4) — the multi-instance model
 
-> **Status: SPECIFICATION (build target).** This file is the frozen contract the
-> implementation is written *against* — the resolver, `./configure`, `bd use`,
-> and the `SessionStart`/`PreToolUse` hooks it describes are **not built yet**.
-> Nothing here is wired into the always-on guides ([`CLAUDE.md`](../CLAUDE.md) /
-> [`AGENTS.md`](../AGENTS.md)) until the mechanism lands; do not assume `bd use`
-> or `./configure` exist because they appear here. Once built, this becomes the
-> normative mechanics doc and the C1–C4 rule family lands in `AGENTS.md`.
+> **Status: NORMATIVE.** The mechanism described here is built and tested — the
+> resolver (`ctx/tools/sys/resolve.sh`), `./configure`, `bd use`/`where`, and the
+> `SessionStart` + cross-instance `PreToolUse` hooks all exist. The C1–C4 rule
+> family lives canonically in [`AGENTS.md`](../AGENTS.md); this file is its
+> mechanics. Wiring is installed per-clone by `./configure` (settings.json is
+> fork-local). One caveat remains: while `BD_ROOT`/`VAULT_PATH`/`REPOS_PATH` are
+> exported in your shell, resolution stays in **escape-hatch mode** (dormant) —
+> remove those exports to hand a shell to the resolver.
 
 On-demand detail for the **active-instance discipline** — how one machine hosts
 several braindance clones at once, each governing a different scope, and how any
@@ -179,23 +180,23 @@ Instruction files cannot *auto*-enforce; they state doctrine agents self-apply.
 The automatic half is hooks. Same split braindance already uses for R1.
 
 - **Portable doctrine (`AGENTS.md` C1–C4).** Reaches every tool (Codex, Cursor,
-  Gemini, Claude). To be added when the mechanism lands:
-  - **C1 — Resolve the active instance before doing work.** Determine which
-    instance governs this cwd (pin → location → default); never assume a global
-    singleton.
-  - **C2 — Stay inside the active instance.** Reads and writes touch only its
-    resolved `VAULT_PATH`/`REPOS_PATH`; never another instance's vault or repos.
-  - **C3 — Ambiguity ⇒ stop, don't guess.** No instance resolves, or the pin
-    disagrees with cwd → halt and surface; never fall back to empty scaffolding.
-  - **C4 — One command bootstraps a clone.** `./configure` registers the
-    instance and installs the resolver hook — idempotent, per-clone.
+  Gemini, Claude) — the canonical rules **live in [`AGENTS.md`](../AGENTS.md)**:
+  C1 resolve the active instance before working; C2 stay inside it (reads/writes
+  only its `VAULT_PATH`/`REPOS_PATH`); C3 ambiguity ⇒ stop, don't guess; C4 one
+  command (`./configure`) bootstraps a clone. Agents self-apply these even where
+  no hook runs.
 - **Mechanical backstop (Claude Code hooks).** The auto part, Claude-Code-specific:
-  - **`SessionStart`** — runs the resolver, exports the trio + stamp so every
-    agent inherits the correct instance env automatically; on step-5 UNRESOLVED
-    it surfaces the message instead of proceeding.
-  - **`PreToolUse`** — extends the existing guard's contract: block a mutation
-    whose path lands in *any* instance's `vault`/`repos` other than the active
-    one. Same exit-2 / fail-open discipline as `block-loon-main-writes.py`.
+  - **`SessionStart`** (`.claude/hooks/resolve-instance.py`) — resolves the
+    active instance for the session cwd and injects it as `additionalContext`
+    (C1 awareness), or notes that none is active. Informational only — a
+    SessionStart hook cannot block. The shell integration (`wt.sh`) is what
+    actually exports the env for Bash tool calls.
+  - **`PreToolUse`** (`.claude/hooks/block-cross-instance-writes.py`, C2) —
+    blocks a mutation whose target lands in another instance's `vault`/`repos`
+    than the one active for the tool's cwd (for Bash, the effective cwd after a
+    leading `cd`). Narrow + fail-open like `block-loon-main-writes.py`; a no-op
+    with no registry. The hook **scripts** are template-tracked; the settings.json
+    **wiring** is installed per-clone by `./configure` (and stays fork-local).
 
 ## Worked examples
 

@@ -1,6 +1,9 @@
 // braindance publish tool — project publish-tagged notes from the private vault
-// into noon-moon-net/garden/content (flat — /garden/<slug>). Deterministic; run manually, review the diff
-// in noon-moon-net, then commit. Full design: ctx/noon-moon-net.md.
+// into <pub>/garden/content (flat — /garden/<slug>). Defaults to the in-repo
+// garden at ctx/www, which pages.yml builds and deploys to GitHub Pages; point
+// --pub/PUB_REPO at a separate public garden repo for structural isolation
+// instead. Deterministic; run manually, review the diff, then commit.
+// Full design: ctx/noon-moon-net.md.
 //
 //   npm run publish -- [--vault DIR] [--pub DIR] [--scrub] [--dry]
 //
@@ -8,7 +11,6 @@
 // the privacy boundary. --scrub instead downgrades such links to plain text.
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { homedir } from 'node:os';
 import matter from 'gray-matter';
 import { walkVault, buildIndex, selectPublished, hasTag, findAsset, type Note } from './vault.ts';
 import {
@@ -28,7 +30,7 @@ function parseArgs(argv: string[]): Args {
   };
   return {
     vault: resolve(get('--vault') ?? process.env.VAULT_REPO ?? resolve(HERE, '../../../vault')),
-    pub: resolve(get('--pub') ?? process.env.PUB_REPO ?? resolve(homedir(), 'dev/noon-moon-net')),
+    pub: resolve(get('--pub') ?? process.env.PUB_REPO ?? resolve(HERE, '../../../www')),
     scrub: argv.includes('--scrub'),
     dry: argv.includes('--dry') || argv.includes('--dry-run'),
   };
@@ -102,7 +104,7 @@ function main() {
 
   const { notes: n, assets: a } = regenerate(args.pub, items);
   console.log(`\n✓ Wrote ${n} note(s) + ${a} asset(s) to ${args.pub}/garden/content`);
-  console.log('Next: review the diff in noon-moon-net and commit.');
+  console.log(`Next: review the diff in ${args.pub} and commit.`);
 }
 
 main();

@@ -9,8 +9,11 @@
 # onto the new origin/main, flagging branches whose content is already absorbed
 # into main ("superseded — replant follow-ups on a fresh branch").
 #
-# Point it at your target project (the repo cloned under repo/<project>):
-#   PROJECT_DIR=~/dev/braindance-usr/repo/<project> rebase-open-prs.sh
+# Point it at your target project (a repo cloned under the repos dir):
+#   PROJECT_DIR=~/dev/repo/<project> rebase-open-prs.sh
+# Unset, it falls back to the resolved repos dir ($REPOS_PATH, else $BD_ROOT,
+# else <core>/repo) — which is a directory, not a repo, so you still get the
+# "not a git repo" error rather than a silent wrong target.
 #
 # SAFE BY DEFAULT:
 #   * default = REPORT ONLY (no writes to any branch).
@@ -29,7 +32,8 @@
 # never churn and the fast-forward below stays clean (that is the R5 fix).
 
 set -uo pipefail
-PROJECT="${PROJECT_DIR:-$HOME/dev/braindance-usr/repo/<project>}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../.." && pwd)"   # <core>
+PROJECT="${PROJECT_DIR:-${REPOS_PATH:-${BD_ROOT:-$HERE/repo}}}"
 APPLY=0; PUSH=0; ONLY=""
 for a in "$@"; do
   case "$a" in
@@ -42,7 +46,7 @@ done
 
 git -C "$PROJECT" rev-parse --git-dir >/dev/null 2>&1 || {
   echo "not a git repo: $PROJECT" >&2
-  echo "set PROJECT_DIR to your target repo (e.g. ~/dev/braindance-usr/repo/<project>)" >&2
+  echo "set PROJECT_DIR to your target repo (e.g. ~/dev/repo/<project>)" >&2
   exit 2
 }
 

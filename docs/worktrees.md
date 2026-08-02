@@ -6,7 +6,7 @@ On-demand detail for the worktree guardrails stated tightly in [`AGENTS.md`](../
 
 ## R1–R7, in full
 
-- **R1 — the main checkout is READ-ONLY to agents.** It stays on `main`, is the integration point, and agents never `cd` into it to write, build, format, or commit. Keeping it current is the human's job (`git pull --ff-only`, or the post-merge rebase tool below). Because agents never build there, its lockfiles never churn, so fast-forwards stay clean. For braindance itself the main tree is the braindance checkout (e.g. `~/dev/braindance-usr`, also the Obsidian window); for a target project it is its checkout under the repos dir (`${REPOS_PATH:-$BD_ROOT}/<project>`, default nested `repo/<project>`; see [`CLAUDE.md`](../CLAUDE.md)).
+- **R1 — the main checkout is READ-ONLY to agents.** It stays on `main`, is the integration point, and agents never `cd` into it to write, build, format, or commit. Keeping it current is the human's job (`git pull --ff-only`, or the post-merge rebase tool below). Because agents never build there, its lockfiles never churn, so fast-forwards stay clean. For braindance itself the main tree is the braindance checkout (e.g. `~/dev/braindance`, also the Obsidian window); for a target project it is its checkout under the repos dir (`${REPOS_PATH:-$BD_ROOT}/<project>`, default nested `repo/<project>`; see [`CLAUDE.md`](../CLAUDE.md)).
 - **R2 — cut worktrees off a FRESHLY-FETCHED `origin/main`, and rebase before every push.** Always `git fetch origin` immediately before creating a worktree, and `git fetch origin && git rebase origin/main` immediately before pushing — never push from a stale base (the failure mode that stranded follow-up commits on already-merged branches). For braindance the `bd` helper bakes this in (`bd new` / `bd land`, below).
 - **R3 — perf / A-B / benchmark agents run EXCLUSIVELY.** At most one at a time, with no other heavy work spawned while it measures — a benchmark can't hold a baseline on a contended machine. Gate the measurement on a quiet box and abort rather than quote a bad number (`ctx/tools/orchestration/loadguard.sh || exit 1`). Never fan a perf tournament out N-wide on one machine.
 - **R4 — checkpoint WIP before you yield.** Never stop with uncommitted work — leave a rebasable commit so a stop / crash / timeout loses nothing: `git add -A && git commit --no-verify -m "WIP(<task>): checkpoint"` (for braindance: `bd wip`). Squashed away at land.
@@ -20,7 +20,7 @@ On-demand detail for the worktree guardrails stated tightly in [`AGENTS.md`](../
 
 ## The `bd` braindance worktree workflow
 
-The braindance main tree (the braindance checkout, e.g. `~/dev/braindance-usr`) is sacred: it stays on `main`, it's the Obsidian window and the integration point. **Agents don't write here.** Occasionally `git pull --ff-only` it.
+The braindance main tree (the braindance checkout, e.g. `~/dev/braindance`) is sacred: it stays on `main`, it's the Obsidian window and the integration point. **Agents don't write here.** Occasionally `git pull --ff-only` it.
 
 Agent sessions work in sibling worktrees under `~/dev/bd-wt/<task>` — **outside** the vault, so Obsidian never indexes them. Helper `bd` (in `ctx/tools/sys/wt.sh`, sourced from your shell rc):
 

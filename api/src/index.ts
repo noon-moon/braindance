@@ -3,7 +3,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { html, raw } from "hono/html";
 import { layout } from "./layout.js";
-import { FUNNELS, funnelById, compose, taskLine, appendTaskLine, type Field } from "./funnels.js";
+import { FUNNELS, funnelById, compose, taskLine, appendTaskLine, scopeLink, type Field } from "./funnels.js";
 import { commitCapture, createNote, stamp, slug } from "./notes.js";
 import { VAULT_SUBDIR, vaultRel } from "./config.js";
 import { seenRecently, contentHash } from "./dedup.js";
@@ -49,14 +49,20 @@ function control(f: Field, scopes: string[], value = "") {
   return html`<input type="${t}" name="${f.key}"${req} placeholder="${ph}" value="${value}">`;
 }
 
-// The capture screen: title + body + a scope dropdown.
-// Web capture is untyped: everything drops into the inbox as a raw memo, and the
-// memo/todo/media/resource sorting happens at triage/review, not here. The one
-// classification worth making at capture time is WHICH SCOPE the thought belongs
-// to — you know it then, and reconstructing it at the desk is guesswork — so the
-// memo funnel carries a scope field that lands as the note's leading
-// `Tags: [[MOC]]` link. It stays optional: a scopeless thought still captures in
-// one tap. (The typed funnel schema still lives on the JSON /ingest API.)
+// The capture screen: title + body + scope, and a task toggle over due/priority.
+//
+// Capture stays UNTYPED by default — a thought drops into the inbox as a raw
+// memo and the media/resource sorting happens at triage. What capture time knows
+// and the desk can only guess at is anything you can't reconstruct later:
+//
+//   - WHICH SCOPE the thought belongs to (lands as the leading `Tags: [[MOC]]`),
+//   - whether it's a thought or an ACTION, and if so when it's due.
+//
+// So the one classification the form does offer is "this is a task", which
+// reveals due + priority (pure CSS — this app runs no JS) and captures a real
+// `#task` atom instead of a memo. Everything stays optional: an untitled,
+// scopeless, untyped thought still captures in one tap. (The full typed funnel
+// schema still lives on the JSON /ingest API.)
 //
 // The screen never becomes a dead end: a capture posts, redirects, and lands back
 // HERE with a self-dismissing toast (see POST /ingest), so consecutive thoughts
@@ -72,12 +78,26 @@ interface CaptureView {
   dup?: boolean;
   /** Submitted values to re-fill after a rejection. */
   values?: Record<string, string>;
+  /** Re-open the task disclosure after a rejection, so the due date the user
+   *  already picked isn't hidden behind a toggle that reset itself. */
+  asTask?: boolean;
   error?: string;
 }
 
 function captureForm(v: CaptureView = {}) {
-  const f = funnelById("memo") ?? FUNNELS[0];
+  const memo = funnelById("memo") ?? FUNNELS[0];
+  const task = funnelById("task")!;
   const scopes = getScopes();
+  const val = (key: string) => v.values?.[key] ?? "";
+  // Field specs come from the funnels themselves so labels, options and types
+  // stay single-sourced — the form spans two funnels, and the toggle picks which
+  // one the POST is validated against.
+  // Requiredness here depends on the toggle — a memo needs a body, a task needs
+  // its text — and no-JS HTML can't move a `required` attribute at tick time. So
+  // the form asserts neither and the server decides; a rejection re-renders with
+  // everything intact, which is what makes that safe.
+  const field = (f: Field) => html`<label>${f.label}</label>${control({ ...f, required: false }, scopes, val(f.key))}`;
+  const of = (fn: typeof memo, key: string) => fn.fields.find((x) => x.key === key)!;
   const toast = v.ok
     ? html`<div class="toast">✓ captured${v.ok.title ? html` → “${v.ok.title}”` : " to inbox"}</div>`
     : v.dup
@@ -91,9 +111,18 @@ function captureForm(v: CaptureView = {}) {
       ${v.error ? html`<p class="flash err">${v.error}</p>` : ""}
       <form method="post" action="/ingest" class="capture-form">
         <input type="hidden" name="idem" value="${randomUUID()}">
-        <input type="hidden" name="funnel" value="${f.id}">
         <div class="cap-fields">
-          ${f.fields.map((fl) => html`<label>${fl.label} ${fl.required ? html`<span class="req">*</span>` : ""}</label>${control(fl, scopes, v.values?.[fl.key] ?? "")}`)}
+          ${field(of(memo, "title"))}
+          ${field(of(memo, "body"))}
+          ${field(of(memo, "scope"))}
+        </div>
+        <div class="as-task">
+          <input type="checkbox" id="as-task" name="as_task" value="1"${v.asTask ? raw(" checked") : ""}>
+          <label for="as-task">this is a task</label>
+        </div>
+        <div class="task-fields">
+          ${field(of(task, "due"))}
+          ${field(of(task, "priority"))}
         </div>
         <div class="cap-actions">
           <button class="btn" type="submit">capture</button>
@@ -140,6 +169,20 @@ async function doCapture(funnelId: string, raw: Record<string, unknown>, idem?: 
   return { kind: "ok", path, title: input.title ?? "" };
 }
 
+/** On the capture screen the big textarea is where a thought actually gets
+ *  typed, and the title is optional — so someone who writes into the body and
+ *  THEN ticks "this is a task" would otherwise be rejected for a missing title
+ *  they never meant to skip. Promote the body's first line to the atom and keep
+ *  the rest as detail, the way a task capture reads everywhere else. Mutates the
+ *  parsed body in place, before validation sees it. */
+function splitTitleFromBody(raw: Record<string, unknown>): void {
+  if (String(raw.title ?? "").trim()) return;
+  const body = String(raw.body ?? "");
+  const nl = body.indexOf("\n");
+  raw.title = (nl === -1 ? body : body.slice(0, nl)).trim();
+  raw.body = nl === -1 ? "" : body.slice(nl + 1).trim();
+}
+
 // ── Capture: ingest → inbox/ (web form → HTML; JSON body → JSON, for the iOS
 //    Share Sheet shortcut & other programmatic callers) ────────────────────────
 app.post("/ingest", async (c) => {
@@ -147,7 +190,11 @@ app.post("/ingest", async (c) => {
   const raw = (wantsJson
     ? await c.req.json().catch(() => ({}))
     : await c.req.parseBody()) as Record<string, unknown>;
-  const funnelId = String(raw.funnel ?? "");
+  // The web form carries no funnel id — its task toggle picks one. JSON callers
+  // still name the funnel outright, so the typed schema is unchanged for them.
+  const asTask = raw.as_task === "1" || raw.as_task === true;
+  const funnelId = String(raw.funnel ?? (asTask ? "task" : "memo"));
+  if (asTask && !wantsJson) splitTitleFromBody(raw);
   const idem = raw.idem ? String(raw.idem).trim() : undefined;
   const res = await doCapture(funnelId, raw, idem);
 
@@ -162,7 +209,7 @@ app.post("/ingest", async (c) => {
     const funnel = funnelById(funnelId) ?? funnelById("memo")!;
     const values: Record<string, string> = {};
     for (const fl of funnel.fields) values[fl.key] = String(raw[fl.key] ?? "");
-    return c.html(captureForm({ values, error: res.message }), 400);
+    return c.html(captureForm({ values, asTask, error: res.message }), 400);
   }
   // Post/redirect/get back to the capture screen — a reload can't re-submit, and
   // the next thought needs no "capture another" tap. The toast rides the query.
@@ -568,6 +615,18 @@ function memoAtom(memo: InboxNote): Task | null {
   return null;
 }
 
+/** A memo's text with its `#task` atom line removed — the detail a task capture
+ *  carried alongside the action. Unchanged for an ordinary memo, which has none. */
+function proseOf(memo: InboxNote): string {
+  const atom = memoAtom(memo);
+  if (!atom) return memo.text;
+  return memo.text
+    .split("\n")
+    .filter((l) => l !== atom.raw)
+    .join("\n")
+    .trim();
+}
+
 // Deterministic pre-fill (no LLM): the memo title → a `title` field, the memo
 // body → the funnel's main text field, a URL in the body → a `url` field, and the
 // scope picked at capture time → the scope dropdown (so it survives re-typing).
@@ -576,7 +635,9 @@ function prefillFor(f: Field, memo: InboxNote): string {
   if (f.type === "scope") return memo.scope ?? "";
   if (f.key === "due") return memoAtom(memo)?.due ?? "";
   if (f.key === "priority") return memoAtom(memo)?.priority ?? "";
-  if (f.type === "textarea") return memo.text;
+  // The atom line is already represented by the title/due/priority fields — a
+  // textarea gets the prose AROUND it, not a duplicate of it.
+  if (f.type === "textarea") return proseOf(memo);
   if (f.type === "url") return memo.text.match(URL_RE)?.[0] ?? "";
   return "";
 }
@@ -675,18 +736,36 @@ app.post("/review/triage/:name", async (c) => {
     const raw = readNoteRaw(target);
     if (!raw) return c.html(await renderReview({ ok: false, msg: `✗ could not read “${target}”` }), 409);
     const line = taskLine(input);
+    // A task is one line, so any DETAIL the capture carried has nowhere to go on
+    // the scope note. Rather than drop it with the memo, it becomes a memo note
+    // of its own in the same op — the action files, the context keeps. Clear the
+    // detail field at the desk and only the atom lands.
+    const detail = input.body?.trim() ?? "";
+    const keep = detail ? uniqueDest(input.title || memo.title || "note") : null;
+    const ops = [
+      { op: "delete" as const, path: inboxRel },
+      { op: "put" as const, path: vaultRel(VAULT_SUBDIR, `${target}.md`), content: appendTaskLine(raw, line) },
+    ];
+    if (keep) {
+      ops.push({
+        op: "put" as const,
+        path: keep.rel,
+        content: compose({
+          title: input.title,
+          frontmatter: { ...(memo.createdISO ? { created: memo.createdISO } : {}), tags: ["memo"] },
+          body: `${scopeLink(target)}# ${input.title}\n\n${detail}`,
+        }),
+      });
+    }
     try {
-      const res = await gitStore().commit(
-        {
-          ops: [
-            { op: "delete", path: inboxRel },
-            { op: "put", path: vaultRel(VAULT_SUBDIR, `${target}.md`), content: appendTaskLine(raw, line) },
-          ],
-        },
-        { message: `triage: task → ${target} ← inbox/${memo.name}` },
-      );
+      const res = await gitStore().commit({ ops }, {
+        message: `triage: task → ${target}${keep ? ` (+ memo ${keep.name})` : ""} ← inbox/${memo.name}`,
+      });
       invalidate();
-      return c.html(await renderReview({ ok: true, msg: `✓ filed atom → ${target} (op ${res.id.slice(0, 8)})` }));
+      return c.html(await renderReview({
+        ok: true,
+        msg: `✓ filed atom → ${target}${keep ? `, detail kept as ${keep.name}` : ""} (op ${res.id.slice(0, 8)})`,
+      }));
     } catch (e) {
       return c.html(await renderReview({ ok: false, msg: `✗ file failed: ${(e as Error).message}` }), 409);
     }

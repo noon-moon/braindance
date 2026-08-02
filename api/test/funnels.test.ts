@@ -56,6 +56,12 @@ console.log("test: appendTaskLine");
   check("a note with no Tasks section gets the atom at the end", plain.endsWith("Hub for things.\n\n- [ ] Ship it #task\n"));
   check("frontmatter is untouched (raw bytes, never re-serialised)", plain.startsWith("---\ntags:\n  - scope\n---\n"));
 
+  const joined = appendTaskLine("# Loon\n\n- [ ] Existing atom #task\n", line);
+  check("a trailing checklist is joined, not split into a second list",
+    joined.endsWith("- [ ] Existing atom #task\n- [ ] Ship it #task\n"));
+  check("prose still gets a blank line before the atom",
+    appendTaskLine("# Loon\n\nSome prose.\n", line).endsWith("Some prose.\n\n- [ ] Ship it #task\n"));
+
   const sectioned = appendTaskLine(
     ["# Loon", "", "## Tasks", "", "- [ ] Existing atom #task", "", "## References", "", "Some link.", ""].join("\n"),
     line,
@@ -92,6 +98,11 @@ console.log("test: funnel registry");
   check("a captured task carries its scope link", built.body.startsWith("Tags: [[Pets]]\n"));
   check("…and a real atom in the body", built.body.includes("- [ ] Call the vet 📅 2026-08-05 #task"));
   check("…tagged memo, with no legacy status/due frontmatter", JSON.stringify(built.frontmatter) === '{"tags":["memo"]}');
+  check("…and no stray blank block when there's no detail", built.body.endsWith("#task"));
+
+  const withDetail = funnelById("task")!.build({ title: "Call the vet", body: "Ask about the limp.", due: "" });
+  check("detail rides along BELOW the atom, not inside it",
+    withDetail.body.endsWith("- [ ] Call the vet #task\n\nAsk about the limp."));
 }
 
 console.log(`\n${passed} checks passed`);

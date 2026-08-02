@@ -495,10 +495,19 @@ app.post("/todo/complete", async (c) => {
 // Subscribe-once calendar feed. Tailscale-only like every other route, so the
 // URL is the only credential — which is also why it carries no auth of its own.
 app.get("/todo.ics", (c) => {
-  const alarm = process.env.TODO_ICS_ALARM_MIN;
+  // Both knobs take a comma-separated list, so a nagger can have several alarms
+  // per task. Setting only the timed one still gives all-day atoms an alert —
+  // defaulted to 09:00, because the alternative (inheriting a minutes-BEFORE
+  // offset) fires the night before, which is nobody's intent.
+  const list = (v?: string) => (v ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  const alarmsMin = list(process.env.TODO_ICS_ALARM_MIN)
+    .map(Number).filter((n) => Number.isFinite(n) && n >= 0);
+  const alldayRaw = list(process.env.TODO_ICS_ALLDAY_ALARM_AT);
+  const alldayAlarmsAt = alldayRaw.length ? alldayRaw : alarmsMin.length ? ["09:00"] : [];
   const body = buildICS(listTasks(), {
     baseUrl: process.env.PUBLIC_BASE_URL,
-    alarmMin: alarm === undefined || alarm === "" ? undefined : Number(alarm),
+    alarmsMin,
+    alldayAlarmsAt,
   });
   return c.body(body, 200, {
     "content-type": "text/calendar; charset=utf-8",

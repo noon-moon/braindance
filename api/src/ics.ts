@@ -76,11 +76,43 @@ export function rrule(rule: string): string | null {
 export interface IcsOptions {
   /** Base URL of this viewer, so an event links back to its note. */
   baseUrl?: string;
-  /** Minutes before an event to fire an alarm. Undefined = no VALARM, which is
-   *  the default: an alarm per task turns a calendar into a nag. */
-  alarmMin?: number;
+  /** Minutes BEFORE a timed atom (`@14:00`) to alert. Several = several alarms.
+   *  Empty/undefined = silent, which is the default. */
+  alarmsMin?: number[];
+  /** Times of day (`HH:MM`) to alert on an ALL-DAY atom's own day.
+   *
+   *  All-day events start at midnight, so a "15 minutes before" trigger fires at
+   *  23:45 the night before — reliably the worst moment to be told about
+   *  tomorrow. These triggers are positive offsets from that midnight instead,
+   *  so the alert lands during the day the task is actually due. */
+  alldayAlarmsAt?: string[];
   /** Injected for tests; DTSTAMP is required and must be a real instant. */
   now?: Date;
+}
+
+/** An iCalendar duration for a whole number of minutes from DTSTART. Negative
+ *  is before, positive after; RFC 5545 wants a zero offset spelled `PT0S`. */
+function trigger(minutes: number): string {
+  if (minutes === 0) return "PT0S";
+  const sign = minutes < 0 ? "-" : "";
+  const m = Math.abs(minutes);
+  const h = Math.floor(m / 60);
+  return `${sign}PT${h ? `${h}H` : ""}${m % 60 ? `${m % 60}M` : ""}`;
+}
+
+const alarm = (text: string, offsetMin: number): string[] => [
+  "BEGIN:VALARM",
+  "ACTION:DISPLAY",
+  `DESCRIPTION:${esc(text)}`,
+  `TRIGGER:${trigger(offsetMin)}`,
+  "END:VALARM",
+];
+
+/** `HH:MM` → minutes past midnight, or null if it isn't a time. */
+export function minutesIntoDay(hhmm: string): number | null {
+  const m = hhmm.trim().match(/^(\d{1,2}):([0-5]\d)$/);
+  if (!m || Number(m[1]) > 23) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
 }
 
 function event(t: Task, date: string, o: IcsOptions): string[] {
@@ -105,9 +137,13 @@ function event(t: Task, date: string, o: IcsOptions): string[] {
     lines.push(`PRIORITY:${p}`);
   }
   if (o.baseUrl) lines.push(`URL:${esc(`${o.baseUrl.replace(/\/$/, "")}/vault/${encodeURIComponent(t.note)}`)}`);
-  if (o.alarmMin !== undefined) {
-    lines.push("BEGIN:VALARM", "ACTION:DISPLAY", `DESCRIPTION:${esc(t.text || "task")}`,
-      `TRIGGER:-PT${Math.max(0, Math.round(o.alarmMin))}M`, "END:VALARM");
+  // A timed atom alerts BEFORE it starts; an all-day one alerts DURING its day,
+  // because "before midnight" means the night before (see IcsOptions).
+  const text = t.text || "task";
+  if (span) for (const m of o.alarmsMin ?? []) lines.push(...alarm(text, -Math.abs(Math.round(m))));
+  else for (const at of o.alldayAlarmsAt ?? []) {
+    const mins = minutesIntoDay(at);
+    if (mins !== null) lines.push(...alarm(text, mins));
   }
   lines.push("END:VEVENT");
   return lines;

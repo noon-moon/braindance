@@ -35,4 +35,8 @@ The repo is private — only the built Pages artifact is public. Isolation is en
 - **Slugs:** filenames are lowercased and non-alphanumerics become hyphens — `"Deerhunter - Monomania"` → `deerhunter---monomania`.
 - The publish tool runs on any Node; only a *local* Quartz build/preview needs Node 22 (`cd ctx/www/garden && nvm use 22.16.0`).
 - Always review the staged diff before landing — the merge is what makes it public.
-- **Known gap:** there is no CI re-audit of the committed projection — the gate runs only at projection time, inside `npm run publish`. So the staged diff is the last line of defence: read it. Never hand-edit anything under `ctx/www/garden/content/`; nothing re-checks it.
+- **The gate runs twice** — at projection time (`npm run publish`) and again in CI over the committed projection, vault-blind (`npm run verify`, the first step of `pages.yml`). Get CI's answer early:
+  ```bash
+  npm --prefix ctx/tools/pub run verify              # exit 1 = the deploy would be blocked
+  ```
+  Still never hand-edit `ctx/www/garden/content/` — verify would catch a leak, but the file is machine-owned and the next publish overwrites it anyway.

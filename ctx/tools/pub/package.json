@@ -5,6 +5,7 @@
   "description": "Projects publish-tagged vault notes flat into <pub>/garden/content (default: ctx/www)",
   "scripts": {
     "publish": "tsx src/publish.ts",
+    "verify": "tsx src/verify.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -21,6 +21,20 @@ const TTL_MS = 3000;
  *  prose checkboxes stay out of the database. Word-boundary so `#tasks` misses. */
 const GLOBAL_FILTER = /(?:^|\s)#task(?![\w/-])/;
 
+/** Time of day for an atom, `HH:MM` in the vault's own timezone (TZ).
+ *
+ *  The vault's DATE fields stay day-granular, because that's Obsidian Tasks'
+ *  emoji format and breaking it would cost us the plugin. A time therefore lives
+ *  in the task's DESCRIPTION, where Tasks treats it as ordinary text: `@14:00`,
+ *  or `@14:00-14:30` for an explicit end. Marked with `@` rather than a bare
+ *  `14:00` because ordinary prose false-positives — `John 3:16` is a valid
+ *  HH:MM. It exists for the calendar surfaces; nothing else depends on it. */
+export interface TaskTime {
+  start: string;
+  /** Explicit end, or null when only a start was given. */
+  end: string | null;
+}
+
 export type TaskStatus = "open" | "done" | "cancelled";
 /** Obsidian Tasks' five levels, highest first. `null` = normal (no signifier). */
 export type Priority = "highest" | "high" | "medium" | "low" | "lowest";
@@ -42,6 +56,8 @@ export interface Task {
   completed: string | null;
   /** `🔁` recurrence rule, verbatim (e.g. "every day when done"). */
   recurrence: string | null;
+  /** `@HH:MM[-HH:MM]` parsed out of the description, or null for an all-day atom. */
+  time: TaskTime | null;
   priority: Priority | null;
   /** Note the line lives in — its scope, by containment. Basename, no `.md`. */
   note: string;
@@ -79,6 +95,30 @@ const CHECKLIST_RE = /^\s*[-*+]\s+\[(.)\]\s*(.*)$/;
 
 const STATUS: Record<string, TaskStatus> = { " ": "open", x: "done", X: "done", "-": "cancelled" };
 
+/** `@14:00` or `@14:00-14:30`, as its own token. Hours are validated below —
+ *  the regex can't express 0–23 without becoming unreadable. */
+const TIME_RE = /(^|\s)@(\d{1,2}):([0-5]\d)(?:\s*-\s*(\d{1,2}):([0-5]\d))?(?=\s|$)/u;
+
+const hhmm = (h: number, m: number): string => `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+
+/** Pull `@HH:MM[-HH:MM]` out of a description. Returns null (and leaves the text
+ *  alone) for an out-of-range hour, so `@99:00` stays visible as the typo it is
+ *  rather than silently vanishing from the line. */
+function parseTime(rest: string): TaskTime | null {
+  const m = rest.match(TIME_RE);
+  if (!m) return null;
+  const [, , h1, m1, h2, m2] = m;
+  const sh = Number(h1);
+  if (sh > 23) return null;
+  const start = hhmm(sh, Number(m1));
+  if (h2 === undefined) return { start, end: null };
+  const eh = Number(h2);
+  if (eh > 23) return { start, end: null };
+  const end = hhmm(eh, Number(m2));
+  // An end at or before the start is not a range we can honour; keep the start.
+  return { start, end: end > start ? end : null };
+}
+
 /** Parse one line into a Task, or null if it isn't a `#task` checklist line.
  *  Exported for tests — the scan is thin glue over this. */
 export function parseTaskLine(raw: string, note: string, dir: string, line: number): Task | null {
@@ -101,6 +141,7 @@ export function parseTaskLine(raw: string, note: string, dir: string, line: numb
   // trailing it). Strip it back off, or the rule reads as "every 2 days #task"
   // and matches nothing.
   const recurrence = rest.match(RECURRENCE_RE)?.[1]?.replace(GLOBAL_FILTER, " ").trim() || null;
+  const time = parseTime(rest);
 
   // Display text = the line minus every signifier, its date, and the global filter.
   let text = rest;
@@ -108,6 +149,7 @@ export function parseTaskLine(raw: string, note: string, dir: string, line: numb
   text = text.replace(RECURRENCE_RE, "");
   for (const [, emoji] of PRIORITY) text = text.split(emoji).join("");
   text = text.replace(/🆔\s*\S+/u, "").replace(/⛔\s*\S+/u, "");
+  if (time) text = text.replace(TIME_RE, "$1");
   text = text.replace(GLOBAL_FILTER, " ").replace(/\s+/g, " ").trim();
 
   return {
@@ -119,6 +161,7 @@ export function parseTaskLine(raw: string, note: string, dir: string, line: numb
     start: dates.start ?? null,
     completed: dates.completed ?? null,
     recurrence,
+    time,
     priority,
     note,
     dir,
@@ -216,6 +259,33 @@ export const effectiveDate = (t: Task): string | null => t.due ?? t.scheduled ??
 const PRIORITY_RANK: Record<Priority, number> = { highest: 0, high: 1, medium: 2, low: 4, lowest: 5 };
 const rank = (t: Task): number => (t.priority ? PRIORITY_RANK[t.priority] : 3); // no signifier = normal
 
+/** How long a timed atom lasts when it names only a start. 30 minutes suits a
+ *  task list; set `TASK_DEFAULT_DURATION_MIN` in `/srv/.env` to taste. */
+const DEFAULT_DURATION_MIN = Math.max(1, Number(process.env.TASK_DEFAULT_DURATION_MIN ?? 30) || 30);
+
+const toMinutes = (t: string): number => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+
+/** A timed atom's span with the default duration applied, or null if all-day.
+ *  The end clamps to 23:59 rather than spilling into the next day — an atom
+ *  belongs to the day its date names. */
+export function timeSpan(t: Task): { start: string; end: string } | null {
+  if (!t.time) return null;
+  if (t.time.end) return { start: t.time.start, end: t.time.end };
+  const end = Math.min(toMinutes(t.time.start) + DEFAULT_DURATION_MIN, 23 * 60 + 59);
+  return {
+    start: t.time.start,
+    end: `${String(Math.floor(end / 60)).padStart(2, "0")}:${String(end % 60).padStart(2, "0")}`,
+  };
+}
+
+/** Within one day, a timed atom comes before an all-day one and they run in
+ *  clock order — a day reads as a schedule. Untimed atoms fall back to priority.
+ *  Returns 0 when neither is timed, so callers keep their own tie-breaks. */
+const byTime = (a: Task, b: Task): number => {
+  if (a.time && b.time) return a.time.start.localeCompare(b.time.start);
+  return a.time ? -1 : b.time ? 1 : 0;
+};
+
 /** Today in the server's timezone as `YYYY-MM-DD`. Set `TZ` in the deploy env
  *  (`/srv/.env`) or the container's UTC day boundary decides what "today" means. */
 export function todayISO(now: Date = new Date()): string {
@@ -275,10 +345,10 @@ export function groupByDue(tasks: Task[], today: string = todayISO()): TaskGroup
   const bySort = (a: Task, b: Task) => {
     const d = (effectiveDate(a) ?? "") .localeCompare(effectiveDate(b) ?? "");
     if (d) return d;
-    return rank(a) - rank(b) || a.note.localeCompare(b.note) || a.line - b.line;
+    return byTime(a, b) || rank(a) - rank(b) || a.note.localeCompare(b.note) || a.line - b.line;
   };
   const inSection = (a: Task, b: Task) =>
-    rank(a) - rank(b) || a.note.localeCompare(b.note) || a.line - b.line;
+    byTime(a, b) || rank(a) - rank(b) || a.note.localeCompare(b.note) || a.line - b.line;
 
   const groups: TaskGroup[] = [];
   if (overdue.length) {
@@ -503,7 +573,9 @@ export function occurrencesByDate(tasks: Task[], from: string, to: string): Map<
     }
   }
   for (const list of byDate.values()) {
-    list.sort((a, b) => rank(a.task) - rank(b.task) || a.task.note.localeCompare(b.task.note) || a.task.line - b.task.line);
+    list.sort((a, b) =>
+      byTime(a.task, b.task) || rank(a.task) - rank(b.task) ||
+      a.task.note.localeCompare(b.task.note) || a.task.line - b.task.line);
   }
   return byDate;
 }
@@ -632,7 +704,7 @@ export function groupByScope(tasks: Task[], today: string = todayISO()): ScopeGr
     if (x && y && x !== y) return x.localeCompare(y);
     if (x !== null && y === null) return -1;
     if (x === null && y !== null) return 1;
-    return rank(a) - rank(b) || a.note.localeCompare(b.note) || a.line - b.line;
+    return byTime(a, b) || rank(a) - rank(b) || a.note.localeCompare(b.note) || a.line - b.line;
   };
   const countOverdue = (ts: Task[]) => ts.filter((t) => (effectiveDate(t) ?? "") < today && effectiveDate(t)).length;
 

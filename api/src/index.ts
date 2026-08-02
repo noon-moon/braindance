@@ -15,7 +15,7 @@ import { renderMarkdown, renderInline } from "./render.js";
 import { gitStore } from "./git.js";
 import {
   listTasks, groupByDue, completedTasks, todayISO, daysBetween, effectiveDate, parseTaskLine,
-  canComplete, completeInFile, readTaskFile, groupByScope,
+  canComplete, completeInFile, readTaskFile, groupByScope, timeSpan,
   type Task, type TaskGroup, type ScopeGroup,
 } from "./tasks.js";
 
@@ -305,6 +305,7 @@ function taskRow(t: Task, o: RowOpts) {
         ${o.showDate && date
           ? html`<span>📅 ${date}</span>${late > 0 ? html`<span class="late">${late}d late</span>` : ""}`
           : ""}
+        ${t.time ? html`<span class="at">${timeSpan(t)!.start}–${timeSpan(t)!.end}</span>` : ""}
         ${t.status === "done" && t.completed ? html`<span>✅ ${t.completed}</span>` : ""}
         ${!t.due && t.scheduled ? html`<span>⏳ scheduled</span>` : ""}
         ${t.recurrence ? html`<span>🔁 ${t.recurrence}</span>` : ""}

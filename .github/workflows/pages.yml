@@ -9,8 +9,8 @@ name: Deploy site to GitHub Pages
 # run locally by a human and its output committed under ctx/www — CI only builds
 # already-committed, already-gated content.
 #
-# See the note further down: the vault-blind CI re-audit (enforcement point (b))
-# is specified but unimplemented, so the gate runs at projection time only.
+# The vault-blind re-audit below (enforcement point (b)) then re-checks that
+# committed content on its own terms, so a hand-edit after projection is caught.
 #
 # One-time setup in the repo: Settings → Pages → Source = "GitHub Actions".
 # Optional: set a repo variable SITE_CUSTOM_DOMAIN (e.g. example.com) for a custom
@@ -44,21 +44,23 @@ jobs:
         with:
           node-version-file: ctx/www/garden/.node-version # Quartz pins Node 22
           cache: npm
-          cache-dependency-path: ctx/www/garden/package-lock.json
+          cache-dependency-path: |
+            ctx/www/garden/package-lock.json
+            ctx/tools/pub/package-lock.json
 
-      # NOTE — enforcement point (b), the vault-blind CI re-audit, is NOT RUN here.
-      # It was specified as `npm run verify` in ctx/tools/pub (re-check the committed
-      # projection alone: leaked private links, dangling assets, disallowed
-      # frontmatter keys → nonzero → break the deploy before anything is built), but
-      # that script was never written and CI failed on the missing script. It is
-      # removed rather than left broken.
+      # Fail-closed publish gate (enforcement point (b)) — VAULT-BLIND. Re-audits the
+      # committed public projection (ctx/www/garden only): a wikilink to an unpublished
+      # note (which would render its title — the leak), a missing asset, a disallowed
+      # frontmatter key, a surviving internal tag, or a stale manifest entry exits
+      # nonzero and BREAKS THE DEPLOY before anything is built or uploaded.
       #
-      # The gate therefore runs ONLY at projection time, inside `npm run publish`.
-      # That is a real reduction in the privacy model: hand-edit a file under
-      # ctx/www/garden/content and nothing re-checks it. Points (a) build-scope
-      # isolation and (c) disjoint-www still hold, and the projection diff is
-      # human-reviewed before merge. Write verify and restore this step when the
-      # garden gets more than one publisher — see ctx/noon-moon-net.md.
+      # It takes no --vault and refuses one, so this step cannot be "fixed" into
+      # reading the private side. Runs FIRST — nothing is built until it passes.
+      - name: Verify publish gate (vault-blind)
+        working-directory: ctx/tools/pub
+        run: |
+          npm ci
+          npm run verify
 
       - name: Compute Quartz baseUrl
         id: base

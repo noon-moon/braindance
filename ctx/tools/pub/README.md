@@ -10,6 +10,8 @@ npm run publish -- --dry                     # report what would publish, write 
 npm run publish                              # project into ctx/www (→ ctx/www/garden/content)
 npm run publish -- --scrub                   # downgrade private links to text instead of blocking
 npm run publish -- --pub /path --vault /path
+
+npm run verify                               # re-audit the COMMITTED projection, vault-blind
 ```
 
 `--pub` names the directory *containing* `garden/`, not the garden itself.
@@ -28,7 +30,8 @@ Pipeline (per note): `stripScaffolding` (drop `Created:`/`Tags:` preamble, `# Re
 - `src/vault.ts` — walk / index / select / asset resolution
 - `src/transform.ts` — scaffolding strip, link classify, frontmatter whitelist
 - `src/mirror.ts` — write flat into `garden/content` + maintain `.publish-manifest.json`
-- `src/publish.ts` — CLI + orchestration + gate
+- `src/publish.ts` — CLI + orchestration + gate (projection time, vault in hand)
+- `src/verify.ts` — the second gate: re-audits the committed projection, **vault-blind**
 
 ## Two topologies
 
@@ -36,8 +39,26 @@ Pipeline (per note): `stripScaffolding` (drop `Created:`/`Tags:` preamble, `# Re
 
 **Separate garden repo.** Point `--pub`/`PUB_REPO` at a public Quartz repo, review the diff there, and let that repo's own Action build and deploy it. The guarantee is structural — a public repo cannot leak a note it never contains — at the cost of a second repo and its deploy. This is the topology `ctx/noon-moon-net.md` was originally designed around.
 
-## Known gap — the gate runs at projection time only
+## The gate runs twice
 
-The privacy model specifies a second, **vault-blind re-audit in CI** (enforcement point (b)): re-check the *committed* projection alone, so a leaked link, dangling asset, or disallowed frontmatter key breaks the deploy. That script (`npm run verify`) was never written, and its `pages.yml` step has been removed rather than left failing on a missing script.
+**Projection time** (`npm run publish`, vault in hand) — blocks on a link to a note you haven't published. This is the decision point; it can tell you *what* to publish or unlink.
 
-So the gate you get is the one inside `npm run publish`, at projection time. The practical consequence: **anything hand-written into `ctx/www/garden/content/` is checked by nothing.** Treat those files as machine-owned, and read the diff before you land a publish.
+**Deploy time** (`npm run verify`, **vault-blind**) — re-audits the committed `garden/` on its own terms, first in `pages.yml`, before Quartz builds anything. It catches what the first pass structurally cannot: a file **hand-edited after projection**, a projection committed from a stale checkout, or a hand-edited manifest.
+
+```console
+$ npm run verify
+verifying: …/ctx/www/garden/content
+
+✗ publish gate FAILED — 1 finding(s) in the committed projection:
+
+  Good Note.md: links to [[Private Thing]], which is not published — a dangling
+  wikilink RENDERS THE TITLE, which is the leak this gate exists to stop
+```
+
+What it checks: unresolved wikilinks · missing asset embeds and local file references · frontmatter keys outside `FM_WHITELIST` · internal tags that survived · manifest entries pointing at files that don't exist. Exit `0` pass, `1` findings, `2` misuse.
+
+Notes in `content/` that are neither manifest-owned nor a known hand-authored page (`index.md`) get a **warning**, not a failure — hand-authoring a page is legitimate — but they are checked exactly like everything else.
+
+**It takes no `--vault` and exits 2 if given one.** That's deliberate: the value of this pass is that it holds with no access to the private side, so a failure must be fixed by re-projecting, never by pointing the check at the vault.
+
+**What it does not do:** judge content. It cannot know that a note you tagged `publish: true` says something you'd rather it didn't. It proves the projection is self-consistent and leaks no unpublished *title*; deciding what belongs in the publish set is still yours.

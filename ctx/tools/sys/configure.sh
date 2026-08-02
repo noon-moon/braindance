@@ -14,15 +14,23 @@
 #   --repos <path>    repos dir     (default: $REPOS_PATH | $BD_ROOT | <core>/repo)
 #   --default         also set this instance as the registry `default` pointer
 #   --registry <dir>  registry location (default: $BD_REGISTRY | ~/.config/braindance)
+#   --no-wire         register only; skip installing the hook/shell wiring
+#   --settings <path> harness settings.json to wire (default: ~/.claude/settings.json)
+#   --rc <path>       shell rc to source wt.sh from (default: the current shell's rc)
 #
 # Exit: 0 = registered/updated. Non-zero = validation failed (nothing written).
 #
-# NOTE: installing the shell/hook wiring (SessionStart + chpwd) is a later step
-# in the model — this command currently does registration + validation only.
+# Wiring (unless --no-wire) is idempotent and installs, machine-wide:
+#   - SessionStart + PreToolUse (cross-instance guard) hooks into settings.json
+#   - `source <core>/ctx/tools/sys/wt.sh` into the shell rc (chpwd auto-resolve)
+# It NEVER edits your exported BD_ROOT/VAULT_PATH/REPOS_PATH — those keep the
+# resolver dormant (escape hatch); configure warns if it finds them.
 set -u
 
-name=""; core=""; vault=""; repos=""; set_default=""
+name=""; core=""; vault=""; repos=""; set_default=""; no_wire=""
 REG="${BD_REGISTRY:-${XDG_CONFIG_HOME:-$HOME/.config}/braindance}"
+SETTINGS="${BD_SETTINGS:-$HOME/.claude/settings.json}"
+RC=""
 
 die() { printf 'configure: %s\n' "$*" >&2; exit 1; }
 
@@ -33,8 +41,11 @@ while [ $# -gt 0 ]; do
     --vault)    vault="${2:-}"; shift 2 ;;
     --repos)    repos="${2:-}"; shift 2 ;;
     --registry) REG="${2:-}"; shift 2 ;;
+    --settings) SETTINGS="${2:-}"; shift 2 ;;
+    --rc)       RC="${2:-}"; shift 2 ;;
     --default)  set_default=1; shift ;;
-    -h|--help)  sed -n '2,20p' "$0"; exit 0 ;;
+    --no-wire)  no_wire=1; shift ;;
+    -h|--help)  sed -n '2,24p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -108,3 +119,79 @@ tmp="$INST_DIR/.$name.conf.$$"
 printf "registered instance '%s'%s\n" "$name" "${set_default:+ (default)}"
 printf '  core  = %s\n  vault = %s\n  repos = %s\n' "$core" "$vault" "$repos"
 printf '  registry: %s\n' "$REG"
+
+# --- wiring (idempotent; skipped with --no-wire) ---------------------------
+_default_rc() {
+  case "${SHELL:-}" in
+    *zsh)  printf '%s\n' "$HOME/.zshrc" ;;
+    *bash) printf '%s\n' "$HOME/.bashrc" ;;
+    *)     printf '%s\n' "$HOME/.profile" ;;
+  esac
+}
+
+_wire_settings() {  # $1=settings.json  $2=resolve cmd  $3=guard cmd
+  python3 - "$1" "$2" "$3" <<'PY' || { printf '  settings: FAILED to wire %s\n' "$1" >&2; return 1; }
+import json, os, shutil, sys
+path, resolve_cmd, guard_cmd = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    with open(path) as f:
+        s = json.load(f)
+    if not isinstance(s, dict):
+        s = {}
+except (FileNotFoundError, ValueError):
+    s = {}
+hooks = s.setdefault("hooks", {})
+OURS = {"resolve-instance.py", "block-cross-instance-writes.py"}
+def strip_ours(event):
+    kept = []
+    for g in hooks.get(event, []):
+        hs = [h for h in g.get("hooks", [])
+              if os.path.basename(h.get("command", "")) not in OURS]
+        if hs or "hooks" not in g:
+            g = dict(g)
+            if "hooks" in g:
+                g["hooks"] = hs
+            kept.append(g)
+    if kept:
+        hooks[event] = kept
+    elif event in hooks:
+        del hooks[event]
+strip_ours("SessionStart")
+strip_ours("PreToolUse")
+hooks.setdefault("SessionStart", []).append(
+    {"hooks": [{"type": "command", "command": resolve_cmd}]})
+hooks.setdefault("PreToolUse", []).append(
+    {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
+     "hooks": [{"type": "command", "command": guard_cmd}]})
+os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+if os.path.exists(path) and not os.path.exists(path + ".bak"):
+    shutil.copy2(path, path + ".bak")
+with open(path, "w") as f:
+    json.dump(s, f, indent=2)
+    f.write("\n")
+PY
+  printf '  settings: wired SessionStart + PreToolUse into %s\n' "$1"
+}
+
+_wire_rc() {  # $1=rc file  $2=core
+  [ -n "$1" ] || return 0
+  if [ -f "$1" ] && grep -q 'ctx/tools/sys/wt.sh' "$1"; then
+    printf '  rc: wt.sh already sourced in %s — left as is\n' "$1"; return 0
+  fi
+  { printf '\n# braindance instance resolver (added by configure.sh)\n'
+    printf '[ -f "%s/ctx/tools/sys/wt.sh" ] && source "%s/ctx/tools/sys/wt.sh"\n' "$2" "$2"
+  } >> "$1" && printf '  rc: sourced wt.sh from %s\n' "$1"
+}
+
+if [ -z "$no_wire" ]; then
+  printf 'wiring:\n'
+  _wire_settings "$SETTINGS" "$core/.claude/hooks/resolve-instance.py" \
+                 "$core/.claude/hooks/block-cross-instance-writes.py"
+  [ -n "$RC" ] || RC="$(_default_rc)"
+  _wire_rc "$RC" "$core"
+  if [ -n "${BD_ROOT:-}${VAULT_PATH:-}${REPOS_PATH:-}" ]; then
+    printf '  note — BD_ROOT/VAULT_PATH/REPOS_PATH are exported in your environment;\n' >&2
+    printf '         they keep the resolver dormant (escape hatch). Remove those exports\n' >&2
+    printf '         to hand your shells to the resolver.\n' >&2
+  fi
+fi

@@ -117,6 +117,16 @@ ul.tasks { list-style:none; padding:0; margin:0; }
 ul.tasks li { display:flex; gap:.55rem; align-items:flex-start; padding:.45rem .1rem;
               border-bottom:1px solid var(--border); }
 ul.tasks .box { flex:none; color:var(--muted); }
+/* The checkbox is a submit button (no JS) — strip the chrome and give it a
+   thumb-sized hit area without moving the row's text. */
+form.tick { flex:none; margin:-.35rem 0 -.35rem -.35rem; }
+button.box { border:none; background:none; padding:.35rem; color:var(--muted);
+             font:inherit; line-height:inherit; cursor:pointer; }
+button.box:hover, button.box:focus-visible { color:var(--accent); outline:none; }
+.tg.overdue button.box { color:var(--danger); }
+.tg.overdue button.box:hover { color:var(--accent); }
+ul.tasks .box[title]:not(button) { cursor:help; }
+.toast.err { border-color:var(--danger); color:var(--danger); }
 .tg.overdue ul.tasks .box { color:var(--danger); }
 .t-main { flex:1; min-width:0; }
 .t-text { overflow-wrap:anywhere; }

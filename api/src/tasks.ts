@@ -28,6 +28,9 @@ export type Priority = "highest" | "high" | "medium" | "low" | "lowest";
 export interface Task {
   /** Display text: the line with its signifiers, dates and `#task` tag stripped. */
   text: string;
+  /** The line verbatim. Completing an atom rewrites this exact string in place,
+   *  and matching on it is what stops a stale page from ticking the wrong line. */
+  raw: string;
   status: TaskStatus;
   /** `📅` due date, `YYYY-MM-DD`, or null. */
   due: string | null;
@@ -93,7 +96,11 @@ export function parseTaskLine(raw: string, note: string, dir: string, line: numb
     dates[key] = rest.match(DATE_RE(emoji))?.[1];
   }
   const priority = PRIORITY.find(([, emoji]) => rest.includes(emoji))?.[0] ?? null;
-  const recurrence = rest.match(RECURRENCE_RE)?.[1]?.trim() || null;
+  // The rule runs to EOL or the next signifier — and `#task` is neither, so when
+  // `🔁` is the LAST field the capture swallows the global filter (and anything
+  // trailing it). Strip it back off, or the rule reads as "every 2 days #task"
+  // and matches nothing.
+  const recurrence = rest.match(RECURRENCE_RE)?.[1]?.replace(GLOBAL_FILTER, " ").trim() || null;
 
   // Display text = the line minus every signifier, its date, and the global filter.
   let text = rest;
@@ -105,6 +112,7 @@ export function parseTaskLine(raw: string, note: string, dir: string, line: numb
 
   return {
     text,
+    raw,
     status: dates.cancelled && status === "open" ? "cancelled" : status,
     due: dates.due ?? null,
     scheduled: dates.scheduled ?? null,
@@ -119,6 +127,19 @@ export function parseTaskLine(raw: string, note: string, dir: string, line: numb
   };
 }
 
+/** A note's body — frontmatter stripped, so its lines never count as tasks and
+ *  line numbers are body-relative. A note whose YAML doesn't parse (an unquoted
+ *  `:` in a `topic:` value is enough) must not take the whole tab down with it,
+ *  so it falls back to the raw text, which still finds every task line.
+ *  Body-relative numbering is the only casualty. */
+function bodyOf(rawFile: string): string {
+  try {
+    return matter(rawFile).content;
+  } catch {
+    return rawFile;
+  }
+}
+
 function scanFile(absPath: string, note: string, dir: string): Task[] {
   let rawFile: string;
   try {
@@ -126,16 +147,7 @@ function scanFile(absPath: string, note: string, dir: string): Task[] {
   } catch {
     return [];
   }
-  // Strip frontmatter so its lines never count, and so line numbers are body-relative.
-  // A note whose YAML doesn't parse (an unquoted `:` in a `topic:` value is enough)
-  // must not take the whole tab down with it — scan its raw text instead, which
-  // still finds every task line. Body-relative numbering is the only casualty.
-  let content: string;
-  try {
-    content = matter(rawFile).content;
-  } catch {
-    content = rawFile;
-  }
+  const content = bodyOf(rawFile);
   const out: Task[] = [];
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -281,6 +293,146 @@ export function groupByDue(tasks: Task[], today: string = todayISO()): TaskGroup
     groups.push({ kind: "undated", label: "No date", date: null, tasks: undated.sort(inSection) });
   }
   return groups;
+}
+
+// ── Completing an atom ───────────────────────────────────────────────────────
+//
+// Ticking a box is a vault WRITE, so it goes through the git store like every
+// other change and shows up in /history with one-click revert (which is also the
+// undo for a mis-tap — there is deliberately no un-complete button).
+
+/** Recurrence rules we will roll forward ourselves. Obsidian Tasks' grammar is
+ *  far larger (`every Sunday`, `every 3rd Thursday`, …) and reimplementing it is
+ *  a reliable way to silently corrupt a schedule — so we handle the intervals
+ *  that are unambiguous and refuse the rest, rather than guessing. */
+const RECUR_RE = /^every\s+(?:(\d+)\s+)?(day|week|month|year)s?(\s+when\s+done)?$/i;
+
+const UNIT_DAYS: Record<string, number> = { day: 1, week: 7 };
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Whether a `🔁` rule is one we roll forward. Drives both the write and the
+ *  UI — an atom we'd refuse gets no button rather than a button that fails. */
+export const recurrenceSupported = (rule: string): boolean => {
+  const m = rule.trim().match(RECUR_RE);
+  return !!m && Number(m[1] ?? 1) >= 1;
+};
+
+/** The next occurrence of `rule` after `base` (`YYYY-MM-DD`), or null when the
+ *  rule isn't one we handle. `when done` means the interval runs from the
+ *  completion date rather than from the date the atom carried — as does a base
+ *  that isn't a real date, which is the undated-recurring case. */
+export function nextRecurrence(rule: string, base: string, today: string): string | null {
+  const m = rule.trim().match(RECUR_RE);
+  if (!m) return null;
+  const [, n, unit, whenDone] = m;
+  const step = Number(n ?? 1);
+  if (!Number.isFinite(step) || step < 1) return null;
+  const from = whenDone || !ISO_DATE.test(base) ? today : base;
+  if (unit === "day" || unit === "week") return addDays(from, step * UNIT_DAYS[unit]);
+  // Months and years shift the field, not a day count — and a day-of-month that
+  // doesn't exist in the target month (Jan 31 → Feb) clamps to its last day
+  // rather than rolling into the next one.
+  const d = new Date(`${from}T00:00:00Z`);
+  const day = d.getUTCDate();
+  d.setUTCDate(1);
+  if (unit === "month") d.setUTCMonth(d.getUTCMonth() + step);
+  else d.setUTCFullYear(d.getUTCFullYear() + step);
+  const lastOfMonth = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(day, lastOfMonth));
+  return d.toISOString().slice(0, 10);
+}
+
+/** Can this atom be completed from the web at all? A recurring atom whose rule
+ *  we can't roll forward is left to Obsidian — completing it here would drop the
+ *  recurrence on the floor, which is worse than not offering the button. */
+export const canComplete = (t: Task): boolean =>
+  t.status === "open" && (!t.recurrence || recurrenceSupported(t.recurrence));
+
+/** Dates a new recurrence instance carries forward. `➕ created` stays put — it
+ *  records when the atom was written, not when it next comes round. */
+const SHIFTABLE: Array<[key: "due" | "scheduled" | "start", emoji: string]> = [
+  ["due", "📅"], ["scheduled", "⏳"], ["start", "🛫"],
+];
+
+export interface Completion {
+  /** The line, marked done and stamped `✅ today`. */
+  done: string;
+  /** The next instance, for a `🔁` atom — inserted ABOVE the completed line, the
+   *  way Obsidian Tasks does it. null for a one-shot. */
+  next: string | null;
+}
+
+/** Rewrite one raw task line as completed. Returns null if the line isn't an
+ *  open atom, or carries a recurrence rule we decline to roll forward. */
+export function completeLine(raw: string, today: string): Completion | null {
+  const t = parseTaskLine(raw, "", "", 0);
+  if (!t || t.status !== "open") return null;
+
+  // `- [ ]` → `- [x]`, first box only.
+  let done = raw.replace(/^(\s*[-*+]\s+\[)[^\]]?(\])/, "$1x$2");
+  // The done date sits just before the trailing `#task`, matching the shape the
+  // vault documents in [[Tags]]; a line that tags elsewhere gets it appended.
+  const stamp = `✅ ${today}`;
+  done = /#task\s*$/u.test(done)
+    ? done.replace(/(\s*)#task(\s*)$/u, ` ${stamp} #task`)
+    : `${done} ${stamp}`;
+
+  if (!t.recurrence) return { done, next: null };
+  const base = effectiveDate(t) ?? today;
+  const nextDue = nextRecurrence(t.recurrence, base, today);
+  if (!nextDue) return null;
+
+  // Roll every date the atom carries by the same delta, so a start/scheduled
+  // date keeps its offset from the due date instead of being left behind.
+  const shift = daysBetween(base, nextDue);
+  let next = raw;
+  for (const [key, emoji] of SHIFTABLE) {
+    const cur = t[key];
+    if (!cur) continue;
+    next = next.replace(DATE_RE(emoji), `${emoji} ${addDays(cur, shift)}`);
+  }
+  // A recurring atom with no date at all still needs one, or the new instance is
+  // indistinguishable from the old and never comes due.
+  if (!effectiveDate(t)) next = next.replace(/(\s*)#task(\s*)$/u, ` 📅 ${nextDue} #task`);
+  return { done, next };
+}
+
+/** The note a task lives in, read straight off the working tree. `dir` is "" for
+ *  a filed atom, else the one-level subdir the scan allows (`inbox`, `daily`).
+ *  Rejects anything that could escape the vault — these come off a form. */
+export function readTaskFile(dir: string, note: string): { rel: string; text: string } | null {
+  if (!note || !/^[^/\\]+$/.test(note) || note === "." || note === "..") return null;
+  if (dir && !/^[\w-]+$/.test(dir)) return null;
+  const rel = [dir, `${note}.md`].filter(Boolean).join("/");
+  try {
+    return { rel, text: readFileSync(join(VAULT_DIR, rel), "utf8") };
+  } catch {
+    return null;
+  }
+}
+
+/** Apply a completion to a note's full text, locating the atom by its BODY line
+ *  number and verifying the line still reads exactly as the page rendered it.
+ *  Returns null when it doesn't — the note changed in Obsidian since the page
+ *  loaded, and ticking a box must never fall through onto a different atom.
+ *  Falls back to a unique full-line match so an edit ABOVE the atom (which
+ *  shifts every number below it) doesn't spuriously refuse. */
+export function completeInFile(file: string, bodyLine: number, rawLine: string, today: string): string | null {
+  const lines = file.split("\n");
+  const offset = lines.length - bodyOf(file).split("\n").length;
+  const at = offset + bodyLine - 1;
+  let idx = lines[at] === rawLine ? at : -1;
+  if (idx === -1) {
+    const hits: number[] = [];
+    for (let i = 0; i < lines.length; i++) if (lines[i] === rawLine) hits.push(i);
+    if (hits.length !== 1) return null; // gone, edited, or duplicated — refuse
+    idx = hits[0];
+  }
+  const c = completeLine(lines[idx], today);
+  if (!c) return null;
+  // A new instance goes ABOVE the completed line, where Obsidian Tasks puts it.
+  lines.splice(idx, 1, ...(c.next ? [c.next, c.done] : [c.done]));
+  return lines.join("\n");
 }
 
 /** Completed tasks, most recently done first (undated done tasks last). */

@@ -2,10 +2,12 @@
 
 Serialized execution plan for the Personal Virtual Private Server. Each phase depends on the previous. Check items off as you go.
 
-**Repo model:** three repos.
-- `noon-moon/braindance` — public template (generic, shareable, no personal content).
-- `noon-moon/braindance-usr` — **this repo**, your personal instance: template structure plus real vault notes tracked directly at `ctx/vault/` (flat, no `usr/` split). Deployed to the VPS as the private source of truth + admin API.
-- `noon-moon/noon-moon-net` — **public** repo holding only the generated `content/` (a projection of `braindance-usr`'s `publish`-tagged notes) plus Quartz config. This is what builds into `noon-moon.net/garden`. `/garden` is a *separate published repo*, not a slice of this one — see `ctx/noon-moon-net.md` for the full publish-subsystem design. The isolation is structural: the public repo cannot leak a private note it never contains.
+**Repo model:** two repos. The `braindance-usr` fork this plan was originally written against is **retired** — its vault content was extracted into a standalone repo (v2 Slice 2), and the deploy config lives in the template repo itself.
+
+- `noon-moon/braindance` — **this repo**: the public template *and* the deploy config (`api/`, `www/`, `Caddyfile`, `docker-compose.yml`, `deploy.sh`, `ops/`). Cloned to `/srv/braindance` on the VPS as deploy config only — it carries no vault notes.
+- `noon-moon/vault` — **private**, the instance vault as its own repo (flat notes at the repo root, no `ctx/vault/` prefix). Cloned separately on the VPS and pointed at by `REPO_PATH`; the api owns that checkout as single writer. This is the **content-free clone** model: `VAULT_SUBDIR=` (empty) + `VAULT_EXTERNAL=1`. Local checkout: `/Users/tiernan/dev/vault`.
+
+> `noon-moon/noon-moon-net` was a third repo in the original plan — a public Quartz repo rsynced to `/srv/garden`. **Superseded:** the site (homepage + garden) now builds from `ctx/www/` in this repo and deploys to **GitHub Pages** via `.github/workflows/pages.yml`, with `disjoint-www.yml` enforcing the privacy boundary at PR time. The structural guarantee is preserved differently — CI is vault-blind, reading only `ctx/www` + `ctx/tools/pub`, never `ctx/vault`. See Phases 5–6. (`ctx/noon-moon-net.md` still describes the old two-repo topology and lags this.)
 
 ---
 
@@ -71,21 +73,28 @@ Follow this order exactly — UFW before Docker, Tailscale before UFW enable.
   sudo mkdir -p /srv/braindance /srv/www /srv/garden
   sudo chown -R tiernan:tiernan /srv
   ```
-- [ ] Clone `braindance-usr` into `/srv/braindance` — one clone, everything's tracked directly, no nesting:
+- [ ] Clone **two** repos — deploy config and vault are separate checkouts (the content-free clone model):
   ```bash
-  git clone https://muttzi:<PAT>@github.com/noon-moon/braindance-usr.git /srv/braindance
+  git clone https://muttzi:<PAT>@github.com/noon-moon/braindance.git /srv/braindance
+  git clone https://muttzi:<PAT>@github.com/noon-moon/vault.git      /srv/vault
   ```
-- [ ] Create `/srv/.env` — the infra is now env-substituted (post template unification), so `DOMAIN` and `API_IMAGE` are **required** alongside the secrets:
+  > `/srv/braindance` is deploy config only — the api never writes it, which is what makes the host-side `git pull --ff-only` in `ops/sync.sh` safe (it's gated on `VAULT_EXTERNAL=1`). `/srv/vault` is the api's read-write checkout; it is the single writer there.
+- [ ] Create `/srv/.env` — the infra is env-substituted, so `DOMAIN`, `API_IMAGE` and `TAILSCALE_IP` are **required** alongside the secrets:
   ```bash
   cat > /srv/.env <<EOF
   DOMAIN=noon-moon.net
-  API_IMAGE=ghcr.io/noon-moon/braindance-usr/api:latest
+  API_IMAGE=ghcr.io/noon-moon/braindance/api:latest
+  TAILSCALE_IP=<tailscale ip -4 from above>
+  TZ=America/New_York
   GITHUB_TOKEN=<PAT>
-  GITHUB_REPO=noon-moon/braindance-usr
+  GITHUB_REPO=noon-moon/vault
+  REPO_PATH=/srv/vault
+  VAULT_SUBDIR=
+  VAULT_EXTERNAL=1
   EOF
   chmod 600 /srv/.env
   ```
-  > Caddy reads `$DOMAIN`; Compose interpolates `${API_IMAGE}`. Missing `API_IMAGE` aborts the run; missing `DOMAIN` breaks Caddy's TLS. If a live droplet predates this, **add these two vars to its existing `/srv/.env`** before the next deploy.
+  > Caddy reads `$DOMAIN`; Compose interpolates `${API_IMAGE}`, `${TAILSCALE_IP}` and `${REPO_PATH}`. Missing `API_IMAGE` or `TAILSCALE_IP` **aborts the run** (both are `${VAR:?}`); missing `DOMAIN` breaks Caddy's TLS. `TZ` sets the `/todo` day boundary — leave it unset and the container's UTC midnight decides what "Today" means. `VAULT_SUBDIR=` must be **empty** because the vault repo's notes sit at its root, not under `ctx/vault/`. Full knob list: [`docs/serving.md`](../docs/serving.md).
 - [ ] Bring the stack up via the wrapper (never bare `docker compose` — interpolation must read `/srv/.env`):
   ```bash
   cd /srv/braindance
@@ -93,7 +102,7 @@ Follow this order exactly — UFW before Docker, Tailscale before UFW enable.
   ```
 - [ ] Install the self-update timer so the box tracks `main` and rolls new api
   images on its own (CI only pushes to GHCR; it never SSHes in). Full detail in
-  [`ops/README.md`](../../ops/README.md):
+  [`ops/README.md`](../ops/README.md):
   ```bash
   sudo sed -i "s/^User=deploy/User=$USER/" /srv/braindance/ops/braindance-sync.service
   sudo ln -sf /srv/braindance/ops/braindance-sync.{service,timer} /etc/systemd/system/
@@ -104,62 +113,26 @@ Follow this order exactly — UFW before Docker, Tailscale before UFW enable.
 
 ## Phase 2: DNS & TLS
 
-- [ ] In Cloudflare DNS: add an `A` record for `noon-moon.net` pointing to the Droplet IP
-- [ ] Add a wildcard `A` record `*.noon-moon.net` pointing to the same IP
-- [ ] Enable Cloudflare proxy (orange cloud) on both records — or disable it if using Caddy's own ACME (decide: Cloudflare proxy vs direct)
-- [ ] If using DNS-01 for wildcard cert: create a Cloudflare API token with `Zone:DNS:Edit` scope, add to `/srv/.env` as `CF_DNS_API_TOKEN`
+DNS is at **Squarespace**, not Cloudflare — the registrar transfer this plan once assumed never happened (see Phase 0). No proxy layer, so Caddy does its own ACME over HTTP-01 and needs ports 80/443 reachable.
+
+- [x] `A` record for `noon-moon.net` → Droplet IP (Squarespace DNS)
+- [ ] Decide the apex first — **it can point at the droplet or at GitHub Pages, not both** (Phase 6). If the site goes to Pages, the droplet only needs the Tailscale-side api and this phase mostly falls away.
+- [ ] Optional: wildcard `*.noon-moon.net` → same IP. A wildcard cert would need DNS-01 (a Squarespace DNS plugin for Caddy, which may not exist) — prefer per-subdomain HTTP-01 unless you actually need one.
 - [ ] Verify Caddy obtains certs after `./deploy.sh up -d`: `./deploy.sh logs caddy`
 
 ---
 
 ## Phase 3: Repo Structure
 
-Work done locally in `noon-moon/braindance-usr`, then pushed. Everything's tracked directly — no gitignore split.
+Work done locally in `noon-moon/braindance` (this repo), then pushed.
+
+These files now **exist in-repo** — read them there rather than from a snapshot here, which is how the old copies in this section drifted:
 
 ### docker-compose.yml
-- [x] Create `docker-compose.yml` at repo root:
-  ```yaml
-  services:
-    caddy:
-      image: caddy:alpine
-      ports:
-        - "80:80"
-        - "443:443"
-      volumes:
-        - ./Caddyfile:/etc/caddy/Caddyfile
-        - caddy_data:/data
-        - /srv/www:/srv/www:ro
-        - /srv/garden:/srv/garden:ro
-      restart: unless-stopped
+- [x] [`docker-compose.yml`](../docker-compose.yml) at repo root. Two things it does that the original sketch didn't: the api port binds `${TAILSCALE_IP}:3000:3000` (never `0.0.0.0` — the api has no auth, and Docker's iptables would bypass UFW), and the read-write mount follows `${REPO_PATH:-/srv/braindance}`, so pointing the api at the standalone vault repo is a pure `/srv/.env` flip with no compose edit.
 
-    api:
-      image: ghcr.io/noon-moon/braindance-usr/api:latest
-      ports:
-        - "3000:3000"
-      env_file: /srv/.env
-      volumes:
-        # Whole repo, READ-WRITE — the api is local-first: it commits captures
-        # into this checkout and pushes to GitHub itself (needs .git, so mount
-        # the repo root, not just ctx/vault). See README "Admin app & serving".
-        - /srv/braindance:/srv/braindance
-      restart: unless-stopped
-
-  volumes:
-    caddy_data:
-  ```
-- [x] Create `Caddyfile`:
-  ```
-  noon-moon.net {
-    root * /srv/www
-    handle /garden/* {
-      root * /srv/garden
-      file_server
-    }
-    handle {
-      file_server
-    }
-  }
-  ```
+### Caddyfile
+- [x] [`Caddyfile`](../Caddyfile) — the site block is `{$DOMAIN}`, not a hardcoded hostname, so the template serves any instance's domain.
 
 ### Publish selection (supersedes `ctx/vault/public/`)
 - [x] ~~Create `ctx/vault/public/` directory~~ — **superseded.** Selection is now a `publish: true` frontmatter flag on notes in the flat vault (keeps the vault flat, matches the tag-driven model). Remove the empty `ctx/vault/public/` folder. See `ctx/noon-moon-net.md`.
@@ -184,75 +157,74 @@ Work done locally in `noon-moon/braindance-usr`, then pushed. Everything's track
 
 ## Phase 4: GitHub Actions
 
-Create `.github/workflows/` in `noon-moon/braindance-usr`. **Note:** neither the homepage nor garden ships from here — `www/` and the garden both live in `noon-moon-net` (Phase 6). This repo's only workflow builds the `api` image.
+`.github/workflows/` in `noon-moon/braindance` (this repo). Unlike the original plan, the site *does* ship from here — via GitHub Pages, not the VPS.
 
-- [ ] `api.yml` — triggered on `api/**` or `docker-compose.yml` changes:
-  1. Build the Docker image and push to `ghcr.io/<org>/<repo>/api:latest`.
-  2. That's it — auth uses the workflow's built-in `GITHUB_TOKEN` (`packages: write`);
-     **no SSH, no VPS secrets, no `GHCR_TOKEN`.** The VPS pulls the new image
-     itself via the `braindance-sync` timer installed in Phase 1 (see
-     [`ops/README.md`](../../ops/README.md)).
+- [x] `deploy-api.yml` — on push to `main`/`master` touching `api/**` or compose:
+  1. Build the Docker image and push to `ghcr.io/noon-moon/braindance/api:latest`.
+  2. Auth uses the workflow's built-in `GITHUB_TOKEN` (`packages: write`) —
+     **no `GHCR_TOKEN`.** The VPS pulls the new image itself via the
+     `braindance-sync` timer installed in Phase 1 (see
+     [`ops/README.md`](../ops/README.md)).
 
-  > CI never gets access to the box. The pull-based loop (`ops/sync.sh` on the
-  > timer) is what applies both a new image and a fresh vault `main`.
+  > The image build never touches the box. There *is* an optional SSH redeploy
+  > step that makes a roll immediate, but it **self-skips while `VPS_HOST` is
+  > empty**, so pushes stay green before the droplet exists — and the timer
+  > applies the new image within a few minutes either way.
 
-- [ ] `www.yml` is **not** in this repo — the homepage and garden are deployed
-  from `noon-moon-net` (Phase 6), which owns the only SSH deploy in the system.
-  The `VPS_SSH_KEY` / `VPS_HOST` / `VPS_USER` secrets belong on *that* repo, not
-  this one.
+- [x] `pages.yml` — builds `ctx/www/` (homepage + garden) and deploys to GitHub Pages. Vault-blind by construction: no step reads `ctx/vault`. One-time repo setup: **Settings → Pages → Source = "GitHub Actions"**; optional repo variable `SITE_CUSTOM_DOMAIN`.
+- [x] `disjoint-www.yml` — fails any PR touching `ctx/www/**` *and* anything outside it, so a vault edit can never ride along with a publish. Bypass for genuine infra changes: `[www-infra]` in the PR title.
 
 ---
 
 ## Phase 5: Publish Tool (`ctx/tools/pub/`)
 
-The projection from private vault → `noon-moon-net`. Full design in `ctx/noon-moon-net.md`; this is the build checklist. Node/TS, run via `tsx`.
+The projection from private vault → the published garden. **Target changed:** it mirrors into `ctx/www/garden/content/` in this repo, not a separate `noon-moon-net` checkout. Built — see [`ctx/tools/pub/README.md`](tools/pub/README.md) for the CLI (`npm run publish -- --dry` first).
 
-- [ ] **Select** — walk `ctx/vault/**`, collect the publish set P (`publish: true` frontmatter)
-- [ ] **Gate** — parse wikilinks/transclusions per note; classify targets (public / private / asset / external). Default `--strict`: block on any link to a non-published note (privacy boundary). `--scrub`: downgrade private links to alias-or-text. Also gate `todo`/stub notes.
-- [ ] **Transform** — frontmatter **whitelist** (drop everything but a safe key set; strip `Contains`/`Contained By`, todo fields); apply link scrub; rewrite asset paths
-- [ ] **Mirror** — three-way sync of `noon-moon-net/content/`: add / update / **delete** (un-tagging removes from the site); copy only referenced assets
-- [ ] **Commit** — provenance message (`Publish: sync N notes from braindance-usr@<sha>`); no auto-push by default (`--push` opts in)
+- [x] **Select** (`src/vault.ts`) — walk the vault, collect the publish set P (`publish: true` frontmatter)
+- [x] **Gate** (`src/publish.ts`) — parse wikilinks/transclusions per note; classify targets (public / private / asset / external). Default `--strict`: block on any link to a non-published note (privacy boundary); missing assets always block. `--scrub`: downgrade private links to alias-or-text.
+- [x] **Transform** (`src/transform.ts`) — strip scaffolding (`Created:`/`Tags:` preamble, `# References`, dataview blocks); frontmatter **whitelist**; apply link scrub; normalize asset embeds
+- [x] **Mirror** (`src/mirror.ts`) — three-way sync of `ctx/www/garden/content/`: add / update / **delete** (un-tagging removes from the site); `.publish-manifest.json` tracks tool-owned files so hand-authored pages like `index.md` are never touched
+- [ ] **Commit** — review the diff and commit `ctx/www/**` **on its own** (`disjoint-www.yml` enforces this); pushing it triggers the Pages build
 - [ ] Optional: thin `/publish` skill in `ctx/skills/` wrapping the tool
 
 ---
 
-## Phase 6: `noon-moon-net` + Quartz
+## Phase 6: Quartz garden (`ctx/www/garden/`)
 
-The public repo. Created once, then fed by the publish tool.
+**Supersedes the original "create `noon-moon/noon-moon-net`, rsync to `/srv/garden`" plan.** Quartz is vendored in-repo and the garden deploys to GitHub Pages alongside the homepage — so no public mirror repo and no SSH deploy in the system at all. The `noon-moon/noon-moon-net` repo still exists but is no longer the publish target.
 
-- [ ] Create `noon-moon/noon-moon-net` repo
-- [ ] Install Quartz at its root: `npx quartz create`
-- [ ] Configure `quartz.config.ts`:
-  - `baseUrl: "noon-moon.net/garden"` (subpath — verify Quartz relative-asset handling under `/garden`)
-  - Content path: `content/`
-- [ ] **Commit `content/`** (do *not* gitignore it — the public repo must be self-contained so its Action builds without touching the private repo). `content/` is generated by the publish tool and never hand-edited.
-- [ ] `.github/workflows/deploy.yml` — on push to `content/**` or config: `npx quartz build --output /tmp/garden` → SSH to VPS → `rsync /tmp/garden/ /srv/garden`. Add the same VPS secrets as Phase 4 (`VPS_SSH_KEY`, `VPS_HOST`, `VPS_USER`).
-- [ ] First manual publish from `braindance-usr` → push `noon-moon-net` → verify build → check `noon-moon.net/garden`
+- [x] Vendor Quartz v5 at `ctx/www/garden/` (`quartz/`, `quartz.config.yaml`, `quartz.lock.json`)
+- [x] `content/index.md` — hand-authored garden landing page (yours; the tool never touches it). Every other `content/<slug>.md` is machine-owned — never hand-edit.
+- [x] **Commit `content/`** — Pages builds only already-committed, already-gated content, which is what keeps CI vault-blind. `baseUrl` is rewritten at build time by CI.
+- [ ] First real publish → push `ctx/www/**` → verify the Pages build → check the live `/garden`
+- [ ] Decide the public URL: GitHub Pages default (`noon-moon.github.io/braindance`) vs `SITE_CUSTOM_DOMAIN=noon-moon.net`. **If you point the apex at Pages, it can't also point at the droplet** — settle this before Phase 2's `A` record.
 
 ---
 
 ## Phase 7: Braindance Mobile API
 
-- [ ] Implement `GET /scopes`: read `ctx/vault/` from `/srv/braindance`, filter by `tags: [scope]` in frontmatter, return names
-- [ ] Implement `POST /notes`: call the GitHub REST API against `noon-moon/braindance-usr` (per `GITHUB_REPO` in `/srv/.env`) to create a file in `ctx/vault/inbox/` on the `inbox` branch
-- [ ] Write `Dockerfile` (Node.js slim base)
+The api has since grown well past this checklist (v2: local-first git store, `/review` proposals queue, `/todo` roll-up, `/history` revert). See [`docs/serving.md`](../docs/serving.md) for what it actually does; the items below are just the original bring-up.
+
+- [x] Scope list: read the vault, filter by `tags: [scope]` in frontmatter, return names — surfaces as the capture form's scope dropdown (`_meta/` `scope_kind: system` scopes excluded)
+- [x] Capture: `POST /ingest` (post/redirect/get) writes into the vault's `inbox/` **directly on `main`** — the api commits locally, then pulls-rebase + pushes. The **`inbox` branch is retired**: it was belt-and-suspenders from before the app sat behind Tailscale.
+- [x] Write `Dockerfile` (Node.js slim base)
 - [ ] Push first image to GHCR manually to verify the pipeline
-- [ ] Trigger `api.yml` deploy and verify the service is reachable on the Tailscale IP
+- [ ] Roll via `deploy-api.yml` and verify the service is reachable **on the Tailscale IP only** (`curl` it from another tailnet device; confirm the public IP refuses)
 
 ---
 
 ## Phase 8: Homepage
 
-- [ ] Design `www/index.html` (and any assets)
-- [ ] Push to `noon-moon/braindance-usr`, verify `www.yml` deploys it, check `noon-moon.net/`
+- [ ] Design `ctx/www/index.html` (and any assets) — author links **relative**. Note this is `ctx/www/`, the Pages source; the repo-root `www/` is the template's placeholder for the Caddy/VPS path.
+- [ ] Push `ctx/www/**` as its own changeset, verify `pages.yml` deploys it, check the live homepage
 
 ---
 
 ## Done When
 
-- [ ] `noon-moon.net` serves the homepage
-- [ ] `noon-moon.net/garden` serves the Quartz garden built from `noon-moon-net`
-- [ ] `POST /notes` from phone lands in `ctx/vault/inbox/` on the `inbox` branch
-- [ ] `GET /scopes` returns current scope list
-- [ ] Tagging a note `publish: true` + running the publish tool projects it into `noon-moon-net`, whose Action builds → live at `/garden`; un-tagging removes it
-- [ ] GitHub sends email on `inbox` branch push
+- [ ] The homepage serves at the chosen public URL (Pages, custom domain or not)
+- [ ] `/garden` serves the Quartz garden built from `ctx/www/garden/`
+- [ ] A capture from the phone lands in the vault repo's `inbox/` on `main`, and shows in the viewer
+- [ ] The capture form's scope dropdown lists current scopes
+- [ ] Tagging a note `publish: true` + running the publish tool projects it into `ctx/www/garden/content/` → Pages builds → live at `/garden`; un-tagging removes it
+- [ ] The api answers on the Tailscale IP and **refuses on the public IP**

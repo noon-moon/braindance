@@ -2,12 +2,13 @@
 
 Serialized execution plan for the Personal Virtual Private Server. Each phase depends on the previous. Check items off as you go.
 
-**Repo model:** two repos. The `braindance-usr` fork this plan was originally written against is **retired** — its vault content was extracted into a standalone repo (v2 Slice 2), and the deploy config lives in the template repo itself.
+**Repo model:** three repos. The `braindance-usr` fork this plan was originally written against is **retired** — its vault content was extracted into a standalone repo (v2 Slice 2), and the deploy config lives in the template repo itself.
 
 - `noon-moon/braindance` — **this repo**: the public template *and* the deploy config (`api/`, `www/`, `Caddyfile`, `docker-compose.yml`, `deploy.sh`, `ops/`). Cloned to `/srv/braindance` on the VPS as deploy config only — it carries no vault notes.
 - `noon-moon/vault` — **private**, the instance vault as its own repo (flat notes at the repo root, no `ctx/vault/` prefix). Cloned separately on the VPS and pointed at by `REPO_PATH`; the api owns that checkout as single writer. This is the **content-free clone** model: `VAULT_SUBDIR=` (empty) + `VAULT_EXTERNAL=1`. Local checkout: `/Users/tiernan/dev/vault`.
+- `noon-moon/noon-moon-net` — **public**, holding only the generated `garden/content/` (a projection of the vault's `publish`-tagged notes) plus Quartz config. Its Action builds and rsyncs to `/srv/garden`, served by Caddy at `/garden`. `/garden` is a *separate published repo*, not a slice of a private one — the isolation is structural: the public repo cannot leak a note it never contains. Full design: [`ctx/noon-moon-net.md`](noon-moon-net.md).
 
-> `noon-moon/noon-moon-net` was a third repo in the original plan — a public Quartz repo rsynced to `/srv/garden`. **Superseded:** the site (homepage + garden) now builds from `ctx/www/` in this repo and deploys to **GitHub Pages** via `.github/workflows/pages.yml`, with `disjoint-www.yml` enforcing the privacy boundary at PR time. The structural guarantee is preserved differently — CI is vault-blind, reading only `ctx/www` + `ctx/tools/pub`, never `ctx/vault`. See Phases 5–6. (`ctx/noon-moon-net.md` still describes the old two-repo topology and lags this.)
+> **Not GitHub Pages.** This repo also ships `ctx/www/` + `.github/workflows/pages.yml`, a zero-server publishing path for forks. That is **template scaffolding, not this instance's route** — its deploy job is gated on the repo variable `ENABLE_PAGES`, which is unset here, so it self-skips. Don't confuse the two `www` dirs: repo-root `www/` is the Caddy homepage (`/srv/www`); `ctx/www/` is the unused Pages source.
 
 ---
 
@@ -178,26 +179,29 @@ These files now **exist in-repo** — read them there rather than from a snapsho
 
 ## Phase 5: Publish Tool (`ctx/tools/pub/`)
 
-The projection from private vault → the published garden. **Target changed:** it mirrors into `ctx/www/garden/content/` in this repo, not a separate `noon-moon-net` checkout. Built — see [`ctx/tools/pub/README.md`](tools/pub/README.md) for the CLI (`npm run publish -- --dry` first).
+The projection from private vault → `noon-moon-net`. Built — see [`ctx/tools/pub/README.md`](tools/pub/README.md) for the CLI (`npm run publish -- --dry` first). **Set `PUB_REPO=~/dev/noon-moon-net` and `VAULT_REPO=~/dev/vault`**: the tool's built-in defaults point at this repo's in-repo garden and placeholder vault, which are the fork path, not ours.
 
 - [x] **Select** (`src/vault.ts`) — walk the vault, collect the publish set P (`publish: true` frontmatter)
 - [x] **Gate** (`src/publish.ts`) — parse wikilinks/transclusions per note; classify targets (public / private / asset / external). Default `--strict`: block on any link to a non-published note (privacy boundary); missing assets always block. `--scrub`: downgrade private links to alias-or-text.
 - [x] **Transform** (`src/transform.ts`) — strip scaffolding (`Created:`/`Tags:` preamble, `# References`, dataview blocks); frontmatter **whitelist**; apply link scrub; normalize asset embeds
-- [x] **Mirror** (`src/mirror.ts`) — three-way sync of `ctx/www/garden/content/`: add / update / **delete** (un-tagging removes from the site); `.publish-manifest.json` tracks tool-owned files so hand-authored pages like `index.md` are never touched
-- [ ] **Commit** — review the diff and commit `ctx/www/**` **on its own** (`disjoint-www.yml` enforces this); pushing it triggers the Pages build
-- [ ] Optional: thin `/publish` skill in `ctx/skills/` wrapping the tool
+- [x] **Mirror** (`src/mirror.ts`) — three-way sync of `<pub>/garden/content/`: add / update / **delete** (un-tagging removes from the site); `.publish-manifest.json` tracks tool-owned files so hand-authored pages like `index.md` are never touched
+- [x] **Second gate** (`src/verify.ts`) — `npm run verify -- --pub ~/dev/noon-moon-net` re-audits the committed projection **vault-blind**; catches a file hand-edited after projection. Run it before pushing the garden repo.
+- [ ] **Commit** — review the diff in `noon-moon-net` and push; that push is what makes it public
+- [x] Thin `/publish` skill in `ctx/skills/personal/` wrapping the tool
 
 ---
 
-## Phase 6: Quartz garden (`ctx/www/garden/`)
+## Phase 6: `noon-moon-net` + Quartz
 
-**Supersedes the original "create `noon-moon/noon-moon-net`, rsync to `/srv/garden`" plan.** Quartz is vendored in-repo and the garden deploys to GitHub Pages alongside the homepage — so no public mirror repo and no SSH deploy in the system at all. The `noon-moon/noon-moon-net` repo still exists but is no longer the publish target.
+The public repo. Created once, then fed by the publish tool. It exists (private today — it must be **public**, or at least its Pages/deploy path must work, before `/garden` can serve).
 
-- [x] Vendor Quartz v5 at `ctx/www/garden/` (`quartz/`, `quartz.config.yaml`, `quartz.lock.json`)
-- [x] `content/index.md` — hand-authored garden landing page (yours; the tool never touches it). Every other `content/<slug>.md` is machine-owned — never hand-edit.
-- [x] **Commit `content/`** — Pages builds only already-committed, already-gated content, which is what keeps CI vault-blind. `baseUrl` is rewritten at build time by CI.
-- [ ] First real publish → push `ctx/www/**` → verify the Pages build → check the live `/garden`
-- [ ] Decide the public URL: GitHub Pages default (`noon-moon.github.io/braindance`) vs `SITE_CUSTOM_DOMAIN=noon-moon.net`. **If you point the apex at Pages, it can't also point at the droplet** — settle this before Phase 2's `A` record.
+- [x] Create `noon-moon/noon-moon-net`
+- [ ] Install Quartz at `garden/`: `npx quartz create`
+- [ ] Configure `quartz.config.yaml`: `baseUrl` for the `/garden` subpath (relative asset URLs under a subpath are the classic Quartz footgun — verify), content path `garden/content/`
+- [ ] **Commit `garden/content/`** (do *not* gitignore it — the public repo must be self-contained so its Action builds without ever touching a private repo). It is generated by the publish tool and never hand-edited.
+- [ ] Run the vault-blind gate in that repo's own Action too — `npm run verify -- --pub .` before the build, so a bad projection can't deploy even if the human skipped it locally
+- [ ] `.github/workflows/deploy.yml` — on push to `garden/**` or config: `npx quartz build --output /tmp/garden` → SSH to VPS → `rsync /tmp/garden/ /srv/garden`. This repo owns the only SSH deploy in the system, so `VPS_SSH_KEY` / `VPS_HOST` / `VPS_USER` belong **here**, not on `braindance`.
+- [ ] First manual publish → push `noon-moon-net` → verify the build → check `/garden`
 
 ---
 
@@ -215,16 +219,16 @@ The api has since grown well past this checklist (v2: local-first git store, `/r
 
 ## Phase 8: Homepage
 
-- [ ] Design `ctx/www/index.html` (and any assets) — author links **relative**. Note this is `ctx/www/`, the Pages source; the repo-root `www/` is the template's placeholder for the Caddy/VPS path.
-- [ ] Push `ctx/www/**` as its own changeset, verify `pages.yml` deploys it, check the live homepage
+- [ ] Design `www/index.html` (and any assets) — the repo-root `www/`, which Caddy serves from `/srv/www`. **Not `ctx/www/`**, which is the unused GitHub Pages source for forks.
+- [ ] Push to `noon-moon/braindance`; the droplet's `braindance-sync` timer fast-forwards `/srv/braindance` (with `VAULT_EXTERNAL=1`), so the homepage ships without an SSH deploy. Check the live site.
 
 ---
 
 ## Done When
 
-- [ ] The homepage serves at the chosen public URL (Pages, custom domain or not)
-- [ ] `/garden` serves the Quartz garden built from `ctx/www/garden/`
+- [ ] `noon-moon.net` serves the homepage from `/srv/www`
+- [ ] `noon-moon.net/garden` serves the Quartz garden built from `noon-moon-net`
 - [ ] A capture from the phone lands in the vault repo's `inbox/` on `main`, and shows in the viewer
 - [ ] The capture form's scope dropdown lists current scopes
-- [ ] Tagging a note `publish: true` + running the publish tool projects it into `ctx/www/garden/content/` → Pages builds → live at `/garden`; un-tagging removes it
+- [ ] Tagging a note `publish: true` + running the publish tool projects it into `noon-moon-net`, whose Action builds → live at `/garden`; un-tagging removes it
 - [ ] The api answers on the Tailscale IP and **refuses on the public IP**

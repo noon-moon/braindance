@@ -46,7 +46,7 @@ No servers, no rsync, no deploy keys. The VPS stack (`api/`, Caddy) is orthogona
 Because the repo holds both the vault and the public site, isolation is enforced rather than structural. Each of these is independent:
 
 - **(a) Build-scope isolation** — `pages.yml` reads only `ctx/www` and `ctx/tools/pub`. **No step reads the vault.** The vault is never an input to the deployed artifact, so CI cannot leak what it never opens.
-- **(b) Vault-blind re-audit** — CI re-runs the gate over the *committed projection* alone. A leaked link, a dangling asset, or a disallowed frontmatter key fails the deploy before anything is built. ⚠️ **Not yet implemented** — `pages.yml` calls `npm run verify`, which doesn't exist in `ctx/tools/pub`. Until it does, the gate runs only at projection time.
+- **(b) Vault-blind re-audit** — *specified, not implemented.* CI would re-run the gate over the *committed projection* alone, so a leaked link, a dangling asset, or a disallowed frontmatter key fails the deploy before anything is built. `npm run verify` was never written; the step has been removed from `pages.yml` rather than left failing. **The gate therefore runs only at projection time**, inside `npm run publish` — which means a hand-edit under `ctx/www/garden/content/` is checked by nothing. Write it when the garden gets more than one publisher, or if projection ever runs unattended.
 - **(c) Disjoint changesets** — `disjoint-www.yml` fails any PR touching `ctx/www/**` *and* anything outside it. Every publish is an isolated, reviewable "exactly what's going public" diff, and a vault edit can never be swept into one. Genuine infra changes bypass with `[www-infra]` in the PR title.
 
 ### Alternative: a separate garden repo
@@ -122,5 +122,5 @@ The `/publish` skill in `ctx/skills/` wraps it for ergonomics; the core is the d
 - **Flag spelling** — settled: a `publish: true` frontmatter field, unambiguous for a machine.
 - **`baseUrl`** — settled: CI computes it at build time (custom domain, user-site, or project path) and rewrites `quartz.config.yaml`, so the subpath footgun is handled centrally. Author site links **relative**.
 - **Scoped index (MOC) notes** — a published `scope` note's `Contains`/`Contained By` are stripped; Quartz's own graph and backlinks stand in rather than a hand-built index.
-- **Open: the verify gate.** Enforcement point (b) is referenced by CI but unwritten — see the warning above. Until it lands, a bad projection is caught only if the human notices it in the diff.
+- **Open: the verify gate.** Enforcement point (b) is designed but unwritten, and its CI step has been removed rather than left broken — see above. Until it lands, a bad projection is caught only if the human notices it in the diff.
 - **Open: assets dir** — reconcile the vault's `assets/` + `attachments/` layout with Quartz's expected static path.

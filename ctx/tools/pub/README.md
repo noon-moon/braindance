@@ -36,6 +36,8 @@ Pipeline (per note): `stripScaffolding` (drop `Created:`/`Tags:` preamble, `# Re
 
 **Separate garden repo.** Point `--pub`/`PUB_REPO` at a public Quartz repo, review the diff there, and let that repo's own Action build and deploy it. The guarantee is structural — a public repo cannot leak a note it never contains — at the cost of a second repo and its deploy. This is the topology `ctx/noon-moon-net.md` was originally designed around.
 
-## Known gap
+## Known gap — the gate runs at projection time only
 
-`pages.yml` invokes `npm run verify` (the vault-blind re-audit, enforcement point (b)), but **no `verify` script exists** in `package.json` and there is no `src/verify.ts` — that step will fail the workflow. Until it is written, the gate runs only at projection time, inside `npm run publish`, and the CI re-audit the privacy model describes is not actually in place.
+The privacy model specifies a second, **vault-blind re-audit in CI** (enforcement point (b)): re-check the *committed* projection alone, so a leaked link, dangling asset, or disallowed frontmatter key breaks the deploy. That script (`npm run verify`) was never written, and its `pages.yml` step has been removed rather than left failing on a missing script.
+
+So the gate you get is the one inside `npm run publish`, at projection time. The practical consequence: **anything hand-written into `ctx/www/garden/content/` is checked by nothing.** Treat those files as machine-owned, and read the diff before you land a publish.

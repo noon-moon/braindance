@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# configure — register THIS braindance clone as an instance. Thin root wrapper;
+# real logic in ctx/tools/sys/configure.sh. Run from the clone root: ./configure
+# See docs/instances.md.
+here="$(cd "$(dirname "$0")" && pwd)"
+exec "$here/ctx/tools/sys/configure.sh" "$@"

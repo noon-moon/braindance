@@ -15,8 +15,8 @@ import { renderMarkdown, renderInline } from "./render.js";
 import { gitStore } from "./git.js";
 import {
   listTasks, groupByDue, completedTasks, todayISO, daysBetween, effectiveDate, parseTaskLine,
-  canComplete, completeInFile, readTaskFile,
-  type Task, type TaskGroup,
+  canComplete, completeInFile, readTaskFile, groupByScope,
+  type Task, type TaskGroup, type ScopeGroup,
 } from "./tasks.js";
 
 const app = new Hono();
@@ -219,7 +219,7 @@ const PRI_GLYPH: Record<string, string> = {
  *  this app runs no JS — and an inert glyph otherwise: done already, or a `🔁`
  *  rule we won't roll forward (see canComplete), where ticking here would drop
  *  the recurrence. Those stay Obsidian's job, and say so. */
-function taskBox(t: Task, showDone: boolean) {
+function taskBox(t: Task, showDone: boolean, byScope: boolean) {
   if (!canComplete(t)) {
     const why = t.status === "done" ? "" : "recurring — complete in Obsidian";
     return html`<span class="box" title="${why}">${t.status === "done" ? "☑" : "☐"}</span>`;
@@ -230,23 +230,33 @@ function taskBox(t: Task, showDone: boolean) {
     <input type="hidden" name="line" value="${t.line}">
     <input type="hidden" name="raw" value="${t.raw}">
     ${showDone ? html`<input type="hidden" name="done" value="1">` : ""}
+    ${byScope ? html`<input type="hidden" name="by" value="scope">` : ""}
     <button class="box" type="submit" title="complete" aria-label="complete “${t.text}”">☐</button>
   </form>`;
 }
 
-function taskRow(t: Task, group: TaskGroup, today: string, showDone = false) {
+interface RowOpts {
+  today: string;
+  /** Print the atom's own date. Redundant under a dated heading (the date lens's
+   *  Today/Tomorrow/… sections), load-bearing under any heading that isn't one:
+   *  Overdue, and every section of the scope lens. */
+  showDate?: boolean;
+  showDone?: boolean;
+  /** Carried into the tick form so completing an atom returns to THIS lens. */
+  byScope?: boolean;
+}
+
+function taskRow(t: Task, o: RowOpts) {
   const date = effectiveDate(t);
-  // The date is redundant under a dated heading, but load-bearing under Overdue
-  // (a mixed bucket) — so show it there, with how late it is.
-  const late = group.kind === "overdue" && date ? daysBetween(date, today) : 0;
+  const late = date ? daysBetween(date, o.today) : 0;
   return html`<li class="${t.status === "done" ? "done" : ""}">
-    ${taskBox(t, showDone)}
+    ${taskBox(t, o.showDone ?? false, o.byScope ?? false)}
     <div class="t-main">
       <div class="t-text">${raw(renderInline(t.text))}</div>
       <div class="t-meta">
         <a href="/vault/${encodeURIComponent(t.note)}">${t.note}</a>
-        ${group.kind === "overdue" && date
-          ? html`<span>📅 ${date}</span><span class="late">${late}d late</span>`
+        ${o.showDate && date
+          ? html`<span>📅 ${date}</span>${late > 0 ? html`<span class="late">${late}d late</span>` : ""}`
           : ""}
         ${t.status === "done" && t.completed ? html`<span>✅ ${t.completed}</span>` : ""}
         ${!t.due && t.scheduled ? html`<span>⏳ scheduled</span>` : ""}
@@ -258,20 +268,41 @@ function taskRow(t: Task, group: TaskGroup, today: string, showDone = false) {
   </li>`;
 }
 
+// Two lenses over the same atoms. `date` (default) answers "what's due when";
+// `scope` answers "what's on each area's plate" — the `group by filename` roll-up
+// [[TODO]] does in Obsidian, and the view that makes a scope its area's command
+// center. The pick rides in the URL so either is linkable/bookmarkable.
 app.get("/todo", (c) => {
   const all = listTasks();
   const today = todayISO();
-  const groups = groupByDue(all, today);
+  const byScope = c.req.query("by") === "scope";
   const showDone = c.req.query("done") === "1";
   const done = showDone ? completedTasks(all).slice(0, 50) : [];
-  const open = groups.reduce((n, g) => n + g.tasks.length, 0);
-  const overdue = groups.find((g) => g.kind === "overdue")?.tasks.length ?? 0;
+  const open = all.filter((t) => t.status === "open").length;
+  const overdue = groupByDue(all, today).find((g) => g.kind === "overdue")?.tasks.length ?? 0;
 
-  const section = (g: TaskGroup) => html`
+  const dateSection = (g: TaskGroup) => html`
     <section class="tg ${g.kind}">
       <h2>${g.label} <span class="n">${g.tasks.length}</span></h2>
-      <ul class="tasks">${g.tasks.map((t) => taskRow(t, g, today, showDone))}</ul>
+      <ul class="tasks">${g.tasks.map((t) =>
+        taskRow(t, { today, showDone, byScope, showDate: g.kind === "overdue" }))}</ul>
     </section>`;
+
+  const scopeSection = (g: ScopeGroup) => html`
+    <section class="tg ${g.unfiled ? "unfiled" : ""}">
+      <h2>${g.unfiled ? g.note : html`<a href="/vault/${encodeURIComponent(g.note)}">${g.note}</a>`}
+        <span class="n">${g.tasks.length}</span>
+        ${g.overdue ? html`<span class="late">${g.overdue} overdue</span>` : ""}</h2>
+      <ul class="tasks">${g.tasks.map((t) => taskRow(t, { today, showDone, byScope, showDate: true }))}</ul>
+    </section>`;
+
+  const url = (...parts: string[]) => {
+    const q = parts.filter(Boolean).join("&");
+    return q ? `/todo?${q}` : "/todo";
+  };
+  const here = byScope ? "by=scope" : "";
+  const lens = (on: boolean, q: string, label: string) =>
+    on ? html`<strong>${label}</strong>` : html`<a href="${url(q, showDone ? "done=1" : "")}">${label}</a>`;
 
   // Same post/redirect/get receipt the capture screen uses.
   const ok = c.req.query("ok");
@@ -280,19 +311,22 @@ app.get("/todo", (c) => {
     ${ok !== undefined ? html`<div class="toast">✓ completed${ok ? html` → “${ok}”` : ""}</div>` : ""}
     ${err ? html`<div class="toast err">✗ ${err}</div>` : ""}
     <h1>todo <span class="muted">(${open})</span></h1>
-    <div class="meta">${today}${overdue ? html` · <span class="late">${overdue} overdue</span>` : ""}</div>
+    <div class="meta">${today}${overdue ? html` · <span class="late">${overdue} overdue</span>` : ""}
+      · ${lens(!byScope, "", "by date")} · ${lens(byScope, "by=scope", "by scope")}</div>
     ${open === 0
       ? html`<p class="muted">nothing open — every <code>#task</code> atom is done.</p>`
-      : groups.map(section)}
+      : byScope
+        ? groupByScope(all, today).map(scopeSection)
+        : groupByDue(all, today).map(dateSection)}
     <p class="todo-foot">
       ${showDone
-        ? html`<a href="/todo">hide completed</a>`
-        : html`<a href="/todo?done=1">show completed</a>`}
+        ? html`<a href="${url(here)}">hide completed</a>`
+        : html`<a href="${url(here, "done=1")}">show completed</a>`}
     </p>
     ${done.length
       ? html`<section class="tg">
           <h2>Completed <span class="n">${done.length}</span></h2>
-          <ul class="tasks">${done.map((t) => taskRow(t, { kind: "undated", label: "", date: null, tasks: [] }, today))}</ul>
+          <ul class="tasks">${done.map((t) => taskRow(t, { today, showDate: true }))}</ul>
         </section>`
       : ""}`, "todo"));
 });
@@ -303,9 +337,8 @@ app.get("/todo", (c) => {
 // There's no un-complete button: a mis-tap is one revert away in /history.
 app.post("/todo/complete", async (c) => {
   const b = await c.req.parseBody();
-  const back = b.done === "1" ? "/todo?done=1" : "/todo";
-  const sep = back.includes("?") ? "&" : "?";
-  const bounce = (q: string) => c.redirect(`${back}${sep}${q}`, 303);
+  const back = [b.by === "scope" ? "by=scope" : "", b.done === "1" ? "done=1" : ""].filter(Boolean);
+  const bounce = (q: string) => c.redirect(`/todo?${[...back, q].join("&")}`, 303);
 
   const file = readTaskFile(String(b.dir ?? ""), String(b.note ?? ""));
   if (!file) return bounce("err=no+such+note");

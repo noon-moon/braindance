@@ -27,6 +27,14 @@ import subprocess
 import sys
 import tempfile
 
+# Neutralize the runner's own braindance resolution vars up front so the guarded
+# root is decided only by each case's env (or the nested default) — both when the
+# hook module is imported for MAIN below and when it runs as a subprocess. An
+# ambient REPOS_PATH/BD_ROOT in the developer's shell otherwise desyncs the
+# external-root case (its BD_ROOT is overridden by higher-precedence REPOS_PATH).
+for _k in ("BD_ROOT", "REPOS_PATH", "VAULT_PATH", "BD_CORE", "BD_GUARD_PROJECT"):
+    os.environ.pop(_k, None)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "block-loon-main-writes.py")
 

@@ -14,6 +14,25 @@ export interface Note {
 // Not real notes / not publishable sources.
 const SKIP_DIRS = new Set(['.obsidian', '.git', 'node_modules', 'assets', 'attachments']);
 
+// A note whose frontmatter is invalid YAML (the usual cause: an unquoted `: `
+// inside a value) must not take the whole run down — one bad note would block
+// every publish. Fall back to EMPTY frontmatter with the raw text as the body:
+// the note keeps its identity in the index, so a wikilink to it still resolves
+// as internal-PRIVATE and still blocks the gate. Dropping it instead would
+// reclassify those links as external and let the title through — the exact leak
+// the gate exists to stop. With no frontmatter it can never carry `publish:
+// true`, so it can never be selected itself.
+function parseNote(path: string, raw: string): { data: Record<string, unknown>; body: string } {
+  try {
+    const { data, content } = matter(raw);
+    return { data: data ?? {}, body: content };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message.split('\n')[0] : String(err);
+    console.warn(`warn: unreadable frontmatter, treating as private: ${path}\n      ${reason}`);
+    return { data: {}, body: raw };
+  }
+}
+
 export function walkVault(vaultDir: string): Note[] {
   const out: Note[] = [];
   const walk = (dir: string) => {
@@ -22,13 +41,13 @@ export function walkVault(vaultDir: string): Note[] {
         if (!SKIP_DIRS.has(entry.name)) walk(join(dir, entry.name));
       } else if (entry.isFile() && entry.name.endsWith('.md')) {
         const path = join(dir, entry.name);
-        const { data, content } = matter(readFileSync(path, 'utf8'));
+        const { data, body } = parseNote(path, readFileSync(path, 'utf8'));
         out.push({
           path,
           rel: relative(vaultDir, path),
           basename: entry.name.slice(0, -3),
-          data: data ?? {},
-          body: content,
+          data,
+          body,
         });
       }
     }

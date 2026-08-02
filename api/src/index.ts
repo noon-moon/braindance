@@ -13,6 +13,7 @@ import { getScopes, getNote, listNotes, backlinksFor, invalidate, noteExists, re
 import { listInbox, getInboxNote, type InboxNote } from "./inbox.js";
 import { renderMarkdown, renderInline } from "./render.js";
 import { gitStore } from "./git.js";
+import { buildICS } from "./ics.js";
 import {
   listTasks, groupByDue, completedTasks, todayISO, daysBetween, effectiveDate, parseTaskLine,
   canComplete, completeInFile, readTaskFile, groupByScope, timeSpan, addDays,
@@ -489,6 +490,21 @@ app.post("/todo/complete", async (c) => {
   } catch (e) {
     return bounce(`err=${encodeURIComponent((e as Error).message)}`);
   }
+});
+
+// Subscribe-once calendar feed. Tailscale-only like every other route, so the
+// URL is the only credential — which is also why it carries no auth of its own.
+app.get("/todo.ics", (c) => {
+  const alarm = process.env.TODO_ICS_ALARM_MIN;
+  const body = buildICS(listTasks(), {
+    baseUrl: process.env.PUBLIC_BASE_URL,
+    alarmMin: alarm === undefined || alarm === "" ? undefined : Number(alarm),
+  });
+  return c.body(body, 200, {
+    "content-type": "text/calendar; charset=utf-8",
+    // Named so a manual download lands as something recognisable.
+    "content-disposition": 'inline; filename="braindance.ics"',
+  });
 });
 
 // ── History: operation log + undo ───────────────────────────────────────────

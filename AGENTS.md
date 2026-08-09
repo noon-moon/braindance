@@ -19,7 +19,7 @@ braindance is a **template**. Generic, reusable changes — guidelines, conventi
 
 Full doctrine, the motivating pattern, and the topics-manifest / scope-grant model: [`docs/orchestration.md`](docs/orchestration.md).
 
-**Topics manifest & scope grants.** Before any vault search, consult `ctx/vault/_meta/Topics.md` — the authoritative-and-generated manifest of every `scope` hub: a **miss is decisive** (not in the vault; don't grep), a hit names the MOC to start from. When delegating vault work, hand the sub-agent a **scope grant** (the specific scope(s) it may read); it searches only that scope and the scopes transitively `Contained By` it, never the whole vault, and **`scope_kind: system` scopes are excluded unless explicitly granted**. Full model: `ctx/vault/_meta/Agent Context.md`.
+**Topics manifest & scope grants.** Before any vault search, consult the vault's `_meta/Topics.md` — the authoritative-and-generated manifest of every `scope` hub: a **miss is decisive** (not in the vault; don't grep), a hit names the MOC to start from. It is produced by `ctx/tools/sys/gen-topics.sh`; if it is absent, the vault has simply never had it generated — say so rather than guessing. When delegating vault work, hand the sub-agent a **scope grant** (the specific scope(s) it may read); it searches only that scope and the scopes transitively `Contained By` it, never the whole vault, and **`scope_kind: system` scopes are excluded unless explicitly granted**. Full model: [`docs/vault.md`](docs/vault.md).
 
 ## Multi-agent worktree discipline (R1–R7)
 

@@ -45,6 +45,10 @@ jobs:
           # runs in (a fork resolves to that fork's path), matching API_IMAGE in
           # the droplet's /srv/.env (and .env.example's OWNER/REPO placeholder).
           tags: ghcr.io/${{ github.repository }}/api:latest
+          # Surfaced at /health, so a deploy can be verified from a client
+          # instead of by SSHing to the box.
+          build-args: |
+            BUILD_SHA=${{ github.sha }}
 
   deploy:
     needs: build-push # ordering guard: only redeploy after the image is pushed

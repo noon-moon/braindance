@@ -19,5 +19,10 @@ COPY package.json ./
 RUN npm install --omit=dev
 COPY --from=build /app/dist ./dist
 COPY public ./public
+# The commit this image was built from, surfaced at /health. Without it there is
+# no way to tell from outside the box whether a deploy actually rolled — the two
+# failure modes (stale image, unapplied env) look identical from a client.
+ARG BUILD_SHA=dev
+ENV BUILD_SHA=$BUILD_SHA
 EXPOSE 3000
 CMD ["node", "dist/index.js"]

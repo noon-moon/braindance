@@ -5,7 +5,7 @@
 // yields an empty or partial calendar with no error. So these tests assert the
 // wire format fairly literally.
 import assert from "node:assert/strict";
-import { buildICS, rrule, fold, uid, minutesIntoDay } from "../src/ics.js";
+import { buildICS, rrule, fold, uid, minutesIntoDay, icsOptionsFromEnv } from "../src/ics.js";
 import { parseTaskLine, type Task } from "../src/tasks.js";
 
 let passed = 0;
@@ -152,6 +152,41 @@ console.log("test: alarms");
   check("the alarm names the task", build([timed], { alarmsMin: [15] }).includes("DESCRIPTION:Dentist"));
   check("minutesIntoDay parses", minutesIntoDay("09:30") === 570 && minutesIntoDay("00:00") === 0);
   check("…and rejects an impossible hour", minutesIntoDay("24:00") === null && minutesIntoDay("x") === null);
+}
+
+console.log("test: icsOptionsFromEnv");
+{
+  const opt = (env: Record<string, string>) => icsOptionsFromEnv(env as NodeJS.ProcessEnv);
+
+  const off = opt({});
+  check("nothing set means silent", off.alarmsMin!.length === 0 && off.alldayAlarmsAt!.length === 0);
+  check("…and no base url", off.baseUrl === undefined);
+
+  const both = opt({ TODO_ICS_ALARM_MIN: "60,15", TODO_ICS_ALLDAY_ALARM_AT: "09:00,18:00" });
+  check("a comma list of minutes parses", JSON.stringify(both.alarmsMin) === "[60,15]");
+  check("…as does a list of times", JSON.stringify(both.alldayAlarmsAt) === '["09:00","18:00"]');
+  check("whitespace around entries is tolerated",
+    JSON.stringify(opt({ TODO_ICS_ALARM_MIN: " 60 , 15 " }).alarmsMin) === "[60,15]");
+
+  const timedOnly = opt({ TODO_ICS_ALARM_MIN: "15" });
+  check("setting only the timed knob still alerts all-day atoms, at 09:00",
+    JSON.stringify(timedOnly.alldayAlarmsAt) === '["09:00"]');
+  check("…and setting only the all-day knob leaves timed atoms silent",
+    opt({ TODO_ICS_ALLDAY_ALARM_AT: "09:00" }).alarmsMin!.length === 0);
+
+  check("garbage minutes are dropped, not passed through as NaN",
+    JSON.stringify(opt({ TODO_ICS_ALARM_MIN: "abc,15,-5" }).alarmsMin) === "[15]");
+  check("an unparseable time is dropped here, so /health matches the feed",
+    JSON.stringify(opt({ TODO_ICS_ALLDAY_ALARM_AT: "nope,09:00" }).alldayAlarmsAt) === '["09:00"]');
+  check("…and a wholly unparseable list doesn't silently become the 09:00 default",
+    opt({ TODO_ICS_ALLDAY_ALARM_AT: "nope" }).alldayAlarmsAt!.length === 0);
+  check("an empty base url is treated as unset", opt({ PUBLIC_BASE_URL: "" }).baseUrl === undefined);
+
+  // The point of sharing the resolver: what /health reports is what the feed emits.
+  const env = { TODO_ICS_ALARM_MIN: "15", PUBLIC_BASE_URL: "http://box:3000" };
+  const feed = buildICS([T("- [ ] File taxes 📅 2026-08-01 #task")], { now: NOW, ...opt(env) });
+  check("the resolved options actually drive the feed",
+    feed.includes("TRIGGER:PT9H") && feed.replace(/\r\n /g, "").includes("URL:http://box:3000/vault/Home"));
 }
 
 console.log(`\n${passed} checks passed`);

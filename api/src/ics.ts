@@ -115,6 +115,29 @@ export function minutesIntoDay(hhmm: string): number | null {
   return Number(m[1]) * 60 + Number(m[2]);
 }
 
+/** Resolve the feed's options from the environment.
+ *
+ *  This is the ONLY place these variables are read, so the feed and the
+ *  `/health` diagnostic can never disagree about what is configured — a status
+ *  report derived separately from the behaviour it describes is worse than no
+ *  report at all.
+ *
+ *  Both alarm knobs take a comma-separated list, so one task can nag more than
+ *  once. Setting only the timed one still gives all-day atoms an alert, defaulted
+ *  to 09:00: the alternative (inheriting a minutes-BEFORE offset) fires the night
+ *  before, which is nobody's intent. Unparseable entries are dropped here rather
+ *  than at emit time, so `/health` reports exactly what the feed will do. */
+export function icsOptionsFromEnv(env: NodeJS.ProcessEnv = process.env): IcsOptions {
+  const list = (v?: string) => (v ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  const alarmsMin = list(env.TODO_ICS_ALARM_MIN).map(Number).filter((n) => Number.isFinite(n) && n >= 0);
+  const allday = list(env.TODO_ICS_ALLDAY_ALARM_AT).filter((t) => minutesIntoDay(t) !== null);
+  return {
+    baseUrl: env.PUBLIC_BASE_URL || undefined,
+    alarmsMin,
+    alldayAlarmsAt: allday.length ? allday : alarmsMin.length ? ["09:00"] : [],
+  };
+}
+
 function event(t: Task, date: string, o: IcsOptions): string[] {
   const span = timeSpan(t);
   const lines = [

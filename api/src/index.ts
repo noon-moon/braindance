@@ -13,7 +13,8 @@ import { getScopes, getNote, listNotes, backlinksFor, invalidate, noteExists, re
 import { listInbox, getInboxNote, type InboxNote } from "./inbox.js";
 import { renderMarkdown, renderInline } from "./render.js";
 import { gitStore } from "./git.js";
-import { buildICS } from "./ics.js";
+import { buildICS, icsOptionsFromEnv } from "./ics.js";
+import { healthPayload } from "./health.js";
 import {
   listTasks, groupByDue, completedTasks, todayISO, daysBetween, effectiveDate, parseTaskLine,
   canComplete, completeInFile, readTaskFile, groupByScope, timeSpan, addDays,
@@ -495,20 +496,7 @@ app.post("/todo/complete", async (c) => {
 // Subscribe-once calendar feed. Tailscale-only like every other route, so the
 // URL is the only credential — which is also why it carries no auth of its own.
 app.get("/todo.ics", (c) => {
-  // Both knobs take a comma-separated list, so a nagger can have several alarms
-  // per task. Setting only the timed one still gives all-day atoms an alert —
-  // defaulted to 09:00, because the alternative (inheriting a minutes-BEFORE
-  // offset) fires the night before, which is nobody's intent.
-  const list = (v?: string) => (v ?? "").split(",").map((x) => x.trim()).filter(Boolean);
-  const alarmsMin = list(process.env.TODO_ICS_ALARM_MIN)
-    .map(Number).filter((n) => Number.isFinite(n) && n >= 0);
-  const alldayRaw = list(process.env.TODO_ICS_ALLDAY_ALARM_AT);
-  const alldayAlarmsAt = alldayRaw.length ? alldayRaw : alarmsMin.length ? ["09:00"] : [];
-  const body = buildICS(listTasks(), {
-    baseUrl: process.env.PUBLIC_BASE_URL,
-    alarmsMin,
-    alldayAlarmsAt,
-  });
+  const body = buildICS(listTasks(), icsOptionsFromEnv());
   return c.body(body, 200, {
     "content-type": "text/calendar; charset=utf-8",
     // Named so a manual download lands as something recognisable.
@@ -963,7 +951,17 @@ app.post("/notes", async (c) => {
   if (!b.content || !b.scope) return c.json({ error: "content and scope are required" }, 400);
   return c.json(await createNote({ content: b.content, scope: b.scope }), 201);
 });
-app.get("/health", (c) => c.json({ ok: true, sync: gitStore().status() }));
+// `/health` doubles as the deploy diagnostic. Twice now, a `/srv/.env` edit and
+// an image roll have been indistinguishable from outside the box: the feed just
+// looks the same, and answering "is the new build live, did the env land?"
+// needed SSH. So it reports the build it is running and the knobs it resolved —
+// derived from the SAME function the feed uses (icsOptionsFromEnv), so the two
+// cannot drift apart.
+//
+// NOTHING SECRET GOES HERE. This is unauthenticated (Tailscale-only, no auth of
+// its own), so it reports the *task and calendar* knobs only — never a token, a
+// remote URL, or a notification endpoint, each of which is a bearer credential.
+app.get("/health", (c) => c.json(healthPayload(gitStore().status())));
 
 // Local-first git store: mark the mounted repo safe, acquire the single-writer
 // lease (a no-op unless REQUIRE_LEASE is set), then start the periodic inbound

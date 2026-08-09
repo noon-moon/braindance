@@ -1,274 +1,126 @@
 # braindance
 
-A meta-repository for agentic development. Clone it once, maintain it as your personal knowledge and workflow layer, then plug any repository into the repos dir (`repo/` by default) to bring that context to bear.
+A meta-repository for agentic development. Clone it once, keep it as your personal knowledge and workflow layer, then plug any repository into the repos dir to bring that context to bear.
+
+braindance is the **system**, not your data. It carries the tooling, skills, agent guidance, and an optional admin container you deploy to your own infrastructure. Your notes live in a separate vault; anything you publish lives in a separate site repo:
+
+```
+braindance      this repo — tooling, skills, agent guides, and the admin app (→ container → your infra)
+vault           your knowledge base; the container owns a checkout of it and syncs periodically
+<site>          optional: a public site repo the publish tool projects notes into
+```
+
+Each is independent. You can use braindance with nothing but a vault and never deploy anything.
+
+## Layout
 
 ```
 bd/
 ├── ctx/
-│   ├── skills/           # LLM-agnostic skill definitions (plain markdown prompts)
-│   │   ├── engineering/
-│   │   ├── misc/
-│   │   ├── personal/
-│   │   ├── productivity/
-│   │   └── usr/          # Your personal skills (gitignored in template)
+│   ├── skills/        LLM-agnostic skill prompts (plain markdown; installed into your harness)
 │   ├── tools/
-│   │   ├── sys/          # Braindance lifecycle tooling
-│   │   │   ├── sync.sh   # Installs skills into your LLM harness
-│   │   │   └── wt.sh     # `bd` parallel-worktree helper (source from your shell rc)
-│   │   ├── pub/          # Publish tool: projects `publish: true` notes → ctx/www/garden
-│   │   └── orchestration/ # Multi-agent fleet helpers (rebase-open-prs, loadguard, ledger)
-│   ├── vault/            # Obsidian vault — open this directory in Obsidian
-│   │   │                 # Only .obsidian/, _templates/, _meta/, _ephemeral/README are tracked;
-│   │   │                 # your notes are gitignored (personal, per-machine)
-│   │   └── _ephemeral/   # Non-persisted scratch (gitignored; Obsidian-visible,
-│   │                     # never canonical — promote keepers to real notes)
-│   └── www/              # Published website → GitHub Pages (homepage + static + /garden)
-│       ├── index.html    #   your homepage (edit freely; author RELATIVE links)
-│       └── garden/       #   vendored Quartz v5 garden; content/<slug>.md is machine-owned
-├── .github/workflows/    # pages.yml (build+deploy ctx/www) · disjoint-www.yml (publish-isolation check)
-├── api/                  # Admin app: mobile note-capture API + vault viewer  (advanced/VPS)
-├── www/                  # Static homepage for the VPS path (distinct from ctx/www)  (advanced/VPS)
-├── Caddyfile             # Reverse proxy / TLS (uses {$DOMAIN})                 (advanced/VPS)
-├── docker-compose.yml    # caddy + api services                                (advanced/VPS)
-├── deploy.sh             # Compose wrapper (feeds /srv/.env interpolation)      (advanced/VPS)
-└── repo/                 # Gitignored — default (nested) home for your target repos
+│   │   ├── sys/       Lifecycle tooling — configure, resolve, sync.sh, wt.sh (`bd`), gen-topics
+│   │   ├── orchestration/  Multi-agent fleet helpers
+│   │   └── pub/       Publish tool: projects `publish: true` notes into a site repo
+│   └── vault/         Default (nested) vault location — Obsidian config + templates only
+├── docs/              The manual (see the map below)
+├── api/               Admin app: mobile capture + review desk + read-only vault viewer
+├── Caddyfile · docker-compose.yml · deploy.sh · ops/     Serving stack
+├── CLAUDE.md · AGENTS.md    Agent directives (Claude / cross-tool)
+└── repo/              Gitignored — default (nested) home for your target repos
 ```
-
-### External resources — one root, `$BD_ROOT`
-
-The **vault** and the **repos dir** are external resources braindance resolves off a single optional environment knob. Leave it unset and everything stays nested inside the checkout exactly as shown above; set `BD_ROOT` and the core, vault, and repos become siblings under it. `_ephemeral/` scratch always rides with the vault (so it stays Obsidian-visible).
-
-| Var | Resolves | Default (all unset) |
-|---|---|---|
-| `BD_ROOT` | Single external root holding the core + `vault/` + repos as siblings | unset ⇒ nested layout below |
-| `VAULT_PATH` | The vault directory (per-resource override) | `${BD_ROOT:+$BD_ROOT/vault}`, else `ctx/vault` |
-| `REPOS_PATH` | The repos dir; a repo is `<repos>/<name>` (per-resource override) | `$BD_ROOT`, else `<checkout>/repo` |
-| `BD_CORE` | The braindance checkout itself (used by `bd`/`wt.sh` for git ops) | self-resolved from the tooling's own location |
-
-`bd`/`wt.sh` and the R1 write-guard hook resolve against these, so the multi-agent worktree discipline works whether your repos are nested or external. (Distinct from the VPS `api`'s own `VAULT_PATH`/`VAULT_SUBDIR`, which configure the *served* vault — see the serving section below.)
 
 ## Quick start
 
 ```bash
 git clone <this-repo> bd
 cd bd
-mkdir repo
-
-# Install skills into your LLM harness (see "Skills" below)
-./ctx/tools/sys/sync.sh claude-code
+./configure --name personal --default
 ```
 
-Open `ctx/vault/` as a vault in Obsidian.
+`./configure` registers this clone and wires your machine, idempotently:
 
----
+- writes `~/.config/braindance/instances/personal.conf` (its three paths)
+- installs the `SessionStart` + cross-instance-guard hooks into `~/.claude/settings.json`
+- appends `source <core>/ctx/tools/sys/wt.sh` to your shell rc (`~/.zshrc` / `~/.bashrc`)
 
-## Skills
-
-Skills are plain markdown files in `ctx/skills/`. Each file is a self-contained prompt command — not tied to any LLM harness. You install them into whichever harness you use.
-
-### Installing skills
-
-**Claude Code** — symlinks skills into `.claude/commands/` so they become `/slash-commands`:
-```bash
-./ctx/tools/sys/sync.sh claude-code
-```
-
-**Cursor** — copies skills into `.cursor/rules/`:
-```bash
-./ctx/tools/sys/sync.sh cursor
-```
-
-**Zed** — copies skills into `.zed/prompts/`:
-```bash
-./ctx/tools/sys/sync.sh zed
-```
-
-**Continue** — copies skills into `.continue/prompts/`:
-```bash
-./ctx/tools/sys/sync.sh continue
-```
-
-**Any other harness** — copy the files from `ctx/skills/` into your harness's prompt/commands directory. Skills are plain markdown; no transformation needed.
-
-### Keeping skills in sync
-
-After pulling upstream changes to this repo, re-run the sync script to update your harness's copy.
-
----
-
-## Skills included
-
-Skills from [mattpocock/skills](https://github.com/mattpocock/skills) by [Matt Pocock](https://github.com/mattpocock), reproduced here for harness-agnostic portability. Some skills reference companion files (e.g. `CONTEXT.md`, `docs/adr/`) that are created per-project by the setup skills.
-
-### Productivity
-| Skill | Description |
-|---|---|
-| `grill-me` | Relentless interview to sharpen a plan or design |
-| `grilling` *(model-invoked)* | The underlying grilling discipline |
-| `handoff` | Compact a conversation into a document for another agent |
-| `teach` | Multi-session, stateful teaching workspace |
-| `writing-great-skills` | Reference for writing effective skills |
-
-### Engineering
-| Skill | Description |
-|---|---|
-| `ask-matt` | Router over all engineering skills and flows |
-| `codebase-design` | Vocabulary and principles for deep modules |
-| `diagnosing-bugs` | Disciplined bug diagnosis loop |
-| `domain-modeling` *(model-invoked)* | Build and maintain a project domain model |
-| `grill-with-docs` | Grilling that updates `CONTEXT.md` and ADRs inline |
-| `improve-codebase-architecture` | Scan codebase for deepening opportunities |
-| `prototype` | Throwaway code to answer a design question |
-| `setup-matt-pocock-skills` | Configure the engineering skills for a repo (run once) |
-| `tdd` *(model-invoked)* | Test-driven development with vertical slices |
-| `to-issues` | Break a plan into independently-grabbable issues |
-| `to-prd` | Turn a conversation into a PRD on the issue tracker |
-| `triage` | Move issues through a triage state machine |
-
-### Misc
-| Skill | Description |
-|---|---|
-| `git-guardrails-claude-code` | Claude Code hooks to block dangerous git operations |
-| `migrate-to-shoehorn` | Replace `as` type assertions in test files |
-| `scaffold-exercises` | Create exercise directory structures |
-| `setup-pre-commit` | Configure Husky + lint-staged pre-commit hooks |
-
-### Personal
-| Skill | Description |
-|---|---|
-| `edit-article` | Edit and improve article drafts |
-| `obsidian-vault` | Search and manage notes in an Obsidian vault |
-
----
-
-## Personal content
-
-**Vault notes** — `ctx/vault/.gitignore` ignores everything in the vault except the base scaffolding (`.obsidian/`, `_templates/`, `_meta/`). Any notes you write live only on your machine; the template never tracks them, in this repo or a fork.
-
-**Ephemeral** — `ctx/vault/_ephemeral/` is a gitignored scratch dir (only its `README.md` is tracked) for anything transient: files an agent should consider for a task and disposable work products alike. It sits *inside* the vault so it's visible in Obsidian, but it's never canonical — nothing there persists, so promote anything worth keeping into a real vault note. See [`CLAUDE.md`](CLAUDE.md).
-
-**Skills** — `ctx/skills/usr/` is gitignored in this template but intended for use in your personal fork. `sync.sh` picks these up automatically alongside the template skills. To track them in your fork, remove or edit `ctx/skills/.gitignore` — when you pull template updates, that's the one likely conflict point; resolve it in favour of your fork's version.
-
----
-
-## Vault
-
-Open `ctx/vault/` as a vault in Obsidian.
-
-**Your tag vocabulary is yours.** braindance does not ship a schema, because it has no way to keep one in sync with your vault — an earlier version tried, and its copy quietly drifted into documenting a note type the vault had already retired. Define your own vocabulary in your vault's `_meta/Tags.md`; that file is the source of truth, and the tooling reads your vault at runtime rather than asserting a shape here.
-
-What the tooling *does* require is a short list, and each item has code behind it:
-
-- **`scope` hub notes** — `tags: [scope]`, optionally `scope_kind: system`, linked with `Contains` / `Contained By`. `ctx/tools/sys/gen-topics.sh` builds the topics manifest from exactly these fields, and the admin app's scope picker lists them.
-- **A flat vault** — notes at the root, no folder taxonomy; wikilinks resolve by basename, and the scans depend on it.
-- **Filename = note title**, and underscore-prefixed dirs (`_meta/`, `_templates/`, `_ephemeral/`) are skipped by every scan.
-
-Full list with enforcers, the triage tree, and the `_ephemeral` convention: [`docs/vault.md`](docs/vault.md).
-
-Templates for new notes live in `ctx/vault/_templates/` — neutral `scope`, `memo`, and `daily` starters; add your own. Daily Notes and Templates are pre-enabled in the Obsidian config; install any community plugin you want (Dataview, Tasks) yourself via Obsidian's UI.
-
-### Companion files
-
-Some engineering skills (`diagnosing-bugs`, `tdd`, `domain-modeling`, `codebase-design`, `triage`, `improve-codebase-architecture`, `writing-great-skills`) reference companion files that don't exist in this repo. These are per-project artifacts created by `/setup-matt-pocock-skills` when you run it inside a target repo. They're not part of braindance itself.
-
----
-
-## Publishing to GitHub Pages (out of the box)
-
-A fresh fork ships a complete public website in **`ctx/www/`** — a homepage, any
-static pages you drop in, and a [Quartz](https://quartz.jzhao.xyz) digital garden at
-`/garden` — deployed to **GitHub Pages** with zero servers. This is the recommended
-default; the VPS/Caddy stack below is the advanced alternative.
-
-**One-time setup**, because publishing this way is **opt-in** — the deploy job self-skips
-until you turn it on, so a fork using the VPS/Caddy topology instead doesn't go red on a
-deploy it never wanted:
-
-1. **Settings → Pages → Source = "GitHub Actions"**.
-2. Set the repo **variable** `ENABLE_PAGES` = `true`.
-
-Then push: `.github/workflows/pages.yml` builds `ctx/www` and deploys it to
-`https://<owner>.github.io/<repo>/`. For a custom domain, set the repo **variable**
-`SITE_CUSTOM_DOMAIN` (e.g. `example.com`); the workflow computes Quartz's `baseUrl` and
-emits a `CNAME` for you. (Pages auto-resolves `/about` → `/about.html`, so no rewrite
-shim is needed.) The **build** job — including the publish gate — runs either way, so
-`ctx/www` stays validated even with deploys off.
-
-**Design your site:** edit `ctx/www/index.html`, and drop any static file/folder under
-`ctx/www/` to add a page (`ctx/www/about.html` → `/about`). The one authoring rule: use
-**relative** URLs (`./garden/`, `assets/x.png`) so pages work under both a project path
-and a custom domain. See [`ctx/www/README.md`](ctx/www/README.md).
-
-**Publish garden notes** (manual, reviewed, then committed):
+Open a new shell so the rc change takes effect — that gives you the `bd` command and automatic context resolution as you `cd`. Then:
 
 ```bash
-npm --prefix ctx/tools/pub install          # first time
-npm --prefix ctx/tools/pub run publish -- --dry   # preview what would publish
-npm --prefix ctx/tools/pub run publish            # project publish:true notes → ctx/www/garden/content
-git diff ctx/www/garden/content                   # review exactly what's going public
+./ctx/tools/sys/sync.sh claude-code    # install skills as /slash-commands
 ```
 
-Then commit; the Pages workflow deploys on push. Un-tag a note (`publish: false` /
-remove) and re-run to delete it.
+Open your vault directory in Obsidian. By default that's `ctx/vault/`; point `--vault` at somewhere else if you keep it outside the checkout (most people do — see Contexts).
 
-### Privacy — the vault stays private, only the built site is public
+Useful flags: `--vault <path>` and `--repos <path>` to place those territories, `--no-wire` to register without touching your settings or rc.
 
-The repo is **private**; only the deployed **Pages artifact** is public. Because the
-vault and the site live in one repo, the boundary is enforced fail-closed at three
-points (see [`CLAUDE.md`](CLAUDE.md) for the full rationale):
+## Contexts — running more than one braindance
 
-1. **Build-scope isolation** — `pages.yml` builds only from `ctx/www`; **no step reads
-   `ctx/vault`**. CI cannot leak what it never opens.
-2. **Fail-closed publish gate, twice** — at *projection* time the publish tool blocks
-   (nonzero exit) on any link or embed/transclusion to an unpublished note and any
-   unresolvable asset; then in CI `npm run verify` re-audits the **committed**
-   projection *vault-blind* (`ctx/www/garden` only), so a leak breaks the deploy
-   before anything is built. The second pass is what catches a file hand-edited
-   *after* projection — it takes no `--vault` and refuses one, so it cannot be
-   quietly weakened into passing.
-3. **Disjoint-`www` PR check** — `disjoint-www.yml` fails any PR that mixes `ctx/www/**`
-   with changes outside it, keeping every publish an isolated, reviewable changeset.
+A **context** (an *instance*) is one braindance clone governing one scope, and it owns three territories:
 
-For maximal *structural* isolation you can instead keep the garden in a **separate
-public repo** and point the tool at it (`--pub /path` or `PUB_REPO`), serving it via the
-VPS stack below — see [`ctx/tools/pub/README.md`](ctx/tools/pub/README.md).
-
-## Admin app & serving (optional, advanced — VPS path)
-
-Braindance ships an optional admin app — a mobile-friendly interface for capturing notes into your vault and browsing it — plus the static-site plumbing to serve a public homepage and a published knowledge garden. It's a stack of two Docker services:
-
-- **`caddy`** — TLS + routing for the public surface: your homepage at `/` (from `/srv/www`) and, if you publish a [Quartz](https://quartz.jzhao.xyz) garden, static output at `/garden` (from `/srv/garden`).
-- **`api`** — the admin surface (`api/`): a small Hono/Node service for on-the-go note capture and a read-only vault viewer. It reads the vault (mounted read-only) and commits captures **directly to `main`**, into `ctx/vault/inbox/`, via the GitHub Contents API — so they appear in the vault (and the viewer) with no branch to merge. Each capture is a unique timestamped file, so the atomic write is safe against concurrent commits on `main` (it retries the rare racing ref update); triage is then a plain in-vault file move (`inbox/` → the flat vault). The old `inbox`-*branch* isolation is retired — it was belt-and-suspenders from before the app was locked behind a private network (see the hosting note below).
-
-**Bring your own secure hosting.** The `api` service binds a plain HTTP port and has **no built-in authentication** — exposing it safely is *your* responsibility. Put it behind Tailscale/a VPN, an authenticating reverse proxy, or an SSH tunnel. Do not expose it to the public internet as-is.
-
-### Configuration
-
-All instance-specific values live in `/srv/.env` on the host (`chmod 600`, never committed). Copy [`.env.example`](.env.example) and fill it in:
-
-| Var | Used by | Purpose |
+| Territory | What it is | Env var |
 |---|---|---|
-| `DOMAIN` | Caddy (`{$DOMAIN}`) | Public hostname for TLS + routing |
-| `API_IMAGE` | Compose interpolation | Your GHCR image, e.g. `ghcr.io/you/your-repo/api:latest` |
-| `GITHUB_REPO` | api | `owner/repo` the api commits captures to |
-| `GITHUB_TOKEN` | api | PAT with `repo` scope for capture commits |
+| `core` | the checkout itself | `BD_CORE` |
+| `vault` | its knowledge base | `VAULT_PATH` |
+| `repos` | where its target repos live (`<repos>/<name>`) | `REPOS_PATH` |
 
-Two different env mechanisms are in play, which is easy to trip over:
-- `${VAR}` in `docker-compose.yml` is **interpolation**, resolved from `--env-file /srv/.env`. Always run compose through **`./deploy.sh`** (which passes that flag) — bare `docker compose` won't see `/srv/.env` and will resolve those vars empty.
-- `env_file: /srv/.env` on each service injects **container runtime** env (Caddy's `$DOMAIN`, the api's `GITHUB_*`).
+You can have several — a `work` context with a work vault and work repos, and a `personal` one — and **which is current is resolved from where you are**, not from a global setting.
 
-### Deploy
+**Which context am I in?**
 
-Expects the repo cloned to `/srv/braindance`, plus host dirs `/srv/www` and `/srv/garden`:
+```console
+$ bd where
+instance: personal
+  core  = /Users/you/bd
+  vault = /Users/you/dev/vault
+  repos = /Users/you/dev/repo
 
-```bash
-./deploy.sh up -d          # start the stack
-./deploy.sh config         # render the fully-resolved compose file (sanity check)
-./deploy.sh pull api && ./deploy.sh up -d api   # roll a new api image
+$ bd ls-instances
+personal * (default)
+work
 ```
 
----
+`*` marks the active one, `(default)` the registry's fallback. Claude Code also prints the active context at the start of every session, so an agent knows which vault it may touch.
+
+**Switching.** Three ways, in precedence order:
+
+```bash
+bd use work        # pin THIS shell to work, regardless of directory
+bd use --auto      # release the pin, back to resolving by location
+cd ~/work/repo/app # just being in a territory resolves to its context
+```
+
+Location resolution is automatic on `cd` (via the shell hook `configure` installed) and uses longest-prefix matching, so a repo deep under `work`'s repos dir resolves to `work`. Git worktrees resolve through their main checkout. If you're nowhere in particular (`cd ~`), the registry `default` applies; if nothing matches and there's no default, resolution **stops rather than guessing** — a wrong guess would point an agent at the wrong vault.
+
+**Adding a second context:**
+
+```bash
+cd ~/work/braindance
+./configure --name work --vault ~/work/vault --repos ~/work/repo
+```
+
+Territories must be **disjoint** — no context's core, vault, or repos may sit inside another's. `configure` refuses a registration that would overlap, and changes nothing when it does.
+
+**The registry** lives at `~/.config/braindance/` — one `instances/<name>.conf` per context plus an optional `default`. It's machine-local and never committed.
+
+**Escape hatch.** If you export `VAULT_PATH` / `REPOS_PATH` / `BD_ROOT` yourself, resolution stays dormant and your values win. That's how the deployed app and one-off `VAULT_PATH=… command` invocations stay authoritative. Unset them to hand the shell back to the resolver.
+
+Full mechanics — the resolution ladder, step semantics, worked examples: [`docs/instances.md`](docs/instances.md).
+
+## The manual
+
+| If you're… | Read |
+|---|---|
+| installing or writing skills | [`docs/skills.md`](docs/skills.md) |
+| working in the vault — conventions, triage, scratch | [`docs/vault.md`](docs/vault.md) |
+| resolving or bootstrapping contexts | [`docs/instances.md`](docs/instances.md) |
+| running the admin app or the serving stack | [`docs/serving.md`](docs/serving.md) |
+| publishing vault notes to a public site | [`docs/publishing.md`](docs/publishing.md) |
+| running parallel agent sessions (worktrees, landing) | [`docs/worktrees.md`](docs/worktrees.md) |
+| orchestrating a fleet of sub-agents | [`docs/orchestration.md`](docs/orchestration.md) |
+
+Agent-facing directives live in [`CLAUDE.md`](CLAUDE.md) (Claude Code) and [`AGENTS.md`](AGENTS.md) (the cross-tool [AGENTS.md](https://agents.md) standard). They state rules and point here for the explanations.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [`LICENSE`](LICENSE).

@@ -1,6 +1,6 @@
-# The publish subsystem
+# Publishing — projecting vault notes to a public site
 
-How **"publish this braindance instance with Quartz"** works. Companion to `ctx/vps-setup.md` (which owns the VPS/serving checklist); this doc owns the *projection* from private vault → public site. The tool itself: [`ctx/tools/pub/README.md`](tools/pub/README.md).
+How selected notes get from a private vault onto a public site. Companion to `ctx/vps-setup.md` (the VPS checklist) and [`serving.md`](serving.md) (the admin app); this doc owns the **projection**. The tool itself: [`ctx/tools/pub/README.md`](../ctx/tools/pub/README.md).
 
 ## The privacy problem
 
@@ -11,9 +11,9 @@ Two ways to guarantee it doesn't happen:
 - **Structural** — the public artifact never *contains* the private note. You can't render a title that isn't there.
 - **Procedural** — a gate runs on every publish and blocks the leak.
 
-**This instance chose structural: a separate public repo, `noon-moon/noon-moon-net`.** The cost is a second repo and a second deploy — but you need link-scrubbing in *any* topology, so it buys the isolation guarantee for roughly the same work. The template also ships a zero-server in-repo alternative for forks; see below. The projection tool is identical either way — only `--pub` changes.
+**braindance takes the structural route: the site is always a separate repo.** The cost is a second repo and a second deploy — but you need link-scrubbing in *any* topology, so the isolation guarantee comes for roughly the same work, and it holds even when every check below fails.
 
-## Topology (this instance: separate repo → VPS `/garden`)
+## Topology
 
 ```
 noon-moon/braindance   (PRIVATE — the instance + tooling)
@@ -43,16 +43,12 @@ The public repo **cannot leak a note it never contains** — that's the whole po
 - **Projection time** — `npm run publish`, vault in hand. Blocks (nonzero exit) on any link or embed to a note outside the publish set, and on any unresolvable asset. This is the decision point: publish the target, unlink, or `--scrub`.
 - **Before you push** — `npm run verify` (`src/verify.ts`), **vault-blind**: re-audits the committed projection on its own terms — a wikilink to a note not in the published set, a missing asset, a disallowed frontmatter key, a surviving internal tag, a stale manifest entry. It catches what projection-time gating structurally cannot: a file **hand-edited after it was projected**, or a projection committed from a stale checkout. It reads only `<pub>/garden`, takes no `--vault`, and **exits 2 if given one** — reading the private side would convert the guarantee back into a procedural one. Run it against the garden repo before pushing; it belongs in `noon-moon-net`'s own Action too.
 
-### The in-repo alternative (template default for forks)
+> **Legacy scaffolding, being removed.** This repo still carries an unused second publishing path — `ctx/www/` plus `.github/workflows/pages.yml` and `disjoint-www.yml` — that projected in-repo and deployed to GitHub Pages. It has never published a note, its deploy is gated off behind the `ENABLE_PAGES` repo variable, and it duplicates a vendored Quartz install. Ignore it; it is slated for deletion.
 
-A fork with no server can point `--pub` at **`ctx/www`** in this repo and deploy to **GitHub Pages** via `.github/workflows/pages.yml` — homepage, static pages, and the garden at `/garden`, zero servers. There the boundary is procedural, so it's enforced three ways: **(a)** build-scope isolation (`pages.yml` reads only `ctx/www`, never the vault), **(b)** the vault-blind `verify` gate as the first CI step, **(c)** `disjoint-www.yml`, which fails any PR mixing `ctx/www/**` with anything outside it so a vault edit can never ride along with a publish.
-
-**That path is opt-in and off here** — `pages.yml`'s deploy job is skipped unless the repo variable `ENABLE_PAGES` is `true`, since this instance publishes via the separate repo. The build job still runs, so `ctx/www` and the gate stay validated.
-
-### Two ownership rules that keep either topology sane
+### Two ownership rules
 
 1. **The tool owns the files it projects — never hand-edit those.** Notes are written flat into `garden/content/` (so a note serves at `/garden/<slug>`, no `notes/` nesting), and the tool records exactly what it wrote in `.publish-manifest.json` so a re-run deletes its stale output. Hand-authored pages living *alongside* it (e.g. `content/index.md`) are safe because they're never in the manifest. Everything *around* the content — Quartz config, layout, CSS — is hand-maintained.
-2. **`content/` is committed.** The build is a pure function of committed, already-gated content — which is exactly what makes (a) and (b) possible.
+2. **`content/` is committed.** The site repo must be self-contained, so its own Action can build without ever reaching into a private repo — and so the build is a pure function of already-gated content.
 
 ## Selection: a `publish` frontmatter flag, not a folder
 
@@ -97,7 +93,7 @@ The tool-owned slice of `content/` is a **pure function of P**, so publishing is
 Idempotent: re-running against an unchanged vault produces an empty diff.
 
 ### 5. Commit
-**No auto-push, by design.** Run `verify` against the garden, review the diff, then commit and push it in the public repo — that push is what makes it world-readable. Keeping a human between "tag a note" and "it's public" is the right default for a privacy gate. (On the in-repo path the equivalent is committing `ctx/www/**` on its own, which `disjoint-www.yml` enforces.)
+**No auto-push, by design.** Run `verify` against the garden, review the diff, then commit and push it in the public repo — that push is what makes it world-readable. Keeping a human between "tag a note" and "it's public" is the right default for a privacy gate.
 
 ## Tech
 
@@ -118,6 +114,6 @@ The `/publish` skill in `ctx/skills/` wraps it for ergonomics; the core is the d
 - **Flag spelling** — settled: a `publish: true` frontmatter field, unambiguous for a machine.
 - **`baseUrl`** — settled: CI computes it at build time (custom domain, user-site, or project path) and rewrites `quartz.config.yaml`, so the subpath footgun is handled centrally. Author site links **relative**.
 - **Scoped index (MOC) notes** — a published `scope` note's `Contains`/`Contained By` are stripped; Quartz's own graph and backlinks stand in rather than a hand-built index.
-- **Settled: the verify gate.** `src/verify.ts` is implemented and runs as the first step of `pages.yml`. What it deliberately does *not* do is judge content — it cannot know that a note you tagged `publish: true` says something you'd rather it didn't. It checks that the projection is internally consistent and leaks no unpublished title; deciding what belongs in P is still yours.
+- **Settled: the verify gate.** `src/verify.ts` is implemented. What it deliberately does *not* do is judge content — it cannot know that a note you tagged `publish: true` says something you'd rather it didn't. It checks that the projection is internally consistent and leaks no unpublished title; deciding what belongs in P is still yours.
 - **Open: wire `verify` into `noon-moon-net`'s Action.** On the separate-repo path it currently runs only when a human remembers to. The public repo's own deploy workflow should run it over its committed `garden/` before building — same script, `--pub .`, no vault anywhere near it.
 - **Open: assets dir** — reconcile the vault's `assets/` + `attachments/` layout with Quartz's expected static path.

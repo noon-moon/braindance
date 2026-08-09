@@ -155,14 +155,17 @@ Skills from [mattpocock/skills](https://github.com/mattpocock/skills) by [Matt P
 
 Open `ctx/vault/` as a vault in Obsidian.
 
-The vault uses two note types, enforced by frontmatter tags:
+**Your tag vocabulary is yours.** braindance does not ship a schema, because it has no way to keep one in sync with your vault — an earlier version tried, and its copy quietly drifted into documenting a note type the vault had already retired. Define your own vocabulary in your vault's `_meta/Tags.md`; that file is the source of truth, and the tooling reads your vault at runtime rather than asserting a shape here.
 
-- **`scope`** — a hub note (MOC) for a topic. Has `Contains` and `Contained By` frontmatter linking to related scopes. The relationship is intentionally loose — it covers "owns / owned by", "contains / contained by", and similar dual relationships.
-- **`memo`** — a standard note on a specific topic.
+What the tooling *does* require is a short list, and each item has code behind it:
 
-On top of a note type, behavioural tags can stack: **`todo`** (actionable, with `status`/`due`/`completed` fields — aggregated in `TODO.md`, powered by the Dataview plugin), **`recurring`** (a standing routine tracked by a `processed` date), and **`daily`** (a dated log note in `daily/`, created via the core Daily Notes plugin). Full definitions live in `ctx/vault/_meta/Tags.md`.
+- **`scope` hub notes** — `tags: [scope]`, optionally `scope_kind: system`, linked with `Contains` / `Contained By`. `ctx/tools/sys/gen-topics.sh` builds the topics manifest from exactly these fields, and the admin app's scope picker lists them.
+- **A flat vault** — notes at the root, no folder taxonomy; wikilinks resolve by basename, and the scans depend on it.
+- **Filename = note title**, and underscore-prefixed dirs (`_meta/`, `_templates/`, `_ephemeral/`) are skipped by every scan.
 
-Templates live in `ctx/vault/_templates/`. `TODO.md` ships as scaffolding (the only tracked note); Dataview and Daily Notes are pre-enabled in the Obsidian config, but you install the Dataview community plugin yourself via Obsidian's UI.
+Full list with enforcers, the triage tree, and the `_ephemeral` convention: [`docs/vault.md`](docs/vault.md).
+
+Templates for new notes live in `ctx/vault/_templates/` — neutral `scope`, `memo`, and `daily` starters; add your own. Daily Notes and Templates are pre-enabled in the Obsidian config; install any community plugin you want (Dataview, Tasks) yourself via Obsidian's UI.
 
 ### Companion files
 

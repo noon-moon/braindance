@@ -203,13 +203,19 @@ def render(scopes):
             lines.append("**Contains:** " + kids)
         return "\n".join(lines)
 
+    # Only claim a parent hub if the vault actually has one. The template ships
+    # no `_meta/` notes, so hardcoding this link would generate a dangling
+    # reference into every fresh vault.
+    has_hub = any(s["title"] == "Agent Context" for s in scopes)
+
     out = []
     out.append("---")
     out.append("tags:")
     out.append("  - scope")
     out.append("scope_kind: system")
-    out.append("Contained By:")
-    out.append('  - "[[Agent Context]]"')
+    if has_hub:
+        out.append("Contained By:")
+        out.append('  - "[[Agent Context]]"')
     out.append("---")
     out.append("")
     out.append("<!-- GENERATED — do not edit; regen: ctx/tools/sys/gen-topics.sh -->")
@@ -223,7 +229,9 @@ def render(scopes):
         "mechanically from scope-note frontmatter, so a **miss is decisive** — "
         "if a topic isn't listed here, the vault has no scope for it (don't "
         "grep for it). Start from an entry's hub `[[wikilink]]` and follow its "
-        "links. See [[Agent Context]] for how this fits the agent-context model."
+        "links."
+        + (" See [[Agent Context]] for how this fits the agent-context model."
+           if has_hub else "")
     )
     out.append("")
     out.append("## Content scopes")
@@ -251,6 +259,8 @@ def main():
             sys.stderr.write("Topics.md is out of date — run ctx/tools/sys/gen-topics.sh\n")
             sys.exit(1)
         return
+    # A vault need not already have `_meta/` — the template ships none.
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(text)
     n_sys = sum(1 for s in scopes if s["kind"] == "system")

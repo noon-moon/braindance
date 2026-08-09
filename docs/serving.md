@@ -1,14 +1,67 @@
-# Serving / deploy layer + capture pipeline
+# The admin app — deploy, configuration, capture pipeline
 
-On-demand detail for the serving stack, referenced compactly from [`CLAUDE.md`](../CLAUDE.md). Read this when you are **working on the api, the homepage, the serving stack, or the note-capture pipeline**. Full human-facing configuration — the `/srv/.env` mechanics and `./deploy.sh` usage — lives in [`README.md`](../README.md) under "Admin app & serving"; consult it before changing anything here.
+The whole serving layer is **optional**. braindance works with nothing but a vault; this is what you add when you want to capture and triage from a phone.
 
-`api/`, `www/`, `Caddyfile`, `docker-compose.yml`, and `deploy.sh` are the optional admin-app + public-serving stack, not vault content:
+## The model
 
-- `api/` — a mobile note-capture API + read-only vault viewer (Hono/Node).
-- `www/` — the static homepage Caddy serves at your domain (from `/srv/www`), on the VPS path.
-- `Caddyfile`, `docker-compose.yml`, `deploy.sh` — the serving stack.
+You build the app into a container image, deploy it to **your own infrastructure**, and it works against a local checkout of your vault, syncing periodically:
 
-> **Three different `www`-ish things — keep them straight.** The repo-root **`www/`** above is this VPS path: the homepage Caddy serves from `/srv/www`, and **this instance's actual homepage**. **`ctx/www/`** is a *separate* site — the template's zero-server GitHub Pages path for forks, opt-in via the repo variable `ENABLE_PAGES` and **unused here**. Publishing *notes* is a third thing again: the projection into the public `noon-moon-net` repo, which the VPS serves at `/garden`. None of the three is what the api does. See [`ctx/noon-moon-net.md`](../ctx/noon-moon-net.md).
+```
+push to api/**  →  CI builds ghcr.io/<owner>/<repo>/api:latest
+                        │
+        the box pulls it itself (ops/braindance-sync.timer) — CI never SSHes in
+                        ▼
+   ┌── your host ───────────────────────────────────────────┐
+   │  caddy   TLS + routing for the public surface          │
+   │  api     owns a read-write checkout of your vault      │
+   │            · writes captures locally, instantly        │
+   │            · pull --rebase + push on an interval       │
+   └────────────────────────────────────────────────────────┘
+                        ▲
+                  your vault repo — the sync point shared with your laptop
+```
+
+The api is a **local-first git store**: a capture is a file plus a commit in its own checkout (instant), reconciled with the remote asynchronously. It is the single writer of that checkout; on a rebase conflict it stops and pauses sync rather than clobber.
+
+The two services:
+
+- **`caddy`** — TLS and routing for the public surface: your homepage from `/srv/www`, and a published garden from `/srv/garden` if you have one. Both directories are filled by whatever owns your site — see [`publishing.md`](publishing.md); the api does not write them.
+- **`api`** (`api/`) — a small Hono/Node service: mobile capture, the review desk, the task roll-up, and a read-only vault viewer.
+
+**Bring your own secure hosting.** The api binds a plain HTTP port and has **no built-in authentication**. Put it behind Tailscale, a VPN, an authenticating proxy, or an SSH tunnel. Never expose it to the public internet as-is — the compose file binds it to `${TAILSCALE_IP}` rather than `0.0.0.0` for exactly this reason (Docker's iptables rules would otherwise punch straight through UFW).
+
+## Configuration
+
+Instance values live in `/srv/.env` on the host (`chmod 600`, never committed). Copy [`.env.example`](../.env.example):
+
+| Var | Used by | Purpose |
+|---|---|---|
+| `DOMAIN` | Caddy (`{$DOMAIN}`) | Public hostname for TLS + routing |
+| `API_IMAGE` | Compose interpolation | Your GHCR image, e.g. `ghcr.io/you/your-repo/api:latest` |
+| `TAILSCALE_IP` | Compose interpolation | The only interface the api binds |
+| `REPO_PATH` | api + compose mount | The vault checkout the api owns |
+| `VAULT_SUBDIR` | api | Vault path *within* that checkout; empty for a standalone vault repo |
+| `GITHUB_REPO` / `GITHUB_TOKEN` | api | Remote it syncs with, and a PAT with `repo` scope |
+| `TZ` | api | Day boundary for the task roll-up — unset means UTC decides "today" |
+
+Further knobs: `REQUIRE_LEASE`, `VAULT_EXTERNAL`, `PROPOSALS_DIR`, `DEDUP_TTL_MS`.
+
+Two env mechanisms are in play, which is easy to trip over:
+
+- `${VAR}` in `docker-compose.yml` is **interpolation**, resolved from `--env-file /srv/.env`. Always go through **`./deploy.sh`**, which passes that flag — bare `docker compose` resolves them empty.
+- `env_file: /srv/.env` injects **container runtime** env (Caddy's `$DOMAIN`, the api's `GITHUB_*`).
+
+## Deploy
+
+Expects this repo cloned to `/srv/braindance`, your vault cloned wherever `REPO_PATH` points, and host dirs `/srv/www` + `/srv/garden`:
+
+```bash
+./deploy.sh up -d                                # start the stack
+./deploy.sh config                               # render the resolved compose file (sanity check)
+./deploy.sh pull api && ./deploy.sh up -d api    # roll a new image by hand
+```
+
+Normally you don't roll by hand: `ops/braindance-sync.timer` pulls new images on a schedule, and with `VAULT_EXTERNAL=1` it also fast-forwards `/srv/braindance` so compose/ops changes ship themselves. Detail in [`ops/README.md`](../ops/README.md). `/health` reports the running build SHA, so you can confirm a deploy landed without SSHing in.
 
 ## Capture pipeline
 

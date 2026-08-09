@@ -1,6 +1,6 @@
 # ctx/tools/pub — the publish tool
 
-Projects `publish: true` notes from your vault flat into a Quartz garden's `garden/content` (served at `/garden/<slug>`). Deterministic; run it, review the diff, commit. Full design & rationale: [`ctx/noon-moon-net.md`](../../noon-moon-net.md).
+Projects `publish: true` notes from your vault flat into a Quartz garden's `garden/content` (served at `/garden/<slug>`). Deterministic; run it, review the diff, commit. Full design & rationale: [`docs/publishing.md`](../../../docs/publishing.md).
 
 **Two topologies — and the default is not the one this instance uses.** `--pub` defaults to the in-repo garden `ctx/www/garden/`, the zero-server path a fresh fork gets (GitHub Pages). **This instance publishes into the separate public repo `noon-moon/noon-moon-net`** for the stronger *structural* isolation, so **set `PUB_REPO` (or pass `--pub`)** rather than relying on the default. Both are supported and use the same code; see "Two topologies" below.
 
@@ -41,7 +41,7 @@ Pipeline (per note): `stripScaffolding` (drop `Created:`/`Tags:` preamble, `# Re
 
 ## Two topologies
 
-**Separate garden repo — what this instance uses.** Point `--pub`/`PUB_REPO` at a public Quartz repo (`noon-moon/noon-moon-net`), review the diff there, and let that repo's own Action build and deploy it — here, rsync to the VPS behind Caddy at `/garden`. The guarantee is **structural**: a public repo cannot leak a note it never contains, and that holds even if every check fails. Cost is a second repo and a second deploy. This is the topology `ctx/noon-moon-net.md` is designed around.
+**Separate garden repo — what this instance uses.** Point `--pub`/`PUB_REPO` at a public Quartz repo (`noon-moon/noon-moon-net`), review the diff there, and let that repo's own Action build and deploy it — here, rsync to the VPS behind Caddy at `/garden`. The guarantee is **structural**: a public repo cannot leak a note it never contains, and that holds even if every check fails. Cost is a second repo and a second deploy. This is the topology [`docs/publishing.md`](../../../docs/publishing.md) is designed around.
 
 **In-repo — the tool's default, and what a fresh fork gets.** The garden lives at `ctx/www/garden/` and ships to GitHub Pages with zero servers. The repo stays private; only the built artifact is public. Isolation there is procedural, so it's enforced three ways: `pages.yml` is build-scope-isolated (no step reads `ctx/vault`), `verify` re-audits the committed projection vault-blind as the first CI step, and `disjoint-www.yml` fails any PR mixing `ctx/www/**` with anything outside it. **Its deploy is opt-in** — `pages.yml`'s deploy job is skipped unless the repo variable `ENABLE_PAGES` is `true`.
 

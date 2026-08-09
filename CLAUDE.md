@@ -34,10 +34,13 @@ The common path (a coding task, a vault lookup, a worktree session) is fully ser
 |---|---|
 | running a worktree session, landing a PR, coordinating a fleet (full R1–R7 + the `bd` workflow) | [`docs/worktrees.md`](docs/worktrees.md) |
 | orchestrating a fleet of sub-agents (delegation doctrine O1–O9, model right-sizing) | [`docs/orchestration.md`](docs/orchestration.md) |
-| searching/creating/restructuring vault notes, or writing scratch (ontology, triage tree, `_ephemeral` naming, daily notes, skills mechanics) | [`docs/vault.md`](docs/vault.md) |
-| working on the api / homepage / serving stack / capture pipeline | [`docs/serving.md`](docs/serving.md) |
-| publishing vault notes to the public site, or touching `ctx/www/` or the publish tool | [`ctx/noon-moon-net.md`](ctx/noon-moon-net.md) |
+| searching/creating/restructuring vault notes, or writing scratch (what braindance requires of a vault, triage tree, `_ephemeral` naming, daily notes) | [`docs/vault.md`](docs/vault.md) |
+| working on the api / serving stack / capture pipeline | [`docs/serving.md`](docs/serving.md) |
+| publishing vault notes to the public site, or touching the publish tool | [`docs/publishing.md`](docs/publishing.md) |
+| installing or writing skills | [`docs/skills.md`](docs/skills.md) |
 | resolving which braindance instance is current, or bootstrapping a clone (`./configure`, `bd use`/`where`, the resolver + guard hooks; C1–C4) | [`docs/instances.md`](docs/instances.md) |
+
+The index is [`docs/README.md`](docs/README.md). Those files are the **manual** — explanation written for a person, which agents read too. This file and [`AGENTS.md`](AGENTS.md) hold the **directives**; they point there rather than restating.
 
 ## `ctx/vault` is the working context
 
@@ -75,6 +78,6 @@ Full discipline (R1–R7), the `bd` workflow, and fleet tooling: [`AGENTS.md`](A
 - **Template, not fork** — generic/guideline/tooling/skill/doc changes land on the core template (`noon-moon/braindance`, `master`); a fork carries only instance-specific content and pulls the rest via `git merge upstream/master`. (See the note at the top of this file.)
 - **Output format** — write Markdown, and put every span of code, console/terminal output, query, config, or structured data in a fenced code block with a language hint (```python, ```sql, ```console, ```json, …). This holds for what we write to `_ephemeral`, to vault notes, and back to the user — never paste code or command output as bare prose.
 - **Edit skills in `ctx/skills/`, never the installed harness copy** under `.claude/commands/` — the change would be lost or hit the wrong file. (Mechanics: [`docs/vault.md`](docs/vault.md).)
-- **Two publishing topologies — don't mix them up.** This instance projects `publish: true` notes into the **separate public repo `noon-moon/noon-moon-net`**, served by the VPS at `/garden`; run the publish tool with `PUB_REPO`/`--pub` set, since its default points elsewhere. `ctx/www/` + `pages.yml` is the **zero-server GitHub Pages path the template ships for forks** — opt-in via the repo variable `ENABLE_PAGES`, unset here, so its deploy self-skips. (The repo-root `www/` is a third thing: the Caddy homepage.) If you do touch `ctx/www/`, it ships **on its own** — `disjoint-www.yml` fails any PR mixing it with anything else, a privacy control rather than a nuisance. Never hand-edit `garden/content/<slug>.md` in either topology: machine-owned by `ctx/tools/pub`. (Detail: [`ctx/noon-moon-net.md`](ctx/noon-moon-net.md).)
+- **Publishing goes to a separate site repo.** `publish: true` notes are projected into the public site repo, which serves them at `/garden` — so run the publish tool with `PUB_REPO`/`--pub` set; its built-in default points at unused in-repo scaffolding. Never hand-edit `garden/content/<slug>.md`: machine-owned by `ctx/tools/pub`, and overwritten on the next run. `ctx/www/`, `pages.yml`, `disjoint-www.yml` and the repo-root `www/` are **dead scaffolding awaiting deletion** — don't build on them. (Detail: [`docs/publishing.md`](docs/publishing.md).)
 - **Don't touch** `.obsidian/` config unless explicitly asked (it's the Obsidian workspace, easy to corrupt).
 - **Don't** fold the flat vault into folders, or mass-rewrite existing notes.

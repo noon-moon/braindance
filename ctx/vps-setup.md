@@ -6,7 +6,7 @@ Serialized execution plan for the Personal Virtual Private Server. Each phase de
 
 - `noon-moon/braindance` — **this repo**: the public template *and* the deploy config (`api/`, `www/`, `Caddyfile`, `docker-compose.yml`, `deploy.sh`, `ops/`). Cloned to `/srv/braindance` on the VPS as deploy config only — it carries no vault notes.
 - `noon-moon/vault` — **private**, the instance vault as its own repo (flat notes at the repo root, no `ctx/vault/` prefix). Cloned separately on the VPS and pointed at by `REPO_PATH`; the api owns that checkout as single writer. This is the **content-free clone** model: `VAULT_SUBDIR=` (empty) + `VAULT_EXTERNAL=1`. Local checkout: `/Users/tiernan/dev/vault`.
-- `noon-moon/noon-moon-net` — **public**, holding only the generated `garden/content/` (a projection of the vault's `publish`-tagged notes) plus Quartz config. Its Action builds and rsyncs to `/srv/garden`, served by Caddy at `/garden`. `/garden` is a *separate published repo*, not a slice of a private one — the isolation is structural: the public repo cannot leak a note it never contains. Full design: [`ctx/noon-moon-net.md`](noon-moon-net.md).
+- `noon-moon/noon-moon-net` — **public**, holding only the generated `garden/content/` (a projection of the vault's `publish`-tagged notes) plus Quartz config. Its Action builds and rsyncs to `/srv/garden`, served by Caddy at `/garden`. `/garden` is a *separate published repo*, not a slice of a private one — the isolation is structural: the public repo cannot leak a note it never contains. Full design: [`docs/publishing.md`](../docs/publishing.md).
 
 > **Not GitHub Pages.** This repo also ships `ctx/www/` + `.github/workflows/pages.yml`, a zero-server publishing path for forks. That is **template scaffolding, not this instance's route** — its deploy job is gated on the repo variable `ENABLE_PAGES`, which is unset here, so it self-skips. Don't confuse the two `www` dirs: repo-root `www/` is the Caddy homepage (`/srv/www`); `ctx/www/` is the unused Pages source.
 
@@ -136,7 +136,7 @@ These files now **exist in-repo** — read them there rather than from a snapsho
 - [x] [`Caddyfile`](../Caddyfile) — the site block is `{$DOMAIN}`, not a hardcoded hostname, so the template serves any instance's domain.
 
 ### Publish selection (supersedes `ctx/vault/public/`)
-- [x] ~~Create `ctx/vault/public/` directory~~ — **superseded.** Selection is now a `publish: true` frontmatter flag on notes in the flat vault (keeps the vault flat, matches the tag-driven model). Remove the empty `ctx/vault/public/` folder. See `ctx/noon-moon-net.md`.
+- [x] ~~Create `ctx/vault/public/` directory~~ — **superseded.** Selection is now a `publish: true` frontmatter flag on notes in the flat vault (keeps the vault flat, matches the tag-driven model). Remove the empty `ctx/vault/public/` folder. See [`docs/publishing.md`](../docs/publishing.md).
 
 ### www/
 - [x] Create `www/` directory with a placeholder `index.html`, tracked directly

@@ -4,9 +4,11 @@ braindance is a **meta-repository template for agentic work**: a personal knowle
 
 This file is the **cross-tool entry point** (the [AGENTS.md](https://agents.md) standard — read by Codex, Cursor, Copilot, Gemini, and others). For the vault ontology, ephemeral scratch, skills, tooling, and serving layer, read the fuller repo guide in [`CLAUDE.md`](CLAUDE.md). What lives *here*, canonically, is the slice that must reach **every** tool and **every** target project cloned under `repo/`: the **orchestration doctrine** and the **multi-agent worktree discipline** below — stated tightly as guardrails, with the full mechanics in `docs/`. `CLAUDE.md` points here for these rules rather than restating them.
 
-## Template vs. fork — where changes go
+## Product vs. instance — where changes go
 
-braindance is a **template**. Generic, reusable changes — guidelines, conventions, tooling, skills, docs, this file, `CLAUDE.md` — belong in the **core template repo** (`noon-moon/braindance`, branch `master`) and must **never** be committed to a personal fork/instance. A fork holds only instance-specific content (real vault notes, its own homepage, `/srv` deploy specifics) and **consumes the template via `git merge upstream/master`**. If you catch yourself about to commit a generic improvement to a fork, stop and land it on the core template instead — a fresh fork must inherit every generic improvement cleanly.
+braindance is a **product you clone and deploy**, not a template you fork. Everything committed here must be generic enough to hand to a stranger: tooling, skills, conventions, docs, this file, `CLAUDE.md`, the app. Instance-specific content — real vault notes, one operator's domain or droplet, `/srv` specifics — belongs to an **instance**: its vault repo plus machine-local config, never this checkout. Before committing, ask whether someone else cloning this repo would want the change; if not, it belongs in your instance.
+
+The old fork-and-`git merge upstream/master` model is retired — there is nothing to merge back. Rationale, the three goals every change is measured against, and the roadmap for evicting the instance content still here: [`docs/architecture.md`](docs/architecture.md).
 
 ## Orchestration — delegate by default (O1–O9)
 

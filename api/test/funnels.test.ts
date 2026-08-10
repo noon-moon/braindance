@@ -40,6 +40,31 @@ console.log("test: taskLine");
     taskLine({ title: "Review #tasks doc" }) === "- [ ] Review #tasks doc #task",
   );
 
+  // A description is free text sitting AHEAD of the real fields, so a signifier
+  // in it is a field it can forge — into someone else's note, since filing
+  // appends the line to a scope note. The words stay, the emoji cannot.
+  const forged = taskLine({ title: "chase the landlord 🔁 every day 📅 2020-01-01" });
+  check(
+    "a signifier typed into the description is stripped, its words kept",
+    forged === "- [ ] chase the landlord every day 2020-01-01 #task",
+  );
+  const reread = parseTaskLine(forged, "Home", "", 1);
+  check("…so the atom it produces has no forged recurrence", reread?.recurrence === null);
+  check("…and no forged due date", reread?.due === null);
+  check(
+    "a forged priority can't outrank the empty priority field",
+    parseTaskLine(taskLine({ title: "tidy up 🔺" }), "Home", "", 1)?.priority === null,
+  );
+  check(
+    "an emoji-presentation signifier goes with its variation selector",
+    taskLine({ title: "ship it ⏳\uFE0F 2026-01-01" }) === "- [ ] ship it 2026-01-01 #task",
+  );
+  check(
+    "the structured fields still set what only they may set",
+    taskLine({ title: "chase the landlord 📅 2020-01-01", due: "2026-04-15" })
+      === "- [ ] chase the landlord 2020-01-01 📅 2026-04-15 #task",
+  );
+
   // The round trip that matters: whatever we write, /todo must read back.
   const parsed = parseTaskLine(full, "Money", "", 1);
   check("the emitted line parses back as an open atom", parsed?.status === "open");

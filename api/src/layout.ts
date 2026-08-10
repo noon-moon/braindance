@@ -26,7 +26,10 @@ a:hover { color:var(--accent); }
   padding:.5rem .7rem; border-bottom:1px solid var(--border);
   background:var(--bg); z-index:5;
 }
-.bar .brand { color:var(--accent); font-weight:600; }
+/* The favicon IS the identity — the wordmark only repeated the tab title, and a
+   monospace word next to icon-scale nav reads as a sixth tab. */
+.bar .brand { display:flex; align-items:center; }
+.bar .brand img { width:1.5rem; height:1.5rem; border-radius:3px; display:block; }
 .bar nav { display:flex; gap:.9rem; }
 main { width:100%; max-width:64rem; margin:0 auto; padding:.7rem .7rem 2rem; }
 h1,h2,h3 { line-height:1.2; margin:.7rem 0 .4rem; }
@@ -54,7 +57,7 @@ input,select,textarea {
 textarea { min-height:7rem; resize:vertical; }
 input:focus,select:focus,textarea:focus { outline:none; border-color:var(--accent); }
 .req { color:var(--danger); }
-.capture-form { display:flex; flex-direction:column; }
+.capture-form, .triage-form { display:flex; flex-direction:column; }
 /* "this is a task" reveals due + priority. Pure CSS — the app ships no JS —
    so the disclosure is the checkbox's own :checked state, read from the form. */
 .as-task { display:flex; align-items:center; gap:.45rem; margin:.7rem 0 0; }
@@ -68,7 +71,53 @@ h2.section { font-size:1rem; font-weight:600; color:var(--muted); margin:1.4rem 
 h2.section:first-of-type { margin-top:.6rem; }
 .snippet { margin:.25rem 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
 a.tag:hover { border-color:var(--accent); color:var(--accent); }
-.triage-discard { margin-top:.6rem; }
+/* ── /review — the triage desk ──────────────────────────────────────────────
+   Queue left, the capture being worked right. Both panes come from ONE request
+   (selection rides ?note= in the URL), so the layout is the only thing that
+   has to decide what's on screen — and on a phone there is only room for one of
+   them. .picked is server-rendered from that same query rather than sniffed with
+   :has(), because the server already knows the answer and a class says so in one
+   word. */
+.desk { display:grid; gap:.9rem; margin:.6rem 0 1.4rem; }
+@media (min-width: 720px) {
+  .desk { grid-template-columns:minmax(13rem,20rem) 1fr; align-items:start; }
+  /* The queue outlives any one note, so it stays put while the pane scrolls. */
+  .queue { position:sticky; top:3.2rem; max-height:calc(100dvh - 4.5rem); overflow-y:auto; }
+}
+.q-list { list-style:none; padding:0; margin:0; }
+.q-row {
+  display:block; background:var(--surface); border:1px solid var(--border);
+  border-left:3px solid var(--border); border-radius:4px;
+  padding:.35rem .6rem; margin:.3rem 0;
+}
+.q-row:hover { border-left-color:var(--accent); }
+.q-row.sel { border-color:var(--accent); }
+.q-time { display:block; color:var(--muted); font-size:.75rem; }
+.q-title { display:block; overflow-wrap:anywhere; }
+.q-row.sel .q-title { color:var(--accent); }
+.desk-empty { margin-top:1.6rem; }
+/* The suggestion card. Deliberately quiet — a dashed border rather than the
+   accent one an action gets, because this is a draft someone else wrote and the
+   fields below it are still the source of truth. */
+.suggest { margin:.7rem 0 .2rem; }
+.card.sug { border-style:dashed; margin:0; }
+.sug-head { font-size:.8rem; color:var(--accent); margin-bottom:.15rem; }
+.sug-title { overflow-wrap:anywhere; }
+.sug-meta { display:flex; flex-wrap:wrap; gap:.25rem; margin:.35rem 0 0; }
+.sug-why { margin:.35rem 0 0; font-size:.85rem; }
+.card.sug .actions { margin-top:.5rem; }
+.card.sug .actions form { display:none; } /* the real forms are siblings of the pane */
+.sug-none { margin:.7rem 0 .2rem; font-size:.85rem; }
+/* Desktop keeps both panes on screen, so there is nothing to go back TO. */
+.desk-back { display:none; }
+@media (max-width: 640px) {
+  /* One column, one pane: the queue until you pick something, the note after —
+     which makes the desk read as the two screens it replaced, without being
+     two round trips. .desk-back is the way out, since the queue is gone. */
+  .desk.picked .queue { display:none; }
+  .desk:not(.picked) .desk-detail { display:none; }
+  .desk-back { display:inline-block; color:var(--muted); margin-bottom:.3rem; }
+}
 hr { border:none; border-top:1px solid var(--border); margin:1rem 0; }
 .note-body { overflow-wrap:break-word; word-break:break-word; }
 .note-body pre { background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:.6rem; max-width:100%; overflow-x:auto; }
@@ -245,7 +294,7 @@ export function layout(title: string, body: Html | string, active?: string): Htm
 </head>
 <body>
   <header class="bar">
-    <a href="/" class="brand">braindance</a>
+    <a href="/" class="brand"><img src="/favicon.png" alt="braindance"></a>
     <nav>${nav("capture", "/", "inbox")}${nav("vault", "/vault", "book")}${nav("todo", "/todo", "checklist")}${nav("review", "/review", "search")}${nav("history", "/history", "clock")}</nav>
   </header>
   <main>${body}</main>

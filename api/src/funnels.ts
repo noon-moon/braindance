@@ -2,6 +2,7 @@
 // build()s a vault-correct note (frontmatter + scoping links). Everything lands on
 // the `inbox` branch for desk triage — the phone never writes `main`.
 // See [[Braindance Admin App]] "Workflow 1 — Note ingest".
+import { ANY_SIGNIFIER } from "./tasks.js";
 
 export interface Field {
   key: string;
@@ -81,16 +82,37 @@ export const PRIORITY_SIGNIFIER: Record<string, string> = {
   highest: "🔺", high: "⏫", medium: "🔼", low: "🔽", lowest: "⏬",
 };
 
+/** Obsidian Tasks' signifier alphabet, removed from a description on its way
+ *  into an atom.
+ *
+ *  The description is free text and it is interpolated AHEAD of the structured
+ *  fields, so anything the format treats as a signifier is a field the text can
+ *  forge. `chase the landlord 🔁 every day 📅 2020-01-01` files a recurring,
+ *  permanently-overdue atom into whichever scope note triage appends to — and
+ *  `canComplete` (tasks.ts) then refuses to tick it from the app at all, because
+ *  a recurrence we can't roll forward belongs to Obsidian. The due/priority
+ *  controls are the only legitimate way those fields get set, which now includes
+ *  "the only way", not just "the intended way". Reachable from a suggested title
+ *  as much as a typed one, so it is fixed here rather than at either caller.
+ *
+ *  The emoji goes and the words either side stay: a stripped date reads as the
+ *  prose it always was, where dropping the clause with it would look like the
+ *  desk had eaten what you typed. A trailing VS16 goes too — on its own it is a
+ *  signifier's leftovers and nothing a description ever means. */
+const SIGNIFIER_RE = new RegExp(`[${ANY_SIGNIFIER}]\\uFE0F?`, "gu");
+
 /** Render one `#task` atom — the vault's task unit is this LINE, so it is built
  *  once here and reused by capture (which wraps it in an inbox note) and triage
  *  (which appends it to a scope note). Field order follows Obsidian Tasks:
  *  description → priority → dates → the `#task` global filter last.
  *
- *  The description is flattened to a single line and stripped of a `#task` the
- *  user typed themselves — two of them on one line is a malformed atom. */
+ *  The description is flattened to a single line, stripped of a `#task` the user
+ *  typed themselves (two on one line is a malformed atom), and stripped of every
+ *  signifier (above) so it can only ever be a description. */
 export function taskLine(i: Record<string, string>): string {
   const text = (i.title ?? "")
     .replace(/(?:^|\s)#task(?![\w/-])/gu, " ")
+    .replace(SIGNIFIER_RE, " ")
     .replace(/\s+/g, " ")
     .trim();
   const parts = [text, PRIORITY_SIGNIFIER[i.priority ?? ""] ?? "", i.due ? `📅 ${i.due}` : "", "#task"];
@@ -114,10 +136,18 @@ export const FUNNELS: Funnel[] = [
       { key: "body", label: "body", type: "textarea", required: true },
       { key: "scope", label: "scope", type: "scope" },
     ],
+    // The capture screen posts a body and nothing else — naming a thought is a
+    // decision the desk makes, not the thumb. So an untitled memo gets NO heading
+    // at all: a `# memo` placeholder is noise in the note and a lie in the review
+    // list, which labels an untitled capture by its first line instead. The title
+    // stays exactly what was typed ("" is a real answer), because the capture
+    // filename and the toast both read it back.
+    // `title` survives in the spec so the iOS Share Sheet Shortcut, which posts
+    // {funnel, title, body} to /ingest, keeps landing titled notes.
     build: (i) => ({
-      title: i.title || "memo",
+      title: i.title,
       frontmatter: { tags: ["memo"] },
-      body: `${scopeLink(i.scope)}# ${i.title || "memo"}\n\n${i.body}`,
+      body: `${scopeLink(i.scope)}${i.title ? `# ${i.title}\n` : ""}\n${i.body}`,
     }),
   },
   {

@@ -59,14 +59,35 @@ console.log("test: no secret reaches an unauthenticated endpoint");
     REPO_PATH: "/srv/repo-secret-path",
     AWS_SECRET_ACCESS_KEY: "aws_secret_value0",
     S3_BUCKET: "bucket-name-secret",
+    // The suggestion worker's credential — the newest way this endpoint could
+    // leak one. /health may say anything about the worker at all only because
+    // the key collapses to a boolean before it gets here.
+    ANTHROPIC_API_KEY: "sk-ant-secretkey000",
   };
-  const out = JSON.stringify(build({ ...SECRETS, TZ: "UTC", TODO_ICS_ALARM_MIN: "15" }));
+  // AI_SUGGEST=1 so the key is actually consulted: a leak guard that runs with
+  // the feature off passes without touching the branch it exists to guard.
+  const out = JSON.stringify(build({ ...SECRETS, TZ: "UTC", TODO_ICS_ALARM_MIN: "15", AI_SUGGEST: "1" }));
   for (const [name, value] of Object.entries(SECRETS)) {
     check(`${name}'s value is absent from the response`, !out.includes(value));
   }
   // The allowlist itself: adding a field means updating this, which is the point.
   const keys = Object.keys(build({}).config).sort().join(",");
-  check("config exposes only the known-safe keys", keys === "ics,taskDefaultDurationMin,today,tz");
+  check("config exposes only the known-safe keys", keys === "ai,ics,taskDefaultDurationMin,today,tz");
+}
+
+console.log("test: the suggestion worker reports its state, not its credential");
+{
+  const off = build({}).config.ai;
+  check("with neither knob set the worker reads as off", off.suggest === false);
+  check("…and the model it would use is still reported", off.model === "claude-opus-5");
+  check("the flag alone is not enough — a key is the other half",
+    build({ AI_SUGGEST: "1" }).config.ai.suggest === false);
+  check("a key alone is not enough either — the flag is opt-in",
+    build({ ANTHROPIC_API_KEY: "sk-ant-x" }).config.ai.suggest === false);
+  check("both halves present reads as on",
+    build({ AI_SUGGEST: "1", ANTHROPIC_API_KEY: "sk-ant-x" }).config.ai.suggest === true);
+  check("an AI_MODEL override is reported — answering 'did the env edit land?'",
+    build({ AI_MODEL: "claude-sonnet-5" }).config.ai.model === "claude-sonnet-5");
 }
 
 console.log(`\n${passed} checks passed`);

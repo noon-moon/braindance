@@ -12,6 +12,7 @@
 // full of secrets and searching the output for them.
 import { todayISO } from "./tasks.js";
 import { icsOptionsFromEnv } from "./ics.js";
+import { aiSuggestConfig } from "./config.js";
 import type { GitStoreStatus } from "./git.js";
 
 export interface HealthPayload {
@@ -25,6 +26,14 @@ export interface HealthPayload {
     tz: string | null;
     today: string;
     taskDefaultDurationMin: number;
+    /** The suggestion worker: whether it is running, and on what. Both halves of
+     *  "enabled" (AI_SUGGEST=1 **and** a key) collapse into one boolean, which is
+     *  the only thing that can be said about ANTHROPIC_API_KEY here — its value
+     *  is a bearer credential and this endpoint is unauthenticated. The model id
+     *  is reported unconditionally: answering "did the AI_MODEL edit land?" is
+     *  the whole reason this endpoint exists, and `suggest` says whether it's in
+     *  use. */
+    ai: { suggest: boolean; model: string };
     ics: {
       baseUrl: string | null;
       timedAlarmsMin: number[];
@@ -34,8 +43,10 @@ export interface HealthPayload {
 }
 
 export function healthPayload(sync: GitStoreStatus, env: NodeJS.ProcessEnv = process.env): HealthPayload {
-  // The SAME resolver the feed uses, so the report cannot drift from behaviour.
+  // The SAME resolvers the feed and the worker use, so the report cannot drift
+  // from behaviour.
   const ics = icsOptionsFromEnv(env);
+  const ai = aiSuggestConfig(env);
   return {
     ok: true,
     version: env.BUILD_SHA || "dev",
@@ -44,6 +55,7 @@ export function healthPayload(sync: GitStoreStatus, env: NodeJS.ProcessEnv = pro
       tz: env.TZ || null,
       today: todayISO(),
       taskDefaultDurationMin: Number(env.TASK_DEFAULT_DURATION_MIN ?? 30) || 30,
+      ai: { suggest: ai.enabled, model: ai.model },
       ics: {
         baseUrl: ics.baseUrl ?? null,
         timedAlarmsMin: ics.alarmsMin ?? [],

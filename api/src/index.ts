@@ -3,14 +3,16 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { html, raw } from "hono/html";
 import { layout } from "./layout.js";
-import { FUNNELS, funnelById, compose, taskLine, appendTaskLine, scopeLink, type Field } from "./funnels.js";
+import { FUNNELS, funnelById, compose, taskLine, appendTaskLine, scopeLink, type Field, type Funnel } from "./funnels.js";
 import { commitCapture, createNote, stamp, slug } from "./notes.js";
-import { VAULT_SUBDIR, vaultRel } from "./config.js";
+import { VAULT_SUBDIR, vaultRel, aiSuggestConfig } from "./config.js";
+import { suggestionFor, dropSidecar, type Suggestion } from "./suggest.js";
+import { startSuggestWorker } from "./worker.js";
 import { seenRecently, contentHash } from "./dedup.js";
 import { randomUUID } from "node:crypto";
 import { submitProposal, listProposals, getProposal, setStatus, updateProposal, type Proposal, type ProposalStatus } from "./proposals.js";
-import { getScopes, getNote, listNotes, backlinksFor, invalidate, noteExists, readNoteRaw } from "./vault.js";
-import { listInbox, getInboxNote, type InboxNote } from "./inbox.js";
+import { getScopes, getIngestableScopes, getNote, listNotes, backlinksFor, invalidate, noteExists, takenRootNames, readNoteRaw } from "./vault.js";
+import { listInbox, getInboxNote, firstLine, type InboxNote } from "./inbox.js";
 import { renderMarkdown, renderInline } from "./render.js";
 import { gitStore } from "./git.js";
 import { buildICS, icsOptionsFromEnv } from "./ics.js";
@@ -52,7 +54,12 @@ function control(f: Field, scopes: string[], value = "") {
   return html`<input type="${t}" name="${f.key}"${req} placeholder="${ph}" value="${value}">`;
 }
 
-// The capture screen: title + body + scope, and a task toggle over due/priority.
+// The capture screen: ONE textarea + scope, and a task toggle over due/priority.
+//
+// There is deliberately no title field. Naming a thought is a decision, and it
+// lands at the exact moment you're trying not to make one — so the note is named
+// by its timestamp and titled at the desk, where you can actually see what it
+// turned out to be. The review list labels it by its first line until then.
 //
 // Capture stays UNTYPED by default — a thought drops into the inbox as a raw
 // memo and the media/resource sorting happens at triage. What capture time knows
@@ -73,9 +80,10 @@ function control(f: Field, scopes: string[], value = "") {
 // its text intact — losing a typed thought to a validation error is the one
 // failure this pipeline must not have.
 interface CaptureView {
-  /** Set when a capture just landed → success toast. Names the note by its
-   *  TITLE, not its timestamped filename — the receipt has to read at a glance
-   *  on a phone — and untitled memos (the one-tap path) just say "to inbox". */
+  /** Set when a capture just landed → success toast. Names the note by what was
+   *  TYPED, not by its timestamped filename — the receipt has to read at a glance
+   *  on a phone. Untitled memos (now the ordinary path) echo their first line, so
+   *  the toast still confirms *which* thought went in. */
   ok?: { title: string };
   /** The capture was a de-dup no-op → neutral toast. */
   dup?: boolean;
@@ -90,7 +98,9 @@ interface CaptureView {
 function captureForm(v: CaptureView = {}) {
   const memo = funnelById("memo") ?? FUNNELS[0];
   const task = funnelById("task")!;
-  const scopes = getScopes();
+  // Only `ingestable` hubs here — a phone dropdown over every scope in the vault
+  // is a scroll, not a pick. Triage still files into anything (triagePane).
+  const scopes = getIngestableScopes();
   const val = (key: string) => v.values?.[key] ?? "";
   // Field specs come from the funnels themselves so labels, options and types
   // stay single-sourced — the form spans two funnels, and the toggle picks which
@@ -115,7 +125,6 @@ function captureForm(v: CaptureView = {}) {
       <form method="post" action="/ingest" class="capture-form">
         <input type="hidden" name="idem" value="${randomUUID()}">
         <div class="cap-fields">
-          ${field(of(memo, "title"))}
           ${field(of(memo, "body"))}
           ${field(of(memo, "scope"))}
         </div>
@@ -165,11 +174,19 @@ async function doCapture(funnelId: string, raw: Record<string, unknown>, idem?: 
   const keys = [`hash:${funnel.id}:${contentHash(composed)}`, ...(idem ? [`idem:${idem}`] : [])];
   if (keys.some((k) => seenRecently(k))) return { kind: "duplicate" };
 
-  const path = vaultRel(VAULT_SUBDIR, "inbox", `${stamp()}-${slug(note.title)}.md`);
+  // The stamp alone is a complete identity — it is unique, it sorts
+  // chronologically, and it is what makes two concurrent captures unable to touch
+  // the same file. The slug is only there to make a TITLED capture legible in a
+  // directory listing, so an untitled one simply goes without rather than
+  // carrying a `-note` placeholder that says nothing.
+  const named = note.title ? `${stamp()}-${slug(note.title)}.md` : `${stamp()}.md`;
+  const path = vaultRel(VAULT_SUBDIR, "inbox", named);
   await commitCapture(path, composed, `inbox: ${funnel.id} capture`);
-  // The TYPED title (may be empty — a memo captures untitled), not the note's
-  // fallback "memo": the toast reads it back, and "memo" reads as noise.
-  return { kind: "ok", path, title: input.title ?? "" };
+  // What the toast echoes: the typed title, else the thought's opening words —
+  // the same label the review list will show, so the receipt and the queue agree.
+  // NO `max` argument: the agreement is the point, so the width is firstLine's to
+  // decide and passing a second number here is how the two surfaces disagreed.
+  return { kind: "ok", path, title: input.title || firstLine(input.body ?? "") };
 }
 
 /** On the capture screen the big textarea is where a thought actually gets
@@ -579,34 +596,86 @@ app.get("/proposals", async (c) => {
   return c.json({ proposals: await listProposals(status) });
 });
 
-// ── Review queue (Slice 4b) — approve applies via the adapter; reject discards ─
-async function renderReview(flash?: { ok: boolean; msg: string }) {
+// ── /review — the triage desk ───────────────────────────────────────────────
+// One page, two panes: the untriaged queue on the left, the capture you're
+// working on to the right. SELECTION RIDES THE URL (`?note=<name>`) — that is
+// what makes a desk possible in an app with no JS. Picking a row is an ordinary
+// link, both panes re-render on one request, and the state is bookmarkable,
+// back-buttonable, and still there after a rejected submit.
+//
+// Before this the queue was a card list and triage was its own page: N notes
+// meant N round trips out and back. The panes cost the same one request each,
+// but you never lose sight of what's left.
+//
+// Proposals stay a plain section BELOW the desk — a different queue (agent
+// changesets, already approve/edit/reject-gated) that shares only the page.
+interface ReviewView {
+  /** The queue row the right pane is working on — `?note=`, resolved. Null (the
+   *  landing state, or a stale link to a note already triaged away) renders the
+   *  empty right pane. */
+  selected?: InboxNote | null;
+  /** Which funnel's fields the right pane draws — `?funnel=`, else memo. */
+  funnelId?: string;
+  /** Submitted values, re-filled after a rejected file. Losing a thought to a
+   *  validation error is the one failure this pipeline must not have, so a
+   *  rejection re-renders the desk in place rather than bouncing anywhere. */
+  values?: Record<string, string>;
+  error?: string;
+  /** The waiting suggestion for `selected`, already validated against the live
+   *  vault (suggest.ts). Undefined when nothing selected; null when the worker is
+   *  off, hasn't got to this note, or gave up on it — all of which render the
+   *  same empty state, because from the desk they are the same fact. */
+  suggestion?: Suggestion | null;
+  /** Receipt for an action that resolved on THIS request (approve / reject /
+   *  send back). Triage's own receipts arrive through the redirect query
+   *  instead — see POST /review/triage/:name. */
+  flash?: { ok: boolean; msg: string };
+}
+
+/** `2026-08-09T10:11:12.345Z` → `10:11`. The same UTC slice fmtDate takes, so a
+ *  queue row and the detail header above it can't disagree about a capture. */
+const hhmm = (iso: string): string => iso.slice(11, 16);
+
+// A queue row is the timestamp over the note's label — which for the ordinary
+// untitled capture is its first line (inbox.ts). Nothing else fits a phone-width
+// rail, and nothing else is needed: the row's job is to be recognisable enough
+// to pick, and picking it renders the whole note beside it. The full capture
+// time rides in `title=` so the HH:MM never has to stand in for a date.
+function queueRow(n: InboxNote, selected: string | null) {
+  return html`<li>
+    <a class="q-row${n.name === selected ? " sel" : ""}" href="/review?note=${encodeURIComponent(n.name)}"
+       title="${n.createdISO ? fmtDate(n.createdISO) : n.name}">
+      <span class="q-time">${n.createdISO ? hhmm(n.createdISO) : "—"}</span>
+      <span class="q-title">${n.title}</span>
+    </a>
+  </li>`;
+}
+
+async function renderReview(v: ReviewView = {}) {
   const proposals = await listProposals("pending");
   const inbox = listInbox();
+  const sel = v.selected?.name ?? null;
   return layout(
     "review",
     html`
       <h1>review</h1>
-      ${flash ? html`<p class="flash ${flash.ok ? "" : "err"}">${flash.msg}</p>` : ""}
+      ${v.flash ? html`<p class="flash ${v.flash.ok ? "" : "err"}">${v.flash.msg}</p>` : ""}
 
-      <h2 class="section">inbox <span class="muted">· to triage (${inbox.length})</span></h2>
-      ${inbox.length === 0
-        ? html`<p class="muted">inbox zero — nothing to triage.</p>`
-        : inbox.map(
-            (n) => html`
-              <div class="card">
-                <a href="/review/triage/${encodeURIComponent(n.name)}"><strong>${n.title}</strong></a>
-                <div class="meta">${n.createdISO ? fmtDate(n.createdISO) : ""}${n.scope ? html` <span class="tag">${n.scope}</span>` : ""}</div>
-                ${n.text ? html`<p class="muted snippet">${n.text.slice(0, 200)}</p>` : ""}
-                <div class="actions">
-                  <a class="btn" href="/review/triage/${encodeURIComponent(n.name)}">→ triage</a>
-                  <form method="post" action="/review/triage/${encodeURIComponent(n.name)}" onsubmit="return confirm('Discard this memo?')">
-                    <input type="hidden" name="action" value="discard" />
-                    <button class="btn danger" type="submit">✕ discard</button>
-                  </form>
-                </div>
-              </div>`,
-          )}
+      <div class="desk${sel ? " picked" : ""}">
+        <div class="queue">
+          <h2 class="section">inbox <span class="muted">· to triage (${inbox.length})</span></h2>
+          ${inbox.length === 0
+            ? html`<p class="muted">inbox zero — nothing to triage.</p>`
+            : html`<ul class="q-list">${inbox.map((n) => queueRow(n, sel))}</ul>`}
+        </div>
+        <div class="desk-detail">
+          ${v.selected
+            ? triagePane(v.selected, v.funnelId ?? "memo", getScopes(), v.suggestion ?? null, v.values, v.error)
+            : html`<p class="muted desk-empty">${inbox.length
+                ? "pick a capture from the queue to triage it."
+                : "nothing waiting."}</p>`}
+        </div>
+      </div>
 
       <h2 class="section">proposals <span class="muted">· agent (${proposals.length})</span></h2>
       ${proposals.length === 0
@@ -725,11 +794,24 @@ function proseOf(memo: InboxNote): string {
     .trim();
 }
 
+/** A memo's label, WHOLE. An untitled capture's `title` is its first line cut to
+ *  fit a queue row (inbox.ts firstLine) — right for a label, wrong the moment it
+ *  reaches a field, because that field becomes the filed note's `# heading` and,
+ *  for a task, the atom itself, so the ellipsis would be written into the vault.
+ *  A label that IS that truncation gives back the line it was cut from.
+ *
+ *  Its FILENAME too, which is why `uniqueDest` is fed from here and never from
+ *  `memo.title`: the label is cut to a row width and mid-word, so filing off it
+ *  gives a stem chopped at 59 characters, where slug()'s own 60-character cut of
+ *  the whole line is the one the note's identity is supposed to come from. */
+const wholeTitle = (memo: InboxNote): string =>
+  memo.title === firstLine(memo.text) ? firstLine(memo.text, Infinity) : memo.title;
+
 // Deterministic pre-fill (no LLM): the memo title → a `title` field, the memo
 // body → the funnel's main text field, a URL in the body → a `url` field, and the
 // scope picked at capture time → the scope dropdown (so it survives re-typing).
 function prefillFor(f: Field, memo: InboxNote): string {
-  if (f.key === "title") return memoAtom(memo)?.text || memo.title;
+  if (f.key === "title") return memoAtom(memo)?.text || wholeTitle(memo);
   if (f.type === "scope") return memo.scope ?? "";
   if (f.key === "due") return memoAtom(memo)?.due ?? "";
   if (f.key === "priority") return memoAtom(memo)?.priority ?? "";
@@ -740,47 +822,156 @@ function prefillFor(f: Field, memo: InboxNote): string {
   return "";
 }
 
+// A suggestion pre-fill: the model's answer where it has one, the deterministic
+// pre-fill everywhere else. The model is asked about metadata, not about the
+// note — the prose field always stays the captured text, so accepting a
+// suggestion can never rewrite what you wrote.
+//
+// ONE function serves both buttons: "apply" re-renders the pane from it, "apply
+// & file" posts it. They must not be able to disagree about what "the suggestion"
+// means — a card that fills one set of fields and files another is worse than no
+// card at all.
+function suggestedValue(fl: Field, memo: InboxNote, s: Suggestion): string {
+  if (fl.key === "title") return s.title;
+  if (fl.type === "scope") return s.scope ?? prefillFor(fl, memo);
+  if (fl.key === "due") return s.due ?? prefillFor(fl, memo);
+  if (fl.key === "priority") return s.priority ?? prefillFor(fl, memo);
+  return prefillFor(fl, memo);
+}
+
+const suggestedValues = (memo: InboxNote, f: Funnel, s: Suggestion): Record<string, string> =>
+  Object.fromEntries(f.fields.map((fl) => [fl.key, suggestedValue(fl, memo, s)]));
+
 // A collision-safe destination at the vault ROOT (flat vault) for a filed note.
+//
+// The `-2` suffix loop is worth exactly as much as its collision test, and the
+// test has to be the one in vault.ts: case-insensitive (slug lowercases, notes
+// are title-cased) and read off the directory rather than the index. Filing is
+// the only place in the app that invents a NEW filename, so this is the one
+// place that decides whether a triage can overwrite a note.
 function uniqueDest(title: string): { rel: string; name: string } {
   const base = slug(title);
+  const taken = takenRootNames();
   let name = base;
-  for (let i = 2; noteExists(name); i++) name = `${base}-${i}`;
+  for (let i = 2; taken.has(name.toLowerCase()); i++) name = `${base}-${i}`;
   return { rel: vaultRel(VAULT_SUBDIR, `${name}.md`), name };
 }
 
-function renderTriageForm(memo: InboxNote, funnelId: string, scopes: string[], values?: Record<string, string>, error?: string) {
+// The right pane: the capture, editable, and everything needed to file it.
+//
+// The order is the order you think in — read the thought, then say what it is.
+// So the funnel's prose field is hoisted out of the field loop and leads the
+// pane: it is the same input the funnel already owns (memo `body`, task
+// `detail`, media `why`), but here it isn't one control among several, it IS the
+// note. Type, title, scope and the type-specific fields follow it as metadata
+// about that text. Nothing is read-only any more — a capture is a first draft,
+// and the desk is where it gets edited, not just labelled.
+function triagePane(memo: InboxNote, funnelId: string, scopes: string[], suggestion: Suggestion | null, values?: Record<string, string>, error?: string) {
   const f = funnelById(funnelId) ?? funnelById("memo")!;
   const val = (fl: Field) => values?.[fl.key] ?? prefillFor(fl, memo);
   const act = `/review/triage/${encodeURIComponent(memo.name)}`;
-  return layout(
-    "triage",
-    html`
-      <h1>triage</h1>
-      <p><a href="/review">← back to review</a></p>
-      ${error ? html`<p class="flash err">${error}</p>` : ""}
-      <div class="card">
-        <div class="meta">from inbox · ${memo.createdISO ? fmtDate(memo.createdISO) : ""} · <code>${memo.name}</code>${memo.scope ? html` <span class="tag">${memo.scope}</span>` : ""}</div>
-        ${memo.text ? html`<p class="muted snippet">${memo.text.slice(0, 400)}</p>` : ""}
+  const here = `/review?note=${encodeURIComponent(memo.name)}`;
+  const sf = suggestion ? funnelById(suggestion.funnel) : undefined;
+  // Resolved ONCE and used for both the hidden form and the check below, so the
+  // button and what it would post cannot come from two different readings.
+  const sugValues = suggestion && sf ? suggestedValues(memo, sf, suggestion) : null;
+  // The required fields the suggestion has no answer for. "apply & file" posts
+  // these values and NOTHING else, so each of these comes back as `missing
+  // required:` — every time, for the whole class: media's `kind` is a select the
+  // model isn't asked about, and resource's `activity` is empty whenever it
+  // returns no scope. A button that can only 400 is worse than no button, so it
+  // is replaced by the one thing the user needs to know: apply, then pick these.
+  // "apply" is unaffected — filling four fields of five is still worth a tap.
+  const sugMissing = sf && sugValues
+    ? sf.fields.filter((fl) => fl.required && !sugValues[fl.key]?.trim()).map((fl) => fl.label)
+    : [];
+  const canFile = Boolean(sugValues && !sugMissing.length);
+  const prose = f.fields.find((fl) => fl.type === "textarea");
+  const fieldRow = (fl: Field) =>
+    html`<label>${fl.label} ${fl.required ? html`<span class="req">*</span>` : ""}</label>${control(fl, scopes, val(fl))}`;
+  return html`
+    <a class="desk-back" href="/review">← queue</a>
+    <div class="meta">from inbox · ${memo.createdISO ? fmtDate(memo.createdISO) : ""} · <code>${memo.name}</code>${memo.scope ? html` <span class="tag">${memo.scope}</span>` : ""}</div>
+    ${error ? html`<p class="flash err">${error}</p>` : ""}
+    <form method="post" action="${act}" class="triage-form">
+      ${prose ? fieldRow(prose) : html`<p class="muted snippet">${memo.text}</p>`}
+
+      <!-- The suggestion sits between the note and the fields it would pre-fill
+           on purpose: you read the thought, then the machine's reading of it,
+           then decide. It is never applied for you — a form field you looked at
+           is the whole containment story for anything the model got wrong. -->
+      <div class="suggest">
+        ${suggestion && sf
+          ? html`<div class="card sug">
+              <div class="sug-head">suggestion <span class="muted">· ${sf.label.toLowerCase()}${suggestion.scope ? html` → ${suggestion.scope}` : ""}</span></div>
+              <strong class="sug-title">${suggestion.title}</strong>
+              ${suggestion.due || suggestion.priority || suggestion.tags.length
+                ? html`<div class="sug-meta">
+                    ${suggestion.due ? html`<span class="tag">📅 ${suggestion.due}</span>` : ""}
+                    ${suggestion.priority ? html`<span class="tag">${PRI_GLYPH[suggestion.priority] ?? ""} ${suggestion.priority}</span>` : ""}
+                    ${suggestion.tags.map((t) => html`<span class="tag">${t}</span>`)}
+                  </div>`
+                : ""}
+              ${suggestion.rationale ? html`<p class="muted sug-why">${suggestion.rationale}</p>` : ""}
+              <div class="actions">
+                <button class="btn" type="submit" form="suggest-apply">↧ apply</button>
+                ${canFile
+                  ? html`<button class="btn" type="submit" form="suggest-file">↧ apply &amp; file</button>`
+                  : html`<span class="muted">then pick ${sugMissing.join(" + ")}</span>`}
+              </div>
+            </div>`
+          : html`<p class="muted sug-none">no suggestion.</p>`}
       </div>
-      <form method="post" action="${act}" class="capture-form">
-        <label>type</label>
-        <select name="funnel" onchange="location.href='${act}?funnel='+this.value">
-          ${FUNNELS.map((x) => html`<option value="${x.id}"${x.id === f.id ? raw(" selected") : ""}>${x.label}</option>`)}
-        </select>
-        <div class="cap-fields">
-          ${f.fields.map((fl) => html`<label>${fl.label} ${fl.required ? html`<span class="req">*</span>` : ""}</label>${control(fl, scopes, val(fl))}`)}
-        </div>
-        <div class="cap-actions">
-          <button class="btn" type="submit" name="action" value="file">file it</button>
-        </div>
-      </form>
-      <form method="post" action="${act}" class="triage-discard" onsubmit="return confirm('Discard this memo?')">
-        <input type="hidden" name="action" value="discard" />
-        <button class="btn danger" type="submit">✕ discard</button>
-      </form>
-    `,
-    "review",
-  );
+
+      <label>type</label>
+      <select name="funnel" onchange="location.href='${here}&funnel='+this.value">
+        ${FUNNELS.map((x) => html`<option value="${x.id}"${x.id === f.id ? raw(" selected") : ""}>${x.label}</option>`)}
+      </select>
+      <div class="cap-fields">
+        ${f.fields.filter((fl) => fl !== prose).map(fieldRow)}
+      </div>
+      <div class="cap-actions">
+        <button class="btn" type="submit" name="action" value="file">file it</button>
+        <button class="btn danger" type="submit" form="triage-discard">✕ discard</button>
+      </div>
+    </form>
+    <!-- Discard is a POST of its own and a form can't nest, so it sits here
+         empty and the button above reaches it by form= — which is what puts
+         both actions on one row without a line of script. -->
+    <form method="post" action="${act}" id="triage-discard" onsubmit="return confirm('Discard this memo?')">
+      <input type="hidden" name="action" value="discard" />
+    </form>
+    ${suggestion && sf
+      ? html`
+        <!-- The two apply paths, as sibling forms the card's buttons reach by
+             form= (same trick as discard). Both are ordinary submits — "apply"
+             is a GET that re-renders this pane with the suggestion in the
+             fields, "apply & file" is the SAME POST the "file it" button makes,
+             carrying those values as hidden inputs. Nothing new can happen to
+             the vault through this card: it ends at the one commit path a
+             hand-typed triage already takes.
+             The funnel is not carried on the apply link — the pane re-reads it
+             from the sidecar, so there is one answer to "which type did it
+             suggest" rather than one in a URL and one in a file. -->
+        <form method="get" action="/review" id="suggest-apply">
+          <input type="hidden" name="note" value="${memo.name}" />
+          <input type="hidden" name="apply" value="1" />
+        </form>
+        <!-- Note this posts the note text AS CAPTURED, not whatever is in the
+             textarea right now — a separate form can't read another form's
+             fields without script. Edit-then-file is the "apply" button
+             followed by "file it"; this button is the one-tap path for a
+             capture you're accepting as it stands.
+             Rendered only when the suggestion fills every required field: a
+             form that can only be rejected is not a shortcut. -->
+        ${canFile && sugValues
+          ? html`<form method="post" action="${act}" id="suggest-file">
+              <input type="hidden" name="action" value="file" />
+              <input type="hidden" name="funnel" value="${sf.id}" />
+              ${sf.fields.map((fl) => html`<input type="hidden" name="${fl.key}" value="${sugValues[fl.key]}" />`)}
+            </form>`
+          : ""}`
+      : ""}`;
 }
 
 // Resolve the :name param to an inbox note (decoded or raw), or null.
@@ -790,37 +981,56 @@ const resolveInbox = (raw0: string): InboxNote | null => {
   return getInboxNote(name) ?? getInboxNote(raw0);
 };
 
-app.get("/review/triage/:name", async (c) => {
-  const memo = resolveInbox(c.req.param("name"));
-  if (!memo) return c.html(await renderReview({ ok: false, msg: "inbox note not found (already triaged?)" }), 404);
-  return c.html(renderTriageForm(memo, c.req.query("funnel") ?? "memo", getScopes()));
+// Triage no longer has a page of its own — it's the desk's right pane. This
+// route stays as a permanent redirect INTO that pane so the links that already
+// point at it keep resolving: /vault/:name's "→ triage this" CTA, a /history
+// path chip, a bookmark, an old tab.
+app.get("/review/triage/:name", (c) => {
+  const q = new URLSearchParams({ note: c.req.param("name") });
+  const funnel = c.req.query("funnel");
+  if (funnel) q.set("funnel", funnel);
+  return c.redirect(`/review?${q}`, 302);
 });
 
 app.post("/review/triage/:name", async (c) => {
   const memo = resolveInbox(c.req.param("name"));
-  if (!memo) return c.html(await renderReview({ ok: false, msg: "inbox note not found (already triaged?)" }), 404);
+  if (!memo) return c.html(await renderReview({ flash: { ok: false, msg: "inbox note not found (already triaged?)" } }), 404);
   const body = await c.req.parseBody();
   const inboxRel = vaultRel(VAULT_SUBDIR, "inbox", `${memo.name}.md`);
+
+  // A note that filed is a note that left the queue, so success LEAVES the pane:
+  // post/redirect/get back to the desk with the receipt on the query — the same
+  // pattern the capture screen uses, and the reason a reload can't re-file.
+  const filed = (msg: string) => c.redirect(`/review?ok=${encodeURIComponent(msg)}`, 303);
+  // Anything that isn't success stays put, with the note still selected and
+  // whatever was typed still in the fields. Losing a thought to a validation
+  // error — or to a commit that lost a race — is the one failure this pipeline
+  // must not have.
+  // The suggestion is re-read here so a rejected submit doesn't lose the card
+  // along with nothing else — the pane comes back exactly as it was.
+  const stuck = async (status: 400 | 409, v: Omit<ReviewView, "selected">) =>
+    c.html(await renderReview({ selected: memo, suggestion: await suggestionFor(memo.name), ...v }), status);
 
   if (String(body.action) === "discard") {
     try {
       await gitStore().commit({ ops: [{ op: "delete", path: inboxRel }] }, { message: `triage: discard inbox/${memo.name}` });
       invalidate();
-      return c.html(await renderReview({ ok: true, msg: `✕ discarded “${memo.title}”` }));
+      await dropSidecar(memo.name); // the note left the queue; its suggestion goes with it
+      return filed(`✕ discarded “${memo.title}”`);
     } catch (e) {
-      return c.html(await renderReview({ ok: false, msg: `✗ discard failed: ${(e as Error).message}` }), 409);
+      return stuck(409, { flash: { ok: false, msg: `✗ discard failed: ${(e as Error).message}` } });
     }
   }
 
   // File it: build the typed note from the chosen funnel + submitted fields.
   const funnelId = String(body.funnel ?? "memo");
   const funnel = funnelById(funnelId);
-  if (!funnel) return c.html(await renderReview({ ok: false, msg: `unknown funnel ${funnelId}` }), 400);
+  if (!funnel) return stuck(400, { flash: { ok: false, msg: `unknown funnel ${funnelId}` } });
   const input: Record<string, string> = {};
   for (const fl of funnel.fields) input[fl.key] = String(body[fl.key] ?? "").trim();
   const missing = funnel.fields.filter((fl) => fl.required && !input[fl.key]).map((fl) => fl.label);
   if (missing.length) {
-    return c.html(renderTriageForm(memo, funnelId, getScopes(), input, `missing required: ${missing.join(", ")}`), 400);
+    return stuck(400, { funnelId, values: input, error: `missing required: ${missing.join(", ")}` });
   }
 
   // Filing a TASK is not "make a note" — a task is a line, and it is filed by
@@ -832,14 +1042,14 @@ app.post("/review/triage/:name", async (c) => {
   const target = scopeKey ? input[scopeKey] : "";
   if (funnel.id === "task" && target && noteExists(target)) {
     const raw = readNoteRaw(target);
-    if (!raw) return c.html(await renderReview({ ok: false, msg: `✗ could not read “${target}”` }), 409);
+    if (!raw) return stuck(409, { funnelId, values: input, flash: { ok: false, msg: `✗ could not read “${target}”` } });
     const line = taskLine(input);
     // A task is one line, so any DETAIL the capture carried has nowhere to go on
     // the scope note. Rather than drop it with the memo, it becomes a memo note
     // of its own in the same op — the action files, the context keeps. Clear the
     // detail field at the desk and only the atom lands.
     const detail = input.body?.trim() ?? "";
-    const keep = detail ? uniqueDest(input.title || memo.title || "note") : null;
+    const keep = detail ? uniqueDest(input.title || wholeTitle(memo) || "note") : null;
     const ops = [
       { op: "delete" as const, path: inboxRel },
       { op: "put" as const, path: vaultRel(VAULT_SUBDIR, `${target}.md`), content: appendTaskLine(raw, line) },
@@ -860,55 +1070,84 @@ app.post("/review/triage/:name", async (c) => {
         message: `triage: task → ${target}${keep ? ` (+ memo ${keep.name})` : ""} ← inbox/${memo.name}`,
       });
       invalidate();
-      return c.html(await renderReview({
-        ok: true,
-        msg: `✓ filed atom → ${target}${keep ? `, detail kept as ${keep.name}` : ""} (op ${res.id.slice(0, 8)})`,
-      }));
+      await dropSidecar(memo.name);
+      return filed(`✓ filed atom → ${target}${keep ? `, detail kept as ${keep.name}` : ""} (op ${res.id.slice(0, 8)})`);
     } catch (e) {
-      return c.html(await renderReview({ ok: false, msg: `✗ file failed: ${(e as Error).message}` }), 409);
+      return stuck(409, { funnelId, values: input, flash: { ok: false, msg: `✗ file failed: ${(e as Error).message}` } });
     }
   }
 
   const note = funnel.build(input);
   if (memo.createdISO) note.frontmatter = { created: memo.createdISO, ...note.frontmatter }; // preserve capture time
   const content = compose(note);
-  const dest = uniqueDest(note.title || memo.title || "note");
+  const dest = uniqueDest(note.title || wholeTitle(memo) || "note");
   try {
     const res = await gitStore().commit(
       { ops: [{ op: "delete", path: inboxRel }, { op: "put", path: dest.rel, content }] },
       { message: `triage: ${funnel.id} ← inbox/${memo.name}` },
     );
     invalidate();
-    return c.html(await renderReview({ ok: true, msg: `✓ filed as ${funnel.id} → ${dest.name} (op ${res.id.slice(0, 8)})` }));
+    await dropSidecar(memo.name);
+    return filed(`✓ filed as ${funnel.id} → ${dest.name} (op ${res.id.slice(0, 8)})`);
   } catch (e) {
-    return c.html(await renderReview({ ok: false, msg: `✗ file failed: ${(e as Error).message}` }), 409);
+    return stuck(409, { funnelId, values: input, flash: { ok: false, msg: `✗ file failed: ${(e as Error).message}` } });
   }
 });
 
-app.get("/review", async (c) => c.html(await renderReview()));
+// The desk. `?note=` picks the right pane, `?funnel=` picks which funnel's
+// fields it draws, and `?ok=`/`?err=` carry a receipt back from a redirect.
+app.get("/review", async (c) => {
+  const want = c.req.query("note");
+  const selected = want ? resolveInbox(want) : null;
+  const ok = c.req.query("ok");
+  const err = c.req.query("err");
+  // A `?note=` that no longer resolves is the ordinary consequence of triaging
+  // in one tab and following a stale link in another — say so, and fall back to
+  // the queue rather than 404ing a page that is still perfectly useful.
+  const flash = ok !== undefined ? { ok: true, msg: ok }
+    : err !== undefined ? { ok: false, msg: err }
+      : want && !selected ? { ok: false, msg: "inbox note not found (already triaged?)" }
+        : undefined;
+  // Re-validated against the vault as it is on THIS request, not as it was when
+  // the worker ran — see suggest.ts validate().
+  const suggestion = selected ? await suggestionFor(selected.name) : null;
+  // `?apply=1` is the suggestion card's "apply" button: same page, same note,
+  // now with the suggestion in the fields. It only fills the form — the note is
+  // still filed by the ordinary "file it" submit below it.
+  const applied = c.req.query("apply") !== undefined && suggestion && selected
+    ? { funnelId: suggestion.funnel, values: suggestedValues(selected, funnelById(suggestion.funnel)!, suggestion) }
+    : null;
+  return c.html(await renderReview({
+    selected,
+    suggestion,
+    funnelId: applied?.funnelId ?? c.req.query("funnel"),
+    values: applied?.values,
+    flash,
+  }));
+});
 
 app.post("/review/approve", async (c) => {
   const id = String((await c.req.parseBody()).id ?? "").trim();
   const p = await getProposal(id);
-  if (!p || p.status !== "pending") return c.html(await renderReview({ ok: false, msg: "proposal not found or already handled" }), 404);
+  if (!p || p.status !== "pending") return c.html(await renderReview({ flash: { ok: false, msg: "proposal not found or already handled" } }), 404);
   try {
     const res = await applyProposal(p);
-    return c.html(await renderReview({ ok: true, msg: `✓ approved & applied — op ${res.id.slice(0, 8)} (${res.paths.length} path${res.paths.length === 1 ? "" : "s"})` }));
+    return c.html(await renderReview({ flash: { ok: true, msg: `✓ approved & applied — op ${res.id.slice(0, 8)} (${res.paths.length} path${res.paths.length === 1 ? "" : "s"})` } }));
   } catch (e) {
-    return c.html(await renderReview({ ok: false, msg: `✗ apply failed: ${(e as Error).message}` }), 409);
+    return c.html(await renderReview({ flash: { ok: false, msg: `✗ apply failed: ${(e as Error).message}` } }), 409);
   }
 });
 
 app.get("/review/:id/edit", async (c) => {
   const p = await getProposal(c.req.param("id"));
-  if (!p || p.status !== "pending") return c.html(await renderReview({ ok: false, msg: "proposal not found or already handled" }), 404);
+  if (!p || p.status !== "pending") return c.html(await renderReview({ flash: { ok: false, msg: "proposal not found or already handled" } }), 404);
   return c.html(renderEditForm(p));
 });
 
 app.post("/review/:id/edit", async (c) => {
   const id = c.req.param("id");
   const p = await getProposal(id);
-  if (!p || p.status !== "pending") return c.html(await renderReview({ ok: false, msg: "proposal not found or already handled" }), 404);
+  if (!p || p.status !== "pending") return c.html(await renderReview({ flash: { ok: false, msg: "proposal not found or already handled" } }), 404);
   const body = await c.req.parseBody();
   const intent = String(body.intent ?? "").trim() || p.intent;
   const changeset = p.changeset.map((op, i) =>
@@ -918,12 +1157,12 @@ app.post("/review/:id/edit", async (c) => {
   if (String(body.action) === "approve" && updated) {
     try {
       const res = await applyProposal(updated);
-      return c.html(await renderReview({ ok: true, msg: `✓ edited, approved & applied — op ${res.id.slice(0, 8)}` }));
+      return c.html(await renderReview({ flash: { ok: true, msg: `✓ edited, approved & applied — op ${res.id.slice(0, 8)}` } }));
     } catch (e) {
-      return c.html(await renderReview({ ok: false, msg: `✗ apply failed: ${(e as Error).message}` }), 409);
+      return c.html(await renderReview({ flash: { ok: false, msg: `✗ apply failed: ${(e as Error).message}` } }), 409);
     }
   }
-  return c.html(await renderReview({ ok: true, msg: `proposal ${id.slice(5, 13)} updated` }));
+  return c.html(await renderReview({ flash: { ok: true, msg: `proposal ${id.slice(5, 13)} updated` } }));
 });
 
 app.post("/review/send-back", async (c) => {
@@ -931,21 +1170,25 @@ app.post("/review/send-back", async (c) => {
   const id = String(body.id ?? "").trim();
   const feedback = String(body.feedback ?? "").trim();
   const p = await getProposal(id);
-  if (!p || p.status !== "pending") return c.html(await renderReview({ ok: false, msg: "proposal not found or already handled" }), 404);
+  if (!p || p.status !== "pending") return c.html(await renderReview({ flash: { ok: false, msg: "proposal not found or already handled" } }), 404);
   await updateProposal(id, { status: "returned", feedback });
-  return c.html(await renderReview({ ok: true, msg: `↩ sent back${feedback ? " with feedback" : ""} — agents fetch it via GET /proposals?status=returned` }));
+  return c.html(await renderReview({ flash: { ok: true, msg: `↩ sent back${feedback ? " with feedback" : ""} — agents fetch it via GET /proposals?status=returned` } }));
 });
 
 app.post("/review/reject", async (c) => {
   const id = String((await c.req.parseBody()).id ?? "").trim();
   const p = await getProposal(id);
-  if (!p || p.status !== "pending") return c.html(await renderReview({ ok: false, msg: "proposal not found or already handled" }), 404);
+  if (!p || p.status !== "pending") return c.html(await renderReview({ flash: { ok: false, msg: "proposal not found or already handled" } }), 404);
   await setStatus(id, "rejected");
-  return c.html(await renderReview({ ok: true, msg: `proposal ${id.slice(5, 13)} rejected` }));
+  return c.html(await renderReview({ flash: { ok: true, msg: `proposal ${id.slice(5, 13)} rejected` } }));
 });
 
 // ── JSON API (programmatic / legacy) ────────────────────────────────────────
-app.get("/scopes", (c) => c.json({ scopes: getScopes() }));
+// `?ingestable=1` narrows to the capture-destination hubs — the same list the
+// capture form's dropdown draws, so an external capture client (a Shortcut
+// building its own picker) can offer the same short list the app does.
+app.get("/scopes", (c) =>
+  c.json({ scopes: c.req.query("ingestable") === "1" ? getIngestableScopes() : getScopes() }));
 app.post("/notes", async (c) => {
   const b = (await c.req.json().catch(() => ({}))) as { content?: string; scope?: string };
   if (!b.content || !b.scope) return c.json({ error: "content and scope are required" }, 400);
@@ -961,6 +1204,8 @@ app.post("/notes", async (c) => {
 // NOTHING SECRET GOES HERE. This is unauthenticated (Tailscale-only, no auth of
 // its own), so it reports the *task and calendar* knobs only — never a token, a
 // remote URL, or a notification endpoint, each of which is a bearer credential.
+// The suggestion worker follows the same rule: whether it is on and which model
+// it runs, never ANTHROPIC_API_KEY or anything derived from it.
 app.get("/health", (c) => c.json(healthPayload(gitStore().status())));
 
 // Local-first git store: mark the mounted repo safe, acquire the single-writer
@@ -976,6 +1221,12 @@ if (!(await store.acquireWriterLease())) {
   process.exit(1);
 }
 store.start();
+
+// The suggestion worker, if it was asked for. Opt-in on BOTH halves — the flag
+// and a key — so the default deployment makes no outbound call at all and this
+// process is the app it was before the feature existed. Started here, beside
+// store.start(), because those are the two background loops this container runs.
+if (aiSuggestConfig().enabled) startSuggestWorker();
 
 const port = Number(process.env.PORT ?? 3000);
 serve({ fetch: app.fetch, port });

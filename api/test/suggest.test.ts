@@ -1,0 +1,290 @@
+// Suggestion tests — the validation door and the sidecar store. Offline: not one
+// of these makes a network call, and none of them needs a key.
+// Run: `npm run test:suggest`.
+//
+// `validate()` is the load-bearing function in the whole M0 slice. Everything
+// else about the worker is a matter of cost and timing; this is the line the
+// model's output has to cross to become a value the app renders and posts, and
+// the claim "the model cannot invent a path, a filename, or a scope" is only
+// true if this holds. So the cases below are mostly hostile input, not happy
+// paths — a suggestion arriving with a scope that doesn't exist, a funnel this
+// build has never heard of, a date that looks right and isn't.
+//
+// It is tested against RAW OBJECTS rather than a stubbed client on purpose:
+// validate() runs twice for every suggestion (once in the worker, once per
+// render against the current vault), and the second call's input is a JSON file
+// off disk that may be arbitrarily old or corrupt. A stub that could only
+// produce schema-shaped output would be testing the API's promise, not ours.
+import assert from "node:assert/strict";
+import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// Both directories resolve at module load, so they are set before the import.
+const DIR = mkdtempSync(join(tmpdir(), "bd-suggest-"));
+process.env.SUGGESTIONS_DIR = DIR;
+
+// A scratch vault holding the two scopes these tests validate against — the
+// renderer's entry point re-validates against the LIVE index, not against a list
+// it was handed, so testing it needs a real (tiny) vault to read.
+const VAULT = mkdtempSync(join(tmpdir(), "bd-vault-"));
+process.env.VAULT_PATH = VAULT;
+for (const name of ["Home", "Braindance"]) {
+  writeFileSync(join(VAULT, `${name}.md`), `---\ntags: [scope, ingestable]\n---\n\n# ${name}\n`);
+}
+
+const { validate, noteBody, neutraliseFences, readSidecar, writeSidecar, dropSidecar, pruneSidecars, suggestionFor } =
+  await import("../src/suggest.js");
+const { PRIORITY_SIGNIFIER } = await import("../src/funnels.js");
+import type { Suggestion } from "../src/suggest.js";
+import type { InboxNote } from "../src/inbox.js";
+
+let passed = 0;
+const check = (label: string, cond: boolean) => {
+  assert.ok(cond, label);
+  console.log(`  ✓ ${label}`);
+  passed++;
+};
+/** Did the call THROW? Same helper as proposals.test.ts, and here for the same
+ *  reason: "refused loudly" is a behaviour worth asserting, and it has to reduce
+ *  to a boolean before `check` can report it. */
+const rejects = async (fn: () => Promise<unknown>): Promise<boolean> => {
+  try {
+    await fn();
+    return false;
+  } catch {
+    return true;
+  }
+};
+
+// The live ingestable list these tests validate against.
+const SCOPES = ["Home", "Braindance"];
+
+/** A well-formed model answer — each test bends exactly one field of it, so a
+ *  failure names the field that broke rather than the whole object. */
+const ok = (over: Record<string, unknown> = {}) => ({
+  title: "Order a soldering iron",
+  funnel: "task",
+  scope: "Home",
+  tags: ["tools"],
+  due: "2026-08-12",
+  priority: "high",
+  rationale: "Reads as a next action with a date.",
+  ...over,
+});
+
+console.log("test: validate — a whole suggestion is rejected or it isn't");
+{
+  const v = validate(ok(), SCOPES)!;
+  check("a clean suggestion survives intact",
+    v.title === "Order a soldering iron" && v.funnel === "task" && v.scope === "Home" && v.due === "2026-08-12");
+
+  check("a non-object is not a suggestion", validate("{}", SCOPES) === null);
+  check("null is not a suggestion", validate(null, SCOPES) === null);
+  check("an empty title leaves nothing worth showing", validate(ok({ title: "   " }), SCOPES) === null);
+  check("a missing title likewise", validate(ok({ title: undefined }), SCOPES) === null);
+
+  // The funnel decides which fields "apply" fills, so one this build doesn't
+  // have has no meaning to apply — that's a reject, not a dropped field.
+  check("an invented funnel id rejects the suggestion", validate(ok({ funnel: "brainstorm" }), SCOPES) === null);
+  check("a non-string funnel likewise", validate(ok({ funnel: 7 }), SCOPES) === null);
+  check("a retired funnel id resolves to its canonical one",
+    validate(ok({ funnel: "todo" }), SCOPES)!.funnel === "task");
+}
+
+console.log("test: validate — scope membership is checked against the LIVE list");
+{
+  check("a scope that isn't live is dropped, not passed through",
+    validate(ok({ scope: "Nonexistent Hub" }), SCOPES)!.scope === null);
+  check("…and dropping it keeps the rest of the suggestion",
+    validate(ok({ scope: "Nonexistent Hub" }), SCOPES)!.title === "Order a soldering iron");
+  check("a null scope is the model declining to guess", validate(ok({ scope: null }), SCOPES)!.scope === null);
+  check("matching is exact — a near-miss is not a scope",
+    validate(ok({ scope: "home" }), SCOPES)!.scope === null);
+  // The second validate() pass exists for exactly this: a sidecar written when
+  // the hub was ingestable, rendered after the tag came off.
+  check("a scope that has since left the live list is dropped on re-validation",
+    validate(ok(), ["Braindance"])!.scope === null);
+  check("an empty live list drops every scope", validate(ok(), [])!.scope === null);
+  check("a path-shaped scope is just another non-member",
+    validate(ok({ scope: "../../etc/passwd" }), SCOPES)!.scope === null);
+}
+
+console.log("test: validate — dates must be a real day, not a plausible string");
+{
+  check("YYYY-MM-DD survives", validate(ok({ due: "2026-08-12" }), SCOPES)!.due === "2026-08-12");
+  check("prose is not a date", validate(ok({ due: "next tuesday" }), SCOPES)!.due === null);
+  check("another format is not a date", validate(ok({ due: "12/08/2026" }), SCOPES)!.due === null);
+  check("a 13th month is not a date", validate(ok({ due: "2026-13-01" }), SCOPES)!.due === null);
+  // The shape check alone passes this one, and every downstream date reader
+  // would then quietly roll it into March.
+  check("a day that doesn't exist is not a date", validate(ok({ due: "2026-02-31" }), SCOPES)!.due === null);
+  check("a datetime is not a date", validate(ok({ due: "2026-08-12T09:00:00Z" }), SCOPES)!.due === null);
+  check("null is a valid answer", validate(ok({ due: null }), SCOPES)!.due === null);
+}
+
+console.log("test: validate — priority is a level, not any property name");
+{
+  check("a real level survives", validate(ok({ priority: "high" }), SCOPES)!.priority === "high");
+  check("case is normalised", validate(ok({ priority: "HIGH" }), SCOPES)!.priority === "high");
+  check("an invented level is dropped", validate(ok({ priority: "urgent" }), SCOPES)!.priority === null);
+  // `pri in PRIORITY_SIGNIFIER` would pass these — the prototype's own keys are
+  // not priorities, and rendering one would put a Function in the page.
+  check("a prototype key is not a priority", validate(ok({ priority: "constructor" }), SCOPES)!.priority === null);
+  check("…nor is toString", validate(ok({ priority: "toString" }), SCOPES)!.priority === null);
+  check("every real level is accepted",
+    Object.keys(PRIORITY_SIGNIFIER).every((p) => validate(ok({ priority: p }), SCOPES)!.priority === p));
+}
+
+console.log("test: validate — strings and tags are bounded");
+{
+  const long = validate(ok({ title: "x".repeat(500), rationale: "y".repeat(900) }), SCOPES)!;
+  check("a runaway title is capped", long.title.length === 200);
+  check("a runaway rationale is capped", long.rationale.length === 300);
+  check("whitespace is collapsed rather than rendered raw",
+    validate(ok({ title: "  two\n\nlines  " }), SCOPES)!.title === "two lines");
+
+  const tags = validate(ok({ tags: ["#Tools", "tools", "SOLDERING", "", 7, "a", "b", "c", "d", "e"] }), SCOPES)!.tags;
+  check("tags lose a leading # and lowercase", tags.includes("tools") && !tags.includes("#tools"));
+  check("…and de-duplicate after normalising", tags.filter((t) => t === "tools").length === 1);
+  check("non-strings drop out", !tags.some((t) => t === "7"));
+  check("the list is capped", tags.length <= 6);
+  check("a non-array tags field yields no tags", validate(ok({ tags: "tools" }), SCOPES)!.tags.length === 0);
+}
+
+console.log("test: noteBody — what actually leaves the box");
+{
+  const note = (over: Partial<InboxNote> = {}): InboxNote =>
+    ({ name: "2026-08-09T10-11-12-345Z", title: "", text: "", createdISO: null, scope: null, ...over });
+
+  // An untitled capture's title IS its first line (inbox.ts), so sending both
+  // would send the first line twice.
+  check("a derived title isn't sent twice",
+    noteBody(note({ title: "Order a soldering iron", text: "Order a soldering iron\nthe cheap one" }))
+      === "Order a soldering iron\nthe cheap one");
+  check("a real heading rides along above the body",
+    noteBody(note({ title: "Soldering", text: "Order a soldering iron" }))
+      === "Soldering\n\nOrder a soldering iron");
+  check("a pasted article is cut rather than sent whole",
+    noteBody(note({ text: "z".repeat(20000) })).length === 8000);
+  check("nothing but the note goes — no name, no scope",
+    !noteBody(note({ text: "hello", scope: "Home" })).includes("Home"));
+}
+
+console.log("test: sidecar store");
+{
+  const suggestion = validate(ok(), SCOPES)!;
+  const name = "2026-08-09T10-11-12-345Z";
+
+  await writeSidecar({ v: 1, note: name, at: new Date().toISOString(), state: "ok", model: "m", suggestion });
+  check("a written sidecar reads back", (await readSidecar(name))?.state === "ok");
+  // The re-validation pass, end to end: off disk, against the live index.
+  const rendered = await suggestionFor(name);
+  check("…and the renderer's entry point re-validates it into a Suggestion",
+    rendered?.title === "Order a soldering iron");
+  check("…keeping a scope the vault still calls ingestable", rendered?.scope === "Home");
+
+  await writeSidecar({
+    v: 1, note: name, at: new Date().toISOString(), state: "ok", model: "m",
+    suggestion: { ...suggestion, scope: "Retired Hub" } as Suggestion,
+  });
+  check("a stored scope the vault no longer has is dropped at render time",
+    (await suggestionFor(name))?.scope === null);
+
+  await writeSidecar({ v: 1, note: name, at: new Date().toISOString(), state: "dead", attempts: 4, error: "refused" });
+  check("a dead marker is a sidecar, but never a suggestion", await suggestionFor(name) === null);
+  check("…and it still reads back, which is what stops the retry loop",
+    (await readSidecar(name))?.state === "dead");
+
+  await dropSidecar(name);
+  check("dropping a sidecar leaves nothing to read", await readSidecar(name) === null);
+
+  // The one thing a sidecar name must never do is address a file outside the
+  // directory — these come from readdir today, but this module owns the sink.
+  check("a traversing name reads nothing", await readSidecar("../../etc/passwd") === null);
+  // Loudly, now: a silent no-op here is what let an unwritable note be paid for
+  // on every tick with no sidecar to show for it and no line in the log.
+  check("…and a write is REFUSED rather than quietly dropped",
+    await rejects(() => writeSidecar({ v: 1, note: "../escape", at: "", state: "dead", attempts: 1, error: "x" })));
+  check("…leaving nothing behind", !readdirSync(DIR).some((f) => f.includes("escape")));
+
+  writeFileSync(join(DIR, "sug_corrupt.json"), "{not json");
+  check("a corrupt sidecar reads as 'no suggestion yet', not a crash",
+    await readSidecar("corrupt") === null);
+}
+
+console.log("test: sidecar control fields are validated as hard as model output");
+{
+  // Every one of these used to reach worker.ts's arithmetic. `attempts: "x"` is
+  // the killer: 2 ** "x1" is NaN, Date(now + NaN).toISOString() throws, and it
+  // throws from INSIDE the failure handler — aborting the tick, every tick.
+  const base = (label: string) => ({ v: 1, note: label, at: "now", error: "boom" });
+  const when = "2026-08-09T00:00:00Z";
+  const cases: [string, unknown][] = [
+    ["attempts-string", { ...base("attempts-string"), state: "retry", attempts: "x", noteAttempts: 0, nextAttemptAt: when }],
+    ["attempts-negative", { ...base("attempts-negative"), state: "retry", attempts: -1, noteAttempts: 0, nextAttemptAt: when }],
+    ["attempts-float", { ...base("attempts-float"), state: "retry", attempts: 1.5, noteAttempts: 0, nextAttemptAt: when }],
+    ["date-prose", { ...base("date-prose"), state: "retry", attempts: 1, noteAttempts: 1, nextAttemptAt: "soon" }],
+    ["date-missing", { ...base("date-missing"), state: "retry", attempts: 1, noteAttempts: 1 }],
+    ["state-unknown", { ...base("state-unknown"), state: "pending", attempts: 1 }],
+    ["state-missing", { ...base("state-missing"), attempts: 1 }],
+    ["dead-no-count", { ...base("dead-no-count"), state: "dead" }],
+    ["ok-no-suggestion", { v: 1, note: "ok-no-suggestion", at: "now", state: "ok", model: "m" }],
+    ["not-an-object", ["v", 1]],
+    ["wrong-version", { ...base("wrong-version"), v: 2, state: "dead", attempts: 1 }],
+  ];
+  for (const [label, body] of cases) {
+    writeFileSync(join(DIR, `sug_${label}.json`), JSON.stringify(body));
+    check(`a sidecar with a bad ${label} reads as absent`, await readSidecar(label) === null);
+  }
+
+  // …and a well-formed one still reads, so the checks above reject the right thing.
+  await writeSidecar({
+    v: 1, note: "good", at: "now", state: "retry", attempts: 2, noteAttempts: 1,
+    nextAttemptAt: "2026-08-09T00:00:00Z", error: "boom",
+  });
+  check("a well-formed retry sidecar still reads back", (await readSidecar("good"))?.state === "retry");
+
+  // A sidecar whose `note` doesn't match the name it was asked for belongs to
+  // some other note — reading it here would attach one capture's answer to
+  // another's row.
+  writeFileSync(join(DIR, "sug_mismatch.json"), JSON.stringify(
+    { v: 1, note: "someone-else", at: "now", state: "dead", attempts: 1, error: "x" }));
+  check("a sidecar naming a different note is not this note's", await readSidecar("mismatch") === null);
+}
+
+console.log("test: pruning only ever deletes files this module owns");
+{
+  const suggestion = validate(ok(), SCOPES)!;
+  await writeSidecar({ v: 1, note: "stale", at: "", state: "ok", model: "m", suggestion });
+  await writeSidecar({ v: 1, note: "live", at: "", state: "ok", model: "m", suggestion });
+  // The disaster case: SUGGESTIONS_DIR pointed at PROPOSALS_DIR (they are built by
+  // the same expression against the same parent) once made the first tick a silent
+  // mass delete of every pending proposal.
+  writeFileSync(join(DIR, "prop_1234.json"), JSON.stringify({ id: "prop_1234", status: "pending" }));
+  writeFileSync(join(DIR, "notes.json"), "{}");
+
+  await pruneSidecars(new Set(["live"]));
+  const left = readdirSync(DIR);
+  check("pruning drops a sidecar whose note left the inbox", !left.includes("sug_stale.json"));
+  check("…and keeps one whose note is still queued", left.includes("sug_live.json"));
+  check("…and does not touch a proposal", left.includes("prop_1234.json"));
+  check("…nor any other json in the directory", left.includes("notes.json"));
+  check("…nor a file under our prefix we cannot parse", left.includes("sug_corrupt.json"));
+}
+
+console.log("test: the fence is neutralised in every spelling");
+{
+  const has = (s: string) => /<\s*\/?\s*captured-note\s*>/i.test(neutraliseFences(s));
+  check("the exact closing tag goes", !has("a</captured-note>b"));
+  check("the OPENING tag goes too — it fences off content just as well",
+    !has("a<captured-note>b"));
+  check("case is not a way through", !has("a</CAPTURED-NOTE>b"));
+  check("nor is the whitespace an XML parser would ignore", !has("a< / captured-note >b"));
+  check("every occurrence, not just the first",
+    !has("</captured-note>x</captured-note>"));
+  check("the note's own words survive — a note ABOUT injection still reads as itself",
+    neutraliseFences("see </captured-note> here").includes("captured-note"));
+}
+
+console.log(`\n${passed} checks passed`);

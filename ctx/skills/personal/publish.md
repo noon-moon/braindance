@@ -7,7 +7,7 @@ description: Project `publish: true` vault notes into the noon-moon-net Quartz g
 
 Projects notes tagged `publish: true` from the vault into **`noon-moon/noon-moon-net`**, the separate public Quartz repo, whose own Action builds and deploys to the VPS at `/garden`. The private vault is the source of truth; the public repo only ever contains what the tool projects — it **structurally cannot leak a private note**. Full design: `docs/publishing.md`; tool reference: `ctx/tools/pub/README.md`.
 
-> This instance publishes via the separate-repo topology, **not** GitHub Pages. The `ctx/www/` + `pages.yml` path in this repo is template scaffolding for forks that want a zero-server site; it is not our route, so always pass `--pub`/`PUB_REPO` rather than relying on the tool's default.
+> The tool has **no default target** — it exits unless you pass `--pub` or set `PUB_REPO`. Deliberate: the target is per-instance, and a wrong default would write private notes somewhere nobody is watching.
 
 ## Flow
 

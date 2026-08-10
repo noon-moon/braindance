@@ -2,12 +2,12 @@
 
 Projects `publish: true` notes from your vault flat into a Quartz garden's `garden/content` (served at `/garden/<slug>`). Deterministic; run it, review the diff, commit. Full design & rationale: [`docs/publishing.md`](../../../docs/publishing.md).
 
-**Two topologies — and the default is not the one this instance uses.** `--pub` defaults to the in-repo garden `ctx/www/garden/`, the zero-server path a fresh fork gets (GitHub Pages). **This instance publishes into the separate public repo `noon-moon/noon-moon-net`** for the stronger *structural* isolation, so **set `PUB_REPO` (or pass `--pub`)** rather than relying on the default. Both are supported and use the same code; see "Two topologies" below.
+**The target is your public site repo, and there is no default.** Both tools exit non-zero unless `--pub` (or `PUB_REPO`) names it. That the site is a *different repo* is the whole privacy guarantee — it cannot leak a note it was never given — and a default would quietly undo it by writing private notes into whatever directory happened to be there.
 
 ```bash
 npm install                                  # first time
-export VAULT_REPO=~/dev/vault                # external vault (see below)
-export PUB_REPO=~/dev/noon-moon-net          # this instance's garden repo
+export VAULT_REPO=~/dev/vault                # your vault, if not already resolved
+export PUB_REPO=~/dev/noon-moon-net          # your public site repo
 
 npm run publish -- --dry                     # report what would publish, write nothing
 npm run publish                              # write it
@@ -15,7 +15,6 @@ npm run publish -- --scrub                   # downgrade private links to text i
 npm run publish -- --pub /path --vault /path # or be explicit per-run
 
 npm run verify                               # re-audit the COMMITTED projection, vault-blind
-npm run verify -- --pub ~/dev/noon-moon-net  # …against the garden repo
 ```
 
 Every run prints the `vault:` and `pub:` it resolved — check that line before trusting a dry run.
@@ -26,10 +25,10 @@ Every run prints the `vault:` and `pub:` it resolved — check that line before 
 
 | What | Flag | Env | Default |
 |---|---|---|---|
-| Vault to read | `--vault` | `VAULT_REPO` | `ctx/vault` (in-repo) |
-| Garden to write | `--pub` | `PUB_REPO` | `ctx/www` (in-repo) |
+| Vault to read | `--vault` | `VAULT_REPO`, then `VAULT_PATH` | `ctx/vault` (in-repo placeholder) |
+| Site to write | `--pub` | `PUB_REPO` | **none — required** |
 
-If your vault is **external** (`BD_ROOT` / `VAULT_PATH` — the usual case for a real instance), the in-repo default is a gitignored placeholder and will select nothing. Set `VAULT_REPO` to the real vault, or pass `--vault`.
+`VAULT_PATH` is in the chain because the instance resolver exports it, so inside a configured context the right vault is already named. The in-repo `ctx/vault` fallback is a gitignored placeholder and will select nothing on a real instance.
 
 Pipeline (per note): `stripScaffolding` (drop `Created:`/`Tags:` preamble, `# References`, `dataview` blocks) → `normalizeAssetEmbeds` → `classifyLinks` → **gate** (strict: block any link to a non-published note — the privacy boundary; missing assets always block) → `whitelistFrontmatter` (drop everything but a safe key set) → `regenerate` (writes flat into `garden/content`; a `.publish-manifest.json` records the tool-owned files so deletes are automatic and hand-authored pages like `index.md` are untouched).
 
@@ -39,21 +38,19 @@ Pipeline (per note): `stripScaffolding` (drop `Created:`/`Tags:` preamble, `# Re
 - `src/publish.ts` — CLI + orchestration + gate (projection time, vault in hand)
 - `src/verify.ts` — the second gate: re-audits the committed projection, **vault-blind**
 
-## Two topologies
+## The topology
 
-**Separate garden repo — what this instance uses.** Point `--pub`/`PUB_REPO` at a public Quartz repo (`noon-moon/noon-moon-net`), review the diff there, and let that repo's own Action build and deploy it — here, rsync to the VPS behind Caddy at `/garden`. The guarantee is **structural**: a public repo cannot leak a note it never contains, and that holds even if every check fails. Cost is a second repo and a second deploy. This is the topology [`docs/publishing.md`](../../../docs/publishing.md) is designed around.
-
-**In-repo — the tool's default, and what a fresh fork gets.** The garden lives at `ctx/www/garden/` and ships to GitHub Pages with zero servers. The repo stays private; only the built artifact is public. Isolation there is procedural, so it's enforced three ways: `pages.yml` is build-scope-isolated (no step reads `ctx/vault`), `verify` re-audits the committed projection vault-blind as the first CI step, and `disjoint-www.yml` fails any PR mixing `ctx/www/**` with anything outside it. **Its deploy is opt-in** — `pages.yml`'s deploy job is skipped unless the repo variable `ENABLE_PAGES` is `true`.
+Point `--pub`/`PUB_REPO` at a public Quartz repo, review the diff there, and let that repo's own Action build and deploy it — rsync to a VPS, GitHub Pages from that repo, or whatever it prefers. The guarantee is **structural**: a public repo cannot leak a note it never contains, and that holds even if every check below fails. Cost is a second repo and a second deploy. Full rationale: [`docs/publishing.md`](../../../docs/publishing.md).
 
 ## The gate runs twice
 
 **Projection time** (`npm run publish`, vault in hand) — blocks on a link to a note you haven't published. This is the decision point; it can tell you *what* to publish or unlink.
 
-**Deploy time** (`npm run verify`, **vault-blind**) — re-audits the committed `garden/` on its own terms, first in `pages.yml`, before Quartz builds anything. It catches what the first pass structurally cannot: a file **hand-edited after projection**, a projection committed from a stale checkout, or a hand-edited manifest.
+**Deploy time** (`npm run verify`, **vault-blind**) — re-audits the committed `garden/` on its own terms. Run it before pushing the site repo, and ideally as a step in that repo's own Action before it builds. It catches what the first pass structurally cannot: a file **hand-edited after projection**, a projection committed from a stale checkout, or a hand-edited manifest.
 
 ```console
-$ npm run verify
-verifying: …/ctx/www/garden/content
+$ npm run verify -- --pub ~/dev/noon-moon-net
+verifying: …/noon-moon-net/garden/content
 
 ✗ publish gate FAILED — 1 finding(s) in the committed projection:
 

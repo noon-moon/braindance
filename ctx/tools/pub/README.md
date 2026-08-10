@@ -7,7 +7,7 @@ Projects `publish: true` notes from your vault flat into a Quartz garden's `gard
 ```bash
 npm install                                  # first time
 export VAULT_REPO=~/dev/vault                # your vault, if not already resolved
-export PUB_REPO=~/dev/noon-moon-net          # your public site repo
+export PUB_REPO=<your site repo>            # required — no default
 
 npm run publish -- --dry                     # report what would publish, write nothing
 npm run publish                              # write it
@@ -49,8 +49,8 @@ Point `--pub`/`PUB_REPO` at a public Quartz repo, review the diff there, and let
 **Deploy time** (`npm run verify`, **vault-blind**) — re-audits the committed `garden/` on its own terms. Run it before pushing the site repo, and ideally as a step in that repo's own Action before it builds. It catches what the first pass structurally cannot: a file **hand-edited after projection**, a projection committed from a stale checkout, or a hand-edited manifest.
 
 ```console
-$ npm run verify -- --pub ~/dev/noon-moon-net
-verifying: …/noon-moon-net/garden/content
+$ npm run verify -- --pub "$PUB_REPO"
+verifying: …/<your site repo>/garden/content
 
 ✗ publish gate FAILED — 1 finding(s) in the committed projection:
 

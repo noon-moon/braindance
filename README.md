@@ -111,6 +111,8 @@ Full mechanics — the resolution ladder, step semantics, worked examples: [`doc
 
 | If you're… | Read |
 |---|---|
+| wondering what braindance is for, or whether a change belongs | [`docs/architecture.md`](docs/architecture.md) |
+| deploying the capture/review app to a host | [`docs/deploy.md`](docs/deploy.md) |
 | installing or writing skills | [`docs/skills.md`](docs/skills.md) |
 | working in the vault — conventions, triage, scratch | [`docs/vault.md`](docs/vault.md) |
 | resolving or bootstrapping contexts | [`docs/instances.md`](docs/instances.md) |

@@ -37,6 +37,7 @@ The common path (a coding task, a vault lookup, a worktree session) is fully ser
 | orchestrating a fleet of sub-agents (delegation doctrine O1–O9, model right-sizing) | [`docs/orchestration.md`](docs/orchestration.md) |
 | searching/creating/restructuring vault notes, or writing scratch (what braindance requires of a vault, triage tree, `_ephemeral` naming, daily notes) | [`docs/vault.md`](docs/vault.md) |
 | working on the api / serving stack / capture pipeline | [`docs/serving.md`](docs/serving.md) |
+| standing the app up on a host | [`docs/deploy.md`](docs/deploy.md) |
 | publishing vault notes to the public site, or touching the publish tool | [`docs/publishing.md`](docs/publishing.md) |
 | installing or writing skills | [`docs/skills.md`](docs/skills.md) |
 | resolving which braindance instance is current, or bootstrapping a clone (`./configure`, `bd use`/`where`, the resolver + guard hooks; C1–C4) | [`docs/instances.md`](docs/instances.md) |

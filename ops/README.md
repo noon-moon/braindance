@@ -13,7 +13,7 @@ never gets SSH or Docker access to the server. This is the whole update loop:
 
 ## Install (on the VPS, after the stack is up)
 
-Assumes the repo is cloned at `/srv/braindance` (per `ctx/vps-setup.md`).
+Assumes the repo is cloned at `/srv/braindance` (per `docs/deploy.md`).
 
 ```bash
 # 1. Point the service at your deploy user (the one in the `docker` group):

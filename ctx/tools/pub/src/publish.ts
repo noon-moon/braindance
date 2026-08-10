@@ -1,11 +1,14 @@
 // braindance publish tool — project publish-tagged notes from the private vault
-// into <pub>/garden/content (flat — /garden/<slug>). Defaults to the in-repo
-// garden at ctx/www, which pages.yml builds and deploys to GitHub Pages; point
-// --pub/PUB_REPO at a separate public garden repo for structural isolation
-// instead. Deterministic; run manually, review the diff, then commit.
-// Full design: ctx/noon-moon-net.md.
+// into <pub>/garden/content (flat — /garden/<slug>), where <pub> is your PUBLIC
+// SITE REPO. That separation is the privacy guarantee: a repo cannot leak a note
+// it was never given. Deterministic; run manually, review the diff, then commit.
+// Full design: docs/publishing.md.
 //
-//   npm run publish -- [--vault DIR] [--pub DIR] [--scrub] [--dry]
+//   npm run publish -- --pub DIR [--vault DIR] [--scrub] [--dry]
+//
+// --pub is REQUIRED (or PUB_REPO). There is deliberately no default: the target
+// is per-instance, and a wrong default projects private notes somewhere nobody
+// is looking.
 //
 // Default (strict): abort if any published note links to a non-published note —
 // the privacy boundary. --scrub instead downgrades such links to plain text.
@@ -28,9 +31,23 @@ function parseArgs(argv: string[]): Args {
     const i = argv.indexOf(flag);
     return i !== -1 && argv[i + 1] ? argv[i + 1] : undefined;
   };
+  // No default: see the header. VAULT_PATH is in the vault chain because the
+  // instance resolver exports it, so inside a configured context the right vault
+  // is already named without any per-run env.
+  const pub = get('--pub') ?? process.env.PUB_REPO;
+  if (!pub) {
+    console.error(
+      'publish: no target. Pass --pub <dir> or set PUB_REPO to your public site repo\n' +
+      '         (the directory CONTAINING garden/, not the garden itself).',
+    );
+    process.exit(2);
+  }
   return {
-    vault: resolve(get('--vault') ?? process.env.VAULT_REPO ?? resolve(HERE, '../../../vault')),
-    pub: resolve(get('--pub') ?? process.env.PUB_REPO ?? resolve(HERE, '../../../www')),
+    vault: resolve(
+      get('--vault') ?? process.env.VAULT_REPO ?? process.env.VAULT_PATH
+      ?? resolve(HERE, '../../../vault'),
+    ),
+    pub: resolve(pub),
     scrub: argv.includes('--scrub'),
     dry: argv.includes('--dry') || argv.includes('--dry-run'),
   };

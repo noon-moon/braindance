@@ -2,7 +2,7 @@
   "name": "braindance-pub",
   "private": true,
   "type": "module",
-  "description": "Projects publish-tagged vault notes flat into <pub>/garden/content (default: ctx/www)",
+  "description": "Projects publish-tagged vault notes flat into <pub>/garden/content (--pub / PUB_REPO required)",
   "scripts": {
     "publish": "tsx src/publish.ts",
     "verify": "tsx src/verify.ts",

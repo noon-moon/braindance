@@ -17,12 +17,9 @@
 //
 // Exits nonzero on any finding, which BREAKS THE DEPLOY before anything is built.
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import matter from 'gray-matter';
 import { FM_WHITELIST, STRUCTURAL_TAGS } from './transform.ts';
-
-const HERE = dirname(fileURLToPath(import.meta.url));
 
 // Hand-authored pages that legitimately live alongside the machine-owned notes.
 const HAND_AUTHORED = new Set(['index.md']);
@@ -53,7 +50,14 @@ function parseArgs(argv: string[]) {
     if (argv.includes('--vault')) process.exit(2);
   }
   const i = argv.indexOf('--pub');
-  const pub = i !== -1 && argv[i + 1] ? argv[i + 1] : process.env.PUB_REPO ?? resolve(HERE, '../../../www');
+  const pub = i !== -1 && argv[i + 1] ? argv[i + 1] : process.env.PUB_REPO;
+  if (!pub) {
+    console.error(
+      'verify: no target. Pass --pub <dir> or set PUB_REPO to the site repo to audit\n' +
+      '        (the directory CONTAINING garden/, not the garden itself).',
+    );
+    process.exit(2);
+  }
   return { pub: resolve(pub) };
 }
 

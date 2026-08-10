@@ -14,10 +14,8 @@ ctx/
     _ephemeral/  Non-persisted scratch — transient inputs & outputs; gitignored but Obsidian-visible
   skills/    LLM-agnostic skill prompts; installed into a harness via ctx/tools/sys/sync.sh
   tools/     Lifecycle tooling (sys/), orchestration/ (multi-agent fleet helpers), pub/ (the publish tool), + standalone tools (e.g. music/)
-  www/       GitHub Pages site (homepage + vendored Quartz garden) — the template's zero-server publishing path for forks; opt-in, unused on this instance
 api/         Admin app: mobile note-capture API + read-only vault viewer (Hono/Node)
-www/         Static homepage for the optional VPS path — distinct from ctx/www/ (see below)
-Caddyfile, docker-compose.yml, deploy.sh   Serving stack
+Caddyfile, docker-compose.yml, deploy.sh, ops/   Serving stack — the public site itself lives in a SEPARATE repo
 repo/        Default (nested) home for target repos you're working on — gitignored
 docs/        On-demand detail this core points to (see map below)
 ```
@@ -78,6 +76,6 @@ Full discipline (R1–R7), the `bd` workflow, and fleet tooling: [`AGENTS.md`](A
 - **Template, not fork** — generic/guideline/tooling/skill/doc changes land on the core template (`noon-moon/braindance`, `master`); a fork carries only instance-specific content and pulls the rest via `git merge upstream/master`. (See the note at the top of this file.)
 - **Output format** — write Markdown, and put every span of code, console/terminal output, query, config, or structured data in a fenced code block with a language hint (```python, ```sql, ```console, ```json, …). This holds for what we write to `_ephemeral`, to vault notes, and back to the user — never paste code or command output as bare prose.
 - **Edit skills in `ctx/skills/`, never the installed harness copy** under `.claude/commands/` — the change would be lost or hit the wrong file. (Mechanics: [`docs/vault.md`](docs/vault.md).)
-- **Publishing goes to a separate site repo.** `publish: true` notes are projected into the public site repo, which serves them at `/garden` — so run the publish tool with `PUB_REPO`/`--pub` set; its built-in default points at unused in-repo scaffolding. Never hand-edit `garden/content/<slug>.md`: machine-owned by `ctx/tools/pub`, and overwritten on the next run. `ctx/www/`, `pages.yml`, `disjoint-www.yml` and the repo-root `www/` are **dead scaffolding awaiting deletion** — don't build on them. (Detail: [`docs/publishing.md`](docs/publishing.md).)
+- **Publishing goes to a separate site repo.** `publish: true` notes are projected into the public site repo, which serves them at `/garden`. **The publish tool has no default target** — pass `--pub` or set `PUB_REPO`; it exits rather than guess, because a wrong guess writes private notes somewhere nobody is watching. Never hand-edit `garden/content/<slug>.md`: machine-owned by `ctx/tools/pub`, overwritten on the next run. That the site is a different repo *is* the privacy guarantee — it cannot leak a note it was never given. (Detail: [`docs/publishing.md`](docs/publishing.md).)
 - **Don't touch** `.obsidian/` config unless explicitly asked (it's the Obsidian workspace, easy to corrupt).
 - **Don't** fold the flat vault into folders, or mass-rewrite existing notes.

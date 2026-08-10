@@ -8,7 +8,7 @@ Serialized execution plan for the Personal Virtual Private Server. Each phase de
 - `noon-moon/vault` — **private**, the instance vault as its own repo (flat notes at the repo root, no `ctx/vault/` prefix). Cloned separately on the VPS and pointed at by `REPO_PATH`; the api owns that checkout as single writer. This is the **content-free clone** model: `VAULT_SUBDIR=` (empty) + `VAULT_EXTERNAL=1`. Local checkout: `/Users/tiernan/dev/vault`.
 - `noon-moon/noon-moon-net` — **public**, holding only the generated `garden/content/` (a projection of the vault's `publish`-tagged notes) plus Quartz config. Its Action builds and rsyncs to `/srv/garden`, served by Caddy at `/garden`. `/garden` is a *separate published repo*, not a slice of a private one — the isolation is structural: the public repo cannot leak a note it never contains. Full design: [`docs/publishing.md`](../docs/publishing.md).
 
-> **Not GitHub Pages.** This repo also ships `ctx/www/` + `.github/workflows/pages.yml`, a zero-server publishing path for forks. That is **template scaffolding, not this instance's route** — its deploy job is gated on the repo variable `ENABLE_PAGES`, which is unset here, so it self-skips. Don't confuse the two `www` dirs: repo-root `www/` is the Caddy homepage (`/srv/www`); `ctx/www/` is the unused Pages source.
+> **braindance holds no site source at all.** Both halves of the public site live in `noon-moon-net` — the homepage (`www/` → `/srv/www`) and the garden (`garden/public/` → `/srv/garden`) — pushed by that repo's own `deploy.yml`. This repo supplies the container, the deploy config, and the projection tool. (The unused `ctx/www/` + `pages.yml` scaffolding that used to sit here has been deleted.)
 
 ---
 
@@ -172,8 +172,7 @@ These files now **exist in-repo** — read them there rather than from a snapsho
   > empty**, so pushes stay green before the droplet exists — and the timer
   > applies the new image within a few minutes either way.
 
-- [x] `pages.yml` — builds `ctx/www/` (homepage + garden) and deploys to GitHub Pages. Vault-blind by construction: no step reads `ctx/vault`. One-time repo setup: **Settings → Pages → Source = "GitHub Actions"**; optional repo variable `SITE_CUSTOM_DOMAIN`.
-- [x] `disjoint-www.yml` — fails any PR touching `ctx/www/**` *and* anything outside it, so a vault edit can never ride along with a publish. Bypass for genuine infra changes: `[www-infra]` in the PR title.
+- [x] No site workflow lives here — `noon-moon-net` owns the only site deploy (and the only SSH deploy) in the system. `deploy-api.yml` is this repo's sole workflow.
 
 ---
 
@@ -219,8 +218,8 @@ The api has since grown well past this checklist (v2: local-first git store, `/r
 
 ## Phase 8: Homepage
 
-- [ ] Design `www/index.html` (and any assets) — the repo-root `www/`, which Caddy serves from `/srv/www`. **Not `ctx/www/`**, which is the unused GitHub Pages source for forks.
-- [ ] Push to `noon-moon/braindance`; the droplet's `braindance-sync` timer fast-forwards `/srv/braindance` (with `VAULT_EXTERNAL=1`), so the homepage ships without an SSH deploy. Check the live site.
+- [ ] Design the homepage in **`noon-moon-net`'s `www/`** — that repo owns the site; braindance has no `www/`.
+- [ ] Push `noon-moon-net`; its `deploy.yml` rsyncs `www/` → `/srv/www`. Check the live site.
 
 ---
 

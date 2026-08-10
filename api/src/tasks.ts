@@ -86,7 +86,10 @@ const PRIORITY: Array<[Priority, string]> = [
   ["lowest", "⏬"],
 ];
 // Any signifier — terminates a free-text field (recurrence) that runs to EOL.
-const ANY_SIGNIFIER = "📅⏳🛫✅❌➕🔺⏫🔼🔽⏬🔁🆔⛔";
+// Exported because the WRITER needs the same alphabet: funnels.ts strips it out
+// of a description so free text can't forge the fields this parser reads back.
+// One list, or the two halves of the format drift the day a signifier is added.
+export const ANY_SIGNIFIER = "📅⏳🛫✅❌➕🔺⏫🔼🔽⏬🔁🆔⛔";
 
 const DATE_RE = (emoji: string) => new RegExp(`${emoji}\\s*(\\d{4}-\\d{2}-\\d{2})`, "u");
 const RECURRENCE_RE = new RegExp(`🔁\\s*([^${ANY_SIGNIFIER}]*)`, "u");

@@ -11,7 +11,12 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    env_file: /srv/.env            # provides $DOMAIN to the Caddyfile
+    # Caddy needs exactly one variable, so it gets exactly one — by interpolation
+    # rather than `env_file: /srv/.env`, which handed the entire secret file
+    # (GITHUB_TOKEN, and now ANTHROPIC_API_KEY) to the only container published
+    # on 0.0.0.0:80/443. Least privilege for the most exposed service.
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in /srv/.env}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
@@ -35,7 +40,21 @@ services:
       # standalone vault repo — is a pure /srv/.env flip (REPO_PATH=/srv/vault),
       # no compose edit. Defaults to /srv/braindance (pre-cutover behaviour).
       - ${REPO_PATH:-/srv/braindance}:${REPO_PATH:-/srv/braindance}
+      # Suggestion sidecars (SUGGESTIONS_DIR). A NAMED VOLUME, not a host bind and
+      # emphatically not a path inside the checkout: these files carry the "already
+      # asked, don't ask again" and "gave up on this one" markers, so unmounted
+      # they live in the container's writable layer, every ./deploy.sh discards
+      # them, and the next boot re-suggests the whole inbox at full price. Inside
+      # the working tree would be worse — a human `git add -A` would commit api
+      # state into the vault, and the app's own commits are pathspec-scoped so they
+      # would never catch it. A volume is invisible to git by construction.
+      #
+      # The mount point must match config.ts's SUGGESTIONS_DIR default. To move it,
+      # set SUGGESTIONS_DIR in /srv/.env: it reaches this line by interpolation and
+      # the api by env_file, so the two cannot drift apart.
+      - braindance_suggestions:${SUGGESTIONS_DIR:-/srv/braindance-suggestions}
     restart: unless-stopped
 
 volumes:
   caddy_data:
+  braindance_suggestions:

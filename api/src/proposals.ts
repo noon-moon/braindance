@@ -11,7 +11,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile, readFile, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { REPO_PATH } from "./config.js";
+import { PROPOSALS_DIR as DIR } from "./config.js";
 import type { ChangeOp } from "./adapter.js";
 
 export type ProposalStatus = "pending" | "approved" | "rejected" | "returned";
@@ -42,8 +42,10 @@ export interface ProposalInput {
   parentOp?: string;
 }
 
-// Outside the vault checkout by default, so proposals are never committed/synced.
-const DIR = process.env.PROPOSALS_DIR ?? join(REPO_PATH, "..", "braindance-proposals");
+// DIR (config.PROPOSALS_DIR) is outside the vault checkout, so proposals are
+// never committed/synced. It lives in config.ts rather than here because the
+// suggestion store has to be able to compare against it — a second api-owned
+// state dir that prunes must be able to prove it is not this one.
 const pathFor = (id: string): string => join(DIR, `${id}.json`);
 
 /** Validate + persist a new pending proposal. Path/content safety is enforced

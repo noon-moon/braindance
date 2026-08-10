@@ -82,7 +82,7 @@ Mechanics: [`instances.md`](instances.md).
 
 Sequenced so each phase leaves the repo coherent:
 
-1. **Evict the instance from the product.** Move `ctx/vps-setup.md`, the personal publish skill, and every hardcoded path out; replace the VPS runbook with a generic quickstart. *Precondition for showing anyone.*
+1. ~~**Evict the instance from the product.**~~ **Done.** `ctx/vps-setup.md` moved to the instance vault, the publish skill and docs genericized, the orphaned tournament spec dropped, and the VPS runbook replaced by the generic [`deploy.md`](deploy.md).
 2. **Feature gates.** One config, read by the app; everything that needs a key or a service defaults off.
 3. **Schema module.** Extract the grammar and constants, add conformance tests, generate `_meta/Tags.md`.
 4. **`bd export`.** Emit the deploy bundle.

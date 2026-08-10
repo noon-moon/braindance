@@ -5,7 +5,7 @@ name: Build & deploy api
 # change on `main` ships without a manual `ssh droplet + ./deploy.sh pull api`.
 #
 # The deploy job self-skips while VPS_HOST is empty (same pattern as
-# noon-moon-net's deploy.yml), so pushes still build + push the image without a
+# the site repo's deploy.yml), so pushes still build + push the image without a
 # red X before the box is wired up. Even with deploy skipped, the droplet's
 # systemd `braindance-sync.timer` still pulls the new image within a few
 # minutes — this workflow just makes the redeploy immediate.

@@ -12,7 +12,8 @@ Onboarding — cloning, wiring your shell, switching contexts — is in the [roo
 | [`skills.md`](skills.md) | Installing skills into a harness, keeping them synced, what ships |
 | [`worktrees.md`](worktrees.md) | Parallel agent sessions: the R1–R7 discipline, the `bd` workflow, landing |
 | [`orchestration.md`](orchestration.md) | Delegation doctrine (O1–O9). The one file here written *at* agents rather than about the system |
-| [`serving.md`](serving.md) | The admin app: the container model, `/srv/.env`, deploy, the capture pipeline |
+| [`deploy.md`](deploy.md) | Standing the desk up on a host you control, start to finish |
+| [`serving.md`](serving.md) | The admin app: the container model, `/srv/.env`, the capture pipeline |
 | [`publishing.md`](publishing.md) | Projecting `publish: true` notes onto a public site, and the privacy gates |
 
-Instance-specific planning docs live outside this directory in `ctx/` — e.g. `ctx/vps-setup.md`, one deployment's checklist rather than template documentation.
+Instance-specific material — one operator's domain, droplet and rollout status — deliberately lives **outside this repo**, in that instance's vault. See [`architecture.md`](architecture.md) on the product/instance boundary.

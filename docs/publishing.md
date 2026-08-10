@@ -1,6 +1,6 @@
 # Publishing — projecting vault notes to a public site
 
-How selected notes get from a private vault onto a public site. Companion to `ctx/vps-setup.md` (the VPS checklist) and [`serving.md`](serving.md) (the admin app); this doc owns the **projection**. The tool itself: [`ctx/tools/pub/README.md`](../ctx/tools/pub/README.md).
+How selected notes get from a private vault onto a public site. Companion to [`deploy.md`](deploy.md) (standing up a host) and [`serving.md`](serving.md) (the admin app); this doc owns the **projection**. The tool itself: [`ctx/tools/pub/README.md`](../ctx/tools/pub/README.md).
 
 ## The privacy problem
 
@@ -16,15 +16,15 @@ Two ways to guarantee it doesn't happen:
 ## Topology
 
 ```
-noon-moon/braindance   (PRIVATE — the instance + tooling)
+braindance          (the product — tooling)
   ctx/tools/pub/            the publish tool
         │
-noon-moon/vault        (PRIVATE — source of truth)
+<your vault>        (PRIVATE — source of truth)
   *.md                      flat vault; some notes tagged `publish: true`
         │
         │  npm run publish  ── select → gate → transform → mirror
         ▼
-noon-moon/noon-moon-net   (PUBLIC — generated content + Quartz)
+<your site repo>    (PUBLIC — generated content + Quartz)
   garden/content/<slug>.md     GENERATED flat → served at /garden/<slug>
   garden/content/<asset>       referenced assets, copied alongside the notes
   garden/content/index.md      hand-authored garden landing (never tool-owned)
@@ -41,7 +41,7 @@ The public repo **cannot leak a note it never contains** — that's the whole po
 ### The gate, and where it runs
 
 - **Projection time** — `npm run publish`, vault in hand. Blocks (nonzero exit) on any link or embed to a note outside the publish set, and on any unresolvable asset. This is the decision point: publish the target, unlink, or `--scrub`.
-- **Before you push** — `npm run verify` (`src/verify.ts`), **vault-blind**: re-audits the committed projection on its own terms — a wikilink to a note not in the published set, a missing asset, a disallowed frontmatter key, a surviving internal tag, a stale manifest entry. It catches what projection-time gating structurally cannot: a file **hand-edited after it was projected**, or a projection committed from a stale checkout. It reads only `<pub>/garden`, takes no `--vault`, and **exits 2 if given one** — reading the private side would convert the guarantee back into a procedural one. Run it against the garden repo before pushing; it belongs in `noon-moon-net`'s own Action too.
+- **Before you push** — `npm run verify` (`src/verify.ts`), **vault-blind**: re-audits the committed projection on its own terms — a wikilink to a note not in the published set, a missing asset, a disallowed frontmatter key, a surviving internal tag, a stale manifest entry. It catches what projection-time gating structurally cannot: a file **hand-edited after it was projected**, or a projection committed from a stale checkout. It reads only `<pub>/garden`, takes no `--vault`, and **exits 2 if given one** — reading the private side would convert the guarantee back into a procedural one. Run it against the site repo before pushing; it belongs in that repo's own Action too.
 
 ### Two ownership rules
 
@@ -113,5 +113,5 @@ The `/publish` skill in `ctx/skills/` wraps it for ergonomics; the core is the d
 - **`baseUrl`** — settled: CI computes it at build time (custom domain, user-site, or project path) and rewrites `quartz.config.yaml`, so the subpath footgun is handled centrally. Author site links **relative**.
 - **Scoped index (MOC) notes** — a published `scope` note's `Contains`/`Contained By` are stripped; Quartz's own graph and backlinks stand in rather than a hand-built index.
 - **Settled: the verify gate.** `src/verify.ts` is implemented. What it deliberately does *not* do is judge content — it cannot know that a note you tagged `publish: true` says something you'd rather it didn't. It checks that the projection is internally consistent and leaks no unpublished title; deciding what belongs in P is still yours.
-- **Open: wire `verify` into `noon-moon-net`'s Action.** On the separate-repo path it currently runs only when a human remembers to. The public repo's own deploy workflow should run it over its committed `garden/` before building — same script, `--pub .`, no vault anywhere near it.
+- **Open: wire `verify` into the site repo's Action.** On the separate-repo path it currently runs only when a human remembers to. The public repo's own deploy workflow should run it over its committed `garden/` before building — same script, `--pub .`, no vault anywhere near it.
 - **Open: assets dir** — reconcile the vault's `assets/` + `attachments/` layout with Quartz's expected static path.

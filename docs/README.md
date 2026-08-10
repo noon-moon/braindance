@@ -6,6 +6,7 @@ Onboarding — cloning, wiring your shell, switching contexts — is in the [roo
 
 | Doc | What it covers |
 |---|---|
+| [`architecture.md`](architecture.md) | **Start here.** What braindance is, the three goals every change is measured against, the product/instance boundary, and the roadmap |
 | [`instances.md`](instances.md) | Contexts in full: the registry, the resolution ladder, `configure`, `bd use`/`where`, the guard hooks |
 | [`vault.md`](vault.md) | What braindance requires of a vault (and what it doesn't), search triage, `_ephemeral` scratch, daily notes |
 | [`skills.md`](skills.md) | Installing skills into a harness, keeping them synced, what ships |

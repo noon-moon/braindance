@@ -4,7 +4,9 @@ braindance is a **meta-repository for agentic work**: a personal knowledge and w
 
 **This is the canonical, fuller agent guide.** [`AGENTS.md`](AGENTS.md) is the cross-tool entry point (the [AGENTS.md](https://agents.md) standard, read by non-Claude harnesses) and the **canonical home of the multi-agent worktree discipline (R1–R7) and orchestration doctrine (O1–O9)**. This file states the vault, repo, and serving guardrails and points to `docs/` for the mechanics.
 
-**Template vs. fork — where changes go.** This repo is a template. Generic changes — guidelines, conventions, tooling, skills, docs, this file, AGENTS.md — belong in the **core template repo** (`noon-moon/braindance`, branch `master`) and NEVER get committed to a personal fork/instance. A fork holds only instance-specific content (real vault notes, its own homepage/`www`, `/srv` deploy specifics) and **consumes template updates via `git merge upstream/master`**. If you find yourself about to commit a generic improvement to a fork, stop and land it on the core template instead.
+**This repo is the PRODUCT; your data is an instance.** Everything here must be generic enough to hand to someone else — tooling, skills, docs, the app. Instance-specific content (real vault notes, one operator's domain or droplet, `/srv` specifics) belongs to an *instance*: the vault repo plus its machine-local config, never this checkout. Before committing, ask whether a stranger cloning this repo would want the change; if not, it belongs in your instance.
+
+> The old fork-and-`git merge upstream/master` model is **retired** — braindance is cloned and deployed, not forked, so there is nothing to merge back. Eviction of the instance content still in this repo is phase 1 of the roadmap in [`docs/architecture.md`](docs/architecture.md).
 
 ## Layout
 
@@ -30,6 +32,7 @@ The common path (a coding task, a vault lookup, a worktree session) is fully ser
 
 | When you are… | Read |
 |---|---|
+| making a design call, or wondering whether a feature belongs here at all | [`docs/architecture.md`](docs/architecture.md) — the product definition and the three goals every change is measured against |
 | running a worktree session, landing a PR, coordinating a fleet (full R1–R7 + the `bd` workflow) | [`docs/worktrees.md`](docs/worktrees.md) |
 | orchestrating a fleet of sub-agents (delegation doctrine O1–O9, model right-sizing) | [`docs/orchestration.md`](docs/orchestration.md) |
 | searching/creating/restructuring vault notes, or writing scratch (what braindance requires of a vault, triage tree, `_ephemeral` naming, daily notes) | [`docs/vault.md`](docs/vault.md) |
@@ -64,7 +67,7 @@ Target repos you're actively working on resolve under `${REPOS_PATH:-$BD_ROOT}/<
 
 Multiple agent sessions must **never share the one working tree** — a shared index/HEAD means one session's `git add -A` sweeps another's half-written files, commits interleave, and `index.lock` contention stalls git. The rule: **one terminal = one git worktree = one branch.**
 
-- The main tree (the braindance checkout, e.g. `~/dev/braindance`) is **sacred and read-only to agents**: it stays on `main`, it's the Obsidian window and the integration point. **Agents don't write here.**
+- The main tree (the braindance checkout — wherever you cloned it; `bd where` reports it) is **sacred and read-only to agents**: it stays on `main`, it's the Obsidian window and the integration point. **Agents don't write here.**
 - Agent sessions work in sibling worktrees under `~/dev/bd-wt/<task>` (outside the vault, so Obsidian never indexes them), cut off **freshly-fetched `origin/main`** and **rebased before every push**. Helper `bd` (in `ctx/tools/sys/wt.sh`) bakes this in: `bd new <task>` → work → `bd land` → `bd rm <task>`.
 - **Always address a worktree by its ABSOLUTE path**; never rely on an ambient `cwd` that could resolve into the sacred main tree.
 
@@ -73,7 +76,7 @@ Full discipline (R1–R7), the `bd` workflow, and fleet tooling: [`AGENTS.md`](A
 ## Conventions
 
 - **Commits** — imperative summaries. On a personal instance, vault edits are conventionally prefixed `Vault: <summary — detail>`; keep that prefix scheme (`Skills:`, `Tools:`, `Docs:`, `Deploy:`) for other areas.
-- **Template, not fork** — generic/guideline/tooling/skill/doc changes land on the core template (`noon-moon/braindance`, `master`); a fork carries only instance-specific content and pulls the rest via `git merge upstream/master`. (See the note at the top of this file.)
+- **Product, not instance** — everything committed here must be generic enough to hand to a stranger; instance-specific content lives in the vault repo and machine-local config. (See the note at the top of this file, and [`docs/architecture.md`](docs/architecture.md).)
 - **Output format** — write Markdown, and put every span of code, console/terminal output, query, config, or structured data in a fenced code block with a language hint (```python, ```sql, ```console, ```json, …). This holds for what we write to `_ephemeral`, to vault notes, and back to the user — never paste code or command output as bare prose.
 - **Edit skills in `ctx/skills/`, never the installed harness copy** under `.claude/commands/` — the change would be lost or hit the wrong file. (Mechanics: [`docs/vault.md`](docs/vault.md).)
 - **Publishing goes to a separate site repo.** `publish: true` notes are projected into the public site repo, which serves them at `/garden`. **The publish tool has no default target** — pass `--pub` or set `PUB_REPO`; it exits rather than guess, because a wrong guess writes private notes somewhere nobody is watching. Never hand-edit `garden/content/<slug>.md`: machine-owned by `ctx/tools/pub`, overwritten on the next run. That the site is a different repo *is* the privacy guarantee — it cannot leak a note it was never given. (Detail: [`docs/publishing.md`](docs/publishing.md).)

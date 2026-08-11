@@ -88,6 +88,16 @@ jobs:
   # — which would work, but means a human-owned credential in the release path.
   image:
     needs: version
+    # REQUIRED — its absence is why the first run of this workflow died with a
+    # bare `startup_failure` and no annotation saying why. A CALLED workflow's
+    # token permissions are capped by what the calling job grants, unlike a
+    # top-level job, which may request more than the repo default. This repo's
+    # default_workflow_permissions is `read`, so deploy-api.yml's
+    # `packages: write` exceeded the cap and the run was rejected before a single
+    # step executed. Keep in sync with the permissions its jobs declare.
+    permissions:
+      contents: read
+      packages: write
     uses: ./.github/workflows/deploy-api.yml
     with:
       version: ${{ needs.version.outputs.version }}

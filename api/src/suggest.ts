@@ -291,20 +291,23 @@ export async function suggestFor(noteText: string, scopes: ScopeBlurb[]): Promis
 
   const res = await callModel(() => client().messages.create({
     model,
-    // A ceiling, not a budget. Thinking is on by default on this model and counts
-    // against it, so it is set well clear of a six-field object rather than tight
-    // around one — a truncated response is a wasted call, and low effort keeps
-    // the actual spend nowhere near this.
+    // A ceiling, not a budget — set well clear of a six-field object rather than
+    // tight around it, because a truncated response is a wasted call. The default
+    // model (Haiku 4.5) does no thinking unless asked, so real spend is nowhere
+    // near this.
     max_tokens: 8192,
     system: systemPrompt(scopes, new Date().toISOString().slice(0, 10)),
     // The ONLY untrusted content in the request, and it is fenced.
     messages: [{ role: "user", content: `${NOTE_OPEN}\n${body}\n${NOTE_CLOSE}` }],
     output_config: {
-      // Classification, not reasoning — the cheapest setting that does the job.
-      // Thinking is left at its default rather than disabled: on this model
-      // disabling it is the setting that leaks reasoning into the response text,
-      // and low effort already keeps the call small.
-      effort: "low",
+      // NO `effort` HERE, deliberately. Haiku 4.5 — the default model — REJECTS
+      // output_config.effort with a 400, and this call has one shape for every
+      // model, so an effort setting that suits Opus would break the default for
+      // everyone. The MODEL TIER is the cost lever now: this is a classification,
+      // so choose a cheap model rather than a cheap setting on an expensive one.
+      // If you ever want effort back, gate it on the model — and know that
+      // string-matching model names is exactly how the schema drift in this repo
+      // started, so prefer just not sending it.
       format: { type: "json_schema", schema: SUGGESTION_SCHEMA as unknown as Record<string, unknown> },
     },
   }));

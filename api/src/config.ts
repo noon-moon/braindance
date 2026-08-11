@@ -64,7 +64,12 @@ export function aiSuggestConfig(env: NodeJS.ProcessEnv = process.env): AiSuggest
   const interval = Number(env.SUGGEST_INTERVAL_MS ?? 60000);
   return {
     enabled: env.AI_SUGGEST === "1" && Boolean(env.ANTHROPIC_API_KEY?.trim()),
-    model: env.AI_MODEL?.trim() || "claude-opus-5",
+    // Haiku is the right tier for this job: one small, schema-constrained
+    // classification per capture, with no reasoning required — at 1/5th Opus's
+    // price in both directions. NOTE: Haiku 4.5 REJECTS `output_config.effort`,
+    // which is why suggest.ts no longer sends it. Read that comment before
+    // pointing this at a model whose cost you'd want to tune with effort.
+    model: env.AI_MODEL?.trim() || "claude-haiku-4-5",
     intervalMs: Number.isFinite(interval) && interval >= 5000 ? interval : 60000,
   };
 }

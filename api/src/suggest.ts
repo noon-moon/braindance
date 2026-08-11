@@ -292,22 +292,25 @@ export async function suggestFor(noteText: string, scopes: ScopeBlurb[]): Promis
   const res = await callModel(() => client().messages.create({
     model,
     // A ceiling, not a budget — set well clear of a six-field object rather than
-    // tight around it, because a truncated response is a wasted call. The default
-    // model (Haiku 4.5) does no thinking unless asked, so real spend is nowhere
-    // near this.
+    // tight around it, because a truncated response is a wasted call. Thinking
+    // counts against it on the default model, which is why it is not tight.
     max_tokens: 8192,
     system: systemPrompt(scopes, new Date().toISOString().slice(0, 10)),
     // The ONLY untrusted content in the request, and it is fenced.
     messages: [{ role: "user", content: `${NOTE_OPEN}\n${body}\n${NOTE_CLOSE}` }],
     output_config: {
-      // NO `effort` HERE, deliberately. Haiku 4.5 — the default model — REJECTS
-      // output_config.effort with a 400, and this call has one shape for every
-      // model, so an effort setting that suits Opus would break the default for
-      // everyone. The MODEL TIER is the cost lever now: this is a classification,
-      // so choose a cheap model rather than a cheap setting on an expensive one.
-      // If you ever want effort back, gate it on the model — and know that
-      // string-matching model names is exactly how the schema drift in this repo
-      // started, so prefer just not sending it.
+      // Sonnet 5 runs adaptive thinking at effort `high` when nothing is sent,
+      // which is real spend on what is ultimately a labelling call — so ask for
+      // the cheapest setting that does the job. Thinking is left ON rather than
+      // disabled: on Opus-tier models (a legitimate AI_MODEL override) disabling
+      // it is the setting that leaks reasoning into the response text, and low
+      // effort already keeps the call small.
+      //
+      // THIS LINE CONSTRAINS AI_MODEL. Haiku 4.5 rejects `effort` outright with
+      // a 400, so an override must be Sonnet- or Opus-tier. If you ever need
+      // Haiku, drop this key rather than trying to gate it by model name —
+      // string-matching model names is how the schema drift in this repo started.
+      effort: "low",
       format: { type: "json_schema", schema: SUGGESTION_SCHEMA as unknown as Record<string, unknown> },
     },
   }));

@@ -64,12 +64,18 @@ export function aiSuggestConfig(env: NodeJS.ProcessEnv = process.env): AiSuggest
   const interval = Number(env.SUGGEST_INTERVAL_MS ?? 60000);
   return {
     enabled: env.AI_SUGGEST === "1" && Boolean(env.ANTHROPIC_API_KEY?.trim()),
-    // Haiku is the right tier for this job: one small, schema-constrained
-    // classification per capture, with no reasoning required — at 1/5th Opus's
-    // price in both directions. NOTE: Haiku 4.5 REJECTS `output_config.effort`,
-    // which is why suggest.ts no longer sends it. Read that comment before
-    // pointing this at a model whose cost you'd want to tune with effort.
-    model: env.AI_MODEL?.trim() || "claude-haiku-4-5",
+    // Sonnet, not Haiku, and deliberately not Opus. Cost is not the deciding
+    // factor at personal capture volume — the whole spread is a couple of
+    // dollars a month — and latency doesn't matter either, since this runs in a
+    // background worker on an interval, not on anyone's tap. What matters is how
+    // often the suggestion is RIGHT: every bad scope or clumsy title is a
+    // correction at the desk, which is the one thing this feature exists to
+    // avoid. Matching a free-text note against ~36 bespoke scopes is intent
+    // work, not keyword overlap, and that is where the tiers actually differ.
+    //
+    // CONSTRAINT: suggest.ts sends `output_config.effort`, which Haiku 4.5
+    // REJECTS with a 400. An override here must be a Sonnet- or Opus-tier model.
+    model: env.AI_MODEL?.trim() || "claude-sonnet-5",
     intervalMs: Number.isFinite(interval) && interval >= 5000 ? interval : 60000,
   };
 }

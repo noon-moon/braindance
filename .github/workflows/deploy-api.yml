@@ -13,9 +13,14 @@ name: Build & deploy api
 # TAG SCHEME — `:latest` means the newest RELEASE, not the newest commit:
 #
 #   :latest          newest published release   ← what a deployment should track
-#   :1.4.2 / :1.4    that release, immutably    ← pin when you want no surprises
-#   :edge            newest master build        ← opt in to unreleased work
+#   :1.4.2           that release, immutably    ← pin when you want no surprises
+#   :edge            newest master build        ← see below
 #   :sha-abc1234     one exact commit
+#
+# Since release.yml cuts a release on EVERY push to master, `:edge` and `:latest`
+# normally point at the same commit. `:edge` is the fallback that still gets you
+# a testable image when a commit was `[skip release]`'d or release creation
+# failed — not a separate development line.
 #
 # That split is the point of cutting releases at all. A box tracking `:latest`
 # gets deliberate versions rather than every merge, and `ops/braindance-sync.timer`
@@ -23,8 +28,13 @@ name: Build & deploy api
 # untested master commit to a running instance. Set API_IMAGE to `:edge` if you
 # actually want the bleeding edge on your own box.
 #
-# Cutting a release: push a `vX.Y.Z` tag and publish a GitHub Release for it.
-# The release event is what produces the versioned tags and moves `:latest`.
+# There is no `:MAJOR.MINOR` tag: release.yml increments the minor on every
+# release, so such a tag could never aggregate more than one version. (The `:0.1`
+# published before that policy existed is left alone rather than deleted.)
+#
+# Releases are cut automatically by release.yml on every push to master — see
+# that file for the policy. Publishing a GitHub Release by hand also works and
+# takes the `release:` path below.
 
 on:
   push:
@@ -35,15 +45,31 @@ on:
       - "api/**"
       - "docker-compose.yml"
       - ".github/workflows/deploy-api.yml"
-  # Versioned build. Deliberately a separate trigger rather than adding `tags:`
-  # to the push block above: `paths` filters apply to tag pushes too, so a
-  # release tagged on a commit that didn't touch api/** would silently not build.
+  # A release published BY A HUMAN. Deliberately a separate trigger rather than
+  # adding `tags:` to the push block above: `paths` filters apply to tag pushes
+  # too, so a release tagged on a commit that didn't touch api/** would silently
+  # not build. Note this does NOT fire for releases cut by release.yml — GitHub
+  # does not run workflows for events raised by GITHUB_TOKEN — which is why the
+  # workflow_call entry below exists.
   release:
     types: [published]
+  # Called by release.yml with the version it just cut. `version` is what makes
+  # this build a released one: it produces `:X.Y.Z` and moves `:latest`.
+  workflow_call:
+    inputs:
+      version:
+        description: Semver (no leading v) to tag the image with, e.g. 0.2.0
+        type: string
+        required: true
   workflow_dispatch:
 
 concurrency:
-  group: deploy-api
+  # Separate lanes for a released build and a plain master build. Both fire for
+  # the SAME commit — release.yml calls this workflow while the push trigger also
+  # runs it — so a shared group with cancel-in-progress would let one cancel the
+  # other. Losing the released build is the bad case: a version tag exists with
+  # no image ever published for it. Keyed on the version so they can't collide.
+  group: deploy-api-${{ inputs.version || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -60,8 +86,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       # Compute the tag list from the event. See the TAG SCHEME note at the top.
-      # `latest` is attached only by the semver rules below, so a master build
-      # can never move it.
+      # Two ways a build counts as RELEASED — a human-published release (the
+      # `type=semver` rules, which read the git tag) and a release.yml call (the
+      # `inputs.version` rules, since a called workflow's ref is still master and
+      # semver has no tag to read). `:latest` is attached by those two paths
+      # only, so a plain master build can never move it.
       - uses: docker/metadata-action@v5
         id: meta
         with:
@@ -71,9 +100,13 @@ jobs:
           images: ghcr.io/${{ github.repository }}/api
           tags: |
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ inputs.version }},enable=${{ inputs.version != '' }}
+            type=raw,value=latest,enable=${{ inputs.version != '' }}
             type=raw,value=edge,enable={{is_default_branch}}
             type=sha,prefix=sha-
+          # latest=auto attaches `:latest` on a semver git tag (the human path).
+          # The workflow_call path adds it explicitly above, because there is no
+          # tag for auto to read.
           flavor: |
             latest=auto
       - uses: docker/build-push-action@v6

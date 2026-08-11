@@ -1,0 +1,94 @@
+name: Release
+
+# Every push to master cuts the next version and publishes the image for it, so
+# `:latest` always points at current master and there is always a tag to pin.
+#
+# POLICY: the MINOR field increments (0.1.0 → 0.2.0 → 0.3.0). That is a
+# deliberate choice, not semver in the usual sense — the number is a monotonic
+# release counter rather than a signal of change magnitude. Two consequences
+# worth knowing:
+#   - A `:MAJOR.MINOR` tag would be pointless here, because every release gets
+#     its own minor and it could never aggregate more than one version. That is
+#     why deploy-api.yml no longer emits one.
+#   - "Did this release break anything?" is not answerable from the version.
+#     Read the release notes; they are generated from the commits.
+# Switching to patch-per-commit later is a one-line change below.
+#
+# EVERY push cuts a release, including docs-only ones — you get a version whose
+# image is byte-identical in content to the last. That is the cost of "no manual
+# step", and it is cheap. Two ways out: put `[skip release]` in a commit message
+# for a one-off, or add a `paths:` filter below to restrict releasing to changes
+# that can actually affect the image (`api/**`, `docker-compose.yml`).
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+# Serialize. Two merges landing together would otherwise both read the same
+# "latest tag" and try to cut the same version — the second fails on a duplicate
+# tag, and the release it should have cut never happens. `cancel-in-progress` is
+# deliberately false: cancelling mid-run can leave a tag created with no image
+# built for it, which is worse than waiting.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    # head_commit is null on workflow_dispatch, so gate on the event first.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      !contains(github.event.head_commit.message, '[skip release]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the tag + release
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags are how the current version is discovered
+
+      - name: Compute the next version
+        id: next
+        run: |
+          set -euo pipefail
+          # Existing releases only. `sort -V` orders 0.9.0 before 0.10.0, which a
+          # lexical sort does not — that is the bug this line exists to avoid.
+          latest=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sed 's/^v//' | sort -V | tail -1)
+          if [ -z "$latest" ]; then
+            next=0.1.0 # no releases yet — start the line
+          else
+            major=${latest%%.*}
+            rest=${latest#*.}
+            minor=${rest%%.*}
+            next="${major}.$((minor + 1)).0" # ← the bump. Patch instead: "${major}.${minor}.$((patch + 1))"
+          fi
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "previous=${latest:-none} → next=$next"
+
+      - name: Cut the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.next.outputs.version }}" \
+            --target "${{ github.sha }}" \
+            --title "v${{ steps.next.outputs.version }}" \
+            --generate-notes
+
+  # Build and publish the image FOR that version.
+  #
+  # This is a workflow_call rather than letting deploy-api.yml's `release:`
+  # trigger fire, because it cannot: GitHub deliberately does not run workflows
+  # in response to events raised by GITHUB_TOKEN, precisely to stop a workflow
+  # triggering itself forever. A release cut by the job above is therefore
+  # invisible to `release: published`, and an automated release would publish no
+  # image at all. Calling the build directly sidesteps that without needing a PAT
+  # — which would work, but means a human-owned credential in the release path.
+  image:
+    needs: version
+    uses: ./.github/workflows/deploy-api.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+    secrets: inherit

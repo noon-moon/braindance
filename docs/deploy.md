@@ -55,11 +55,11 @@ Which tag you point `API_IMAGE` at decides how the box updates itself:
 
 | Tag | Means | Use when |
 |---|---|---|
-| `:latest` | newest **release** | Default. The box self-updates, but only to deliberate versions. |
+| `:latest` | newest **release** | Default. A release is cut automatically on every push to master, so this tracks master — one version behind nothing. |
 | `:1.4.2` | that release, immutably | You want to upgrade on purpose and never be surprised. |
-| `:edge` | newest `master` build | You want unreleased work and accept it's untested. |
+| `:edge` | newest `master` build | Fallback only — a release is cut on every push, so this normally equals `:latest`. It differs when a commit was `[skip release]`'d or release creation failed. |
 
-`:latest` deliberately tracks releases rather than every merge to `master`, because `ops/braindance-sync.timer` pulls on a schedule with nobody watching — it should never hand an untested commit to a running instance.
+Every tag here is immutable except `:latest`, which moves with each release. Pin `:X.Y.Z` if you want a box that never changes under you — that is the difference the version numbers buy.
 
 **Building your own instead?** Push to your fork and `.github/workflows/deploy-api.yml` publishes to `ghcr.io/<owner>/<repo>/api`; set `API_IMAGE` to that path. A private package needs `docker login ghcr.io -u <you> --password-stdin` with a `read:packages` token on the host.
 

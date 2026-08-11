@@ -10,6 +10,22 @@ name: Build & deploy api
 # systemd `braindance-sync.timer` still pulls the new image within a few
 # minutes — this workflow just makes the redeploy immediate.
 
+# TAG SCHEME — `:latest` means the newest RELEASE, not the newest commit:
+#
+#   :latest          newest published release   ← what a deployment should track
+#   :1.4.2 / :1.4    that release, immutably    ← pin when you want no surprises
+#   :edge            newest master build        ← opt in to unreleased work
+#   :sha-abc1234     one exact commit
+#
+# That split is the point of cutting releases at all. A box tracking `:latest`
+# gets deliberate versions rather than every merge, and `ops/braindance-sync.timer`
+# — which pulls on a schedule with nobody watching — therefore can't hand an
+# untested master commit to a running instance. Set API_IMAGE to `:edge` if you
+# actually want the bleeding edge on your own box.
+#
+# Cutting a release: push a `vX.Y.Z` tag and publish a GitHub Release for it.
+# The release event is what produces the versioned tags and moves `:latest`.
+
 on:
   push:
     # main (fork instances) + master (this template repo's default branch) — so
@@ -18,6 +34,12 @@ on:
     paths:
       - "api/**"
       - "docker-compose.yml"
+      - ".github/workflows/deploy-api.yml"
+  # Versioned build. Deliberately a separate trigger rather than adding `tags:`
+  # to the push block above: `paths` filters apply to tag pushes too, so a
+  # release tagged on a commit that didn't touch api/** would silently not build.
+  release:
+    types: [published]
   workflow_dispatch:
 
 concurrency:
@@ -37,14 +59,29 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # Compute the tag list from the event. See the TAG SCHEME note at the top.
+      # `latest` is attached only by the semver rules below, so a master build
+      # can never move it.
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          # Resolves to ghcr.io/<owner>/<repo>/api for whatever repo this runs in
+          # (a fork resolves to that fork's path), matching API_IMAGE in the
+          # host's /srv/.env.
+          images: ghcr.io/${{ github.repository }}/api
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=edge,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+          flavor: |
+            latest=auto
       - uses: docker/build-push-action@v6
         with:
           context: ./api
           push: true
-          # Resolves to ghcr.io/<owner>/<repo>/api:latest for whatever repo this
-          # runs in (a fork resolves to that fork's path), matching API_IMAGE in
-          # the droplet's /srv/.env (and .env.example's OWNER/REPO placeholder).
-          tags: ghcr.io/${{ github.repository }}/api:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           # Surfaced at /health, so a deploy can be verified from a client
           # instead of by SSHing to the box.
           build-args: |

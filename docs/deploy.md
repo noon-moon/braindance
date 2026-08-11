@@ -43,7 +43,7 @@ curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker <you> && newgrp docker
 ```
 
-## 2. Pick an image tag
+## 2. The image
 
 The api ships as a **public** container image. Nothing to build, no GitHub account needed, no `docker login` — the host pulls it anonymously:
 
@@ -51,15 +51,9 @@ The api ships as a **public** container image. Nothing to build, no GitHub accou
 docker pull ghcr.io/noon-moon/braindance/api:latest    # optional; deploy.sh pulls it anyway
 ```
 
-Which tag you point `API_IMAGE` at decides how the box updates itself:
+`:latest` is the only tag published, and it always means the newest build of the default branch. It's what `API_IMAGE` points at and what `ops/braindance-sync.timer` pulls, so the box tracks upstream on its own.
 
-| Tag | Means | Use when |
-|---|---|---|
-| `:latest` | newest **release** | Default. A release is cut automatically on every push to master, so this tracks master — one version behind nothing. |
-| `:1.4.2` | that release, immutably | You want to upgrade on purpose and never be surprised. |
-| `:edge` | newest `master` build | Fallback only — a release is cut on every push, so this normally equals `:latest`. It differs when a commit was `[skip release]`'d or release creation failed. |
-
-Every tag here is immutable except `:latest`, which moves with each release. Pin `:X.Y.Z` if you want a box that never changes under you — that is the difference the version numbers buy.
+**To freeze a box on one build**, pin a digest rather than a tag: `/health` reports the commit SHA the container is running, the GitHub Packages page lists the matching digest, and `API_IMAGE=ghcr.io/noon-moon/braindance/api@sha256:<digest>` holds it there. That is also how you roll back.
 
 **Building your own instead?** Push to your fork and `.github/workflows/deploy-api.yml` publishes to `ghcr.io/<owner>/<repo>/api`; set `API_IMAGE` to that path. A private package needs `docker login ghcr.io -u <you> --password-stdin` with a `read:packages` token on the host.
 

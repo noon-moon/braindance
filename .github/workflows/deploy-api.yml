@@ -10,31 +10,19 @@ name: Build & deploy api
 # systemd `braindance-sync.timer` still pulls the new image within a few
 # minutes — this workflow just makes the redeploy immediate.
 
-# TAG SCHEME — `:latest` means the newest RELEASE, not the newest commit:
+# ONE TAG: `:latest`, which always means the newest build of the default branch.
+# Deployments track it and the host's timer pulls it — that is the whole scheme.
 #
-#   :latest          newest published release   ← what a deployment should track
-#   :1.4.2           that release, immutably    ← pin when you want no surprises
-#   :edge            newest master build        ← see below
-#   :sha-abc1234     one exact commit
+# There was briefly a versioned one (per-commit releases, `:X.Y.Z`, `:edge`,
+# reusable-workflow plumbing). It was removed as more machinery than a personal
+# deployment earns. Rolling back is still possible without it: `/health` reports
+# the commit SHA the container is running, and any previous image can be pinned
+# by digest — `API_IMAGE=ghcr.io/OWNER/REPO/api@sha256:<digest>`, which the
+# GitHub Packages page lists. Reach for tags again when more than one machine
+# runs this and they need to differ.
 #
-# Since release.yml cuts a release on EVERY push to master, `:edge` and `:latest`
-# normally point at the same commit. `:edge` is the fallback that still gets you
-# a testable image when a commit was `[skip release]`'d or release creation
-# failed — not a separate development line.
-#
-# That split is the point of cutting releases at all. A box tracking `:latest`
-# gets deliberate versions rather than every merge, and `ops/braindance-sync.timer`
-# — which pulls on a schedule with nobody watching — therefore can't hand an
-# untested master commit to a running instance. Set API_IMAGE to `:edge` if you
-# actually want the bleeding edge on your own box.
-#
-# There is no `:MAJOR.MINOR` tag: release.yml increments the minor on every
-# release, so such a tag could never aggregate more than one version. (The `:0.1`
-# published before that policy existed is left alone rather than deleted.)
-#
-# Releases are cut automatically by release.yml on every push to master — see
-# that file for the policy. Publishing a GitHub Release by hand also works and
-# takes the `release:` path below.
+# The `v0.1.0` / `v0.2.0` releases and their images predate the removal. They are
+# left in place — they are valid pins and cost nothing.
 
 on:
   push:
@@ -45,35 +33,13 @@ on:
       - "api/**"
       - "docker-compose.yml"
       - ".github/workflows/deploy-api.yml"
-  # A release published BY A HUMAN. Deliberately a separate trigger rather than
-  # adding `tags:` to the push block above: `paths` filters apply to tag pushes
-  # too, so a release tagged on a commit that didn't touch api/** would silently
-  # not build. Note this does NOT fire for releases cut by release.yml — GitHub
-  # does not run workflows for events raised by GITHUB_TOKEN — which is why the
-  # workflow_call entry below exists.
-  release:
-    types: [published]
-  # Called by release.yml with the version it just cut. `version` is what makes
-  # this build a released one: it produces `:X.Y.Z` and moves `:latest`.
-  workflow_call:
-    inputs:
-      version:
-        description: Semver (no leading v) to tag the image with, e.g. 0.2.0
-        type: string
-        required: true
   workflow_dispatch:
 
 concurrency:
-  # Two builds fire for the SAME commit — release.yml calls this workflow while
-  # the push trigger also runs it — so cancel-in-progress MUST stay false. With
-  # it on, one cancels the other, and the bad case is losing the released build:
-  # a version tag that exists with no image ever published for it. Queueing costs
-  # about forty seconds; a tag with no image costs a broken `:latest`.
-  # (Keying the group on `inputs.version` would separate them too, but `inputs`
-  # is not dependably available in this expression when the workflow is entered
-  # by push rather than by call — not worth the risk on a build this short.)
+  # One build per commit now, so superseding an in-flight one is safe again:
+  # whatever it would have published, the newer run publishes instead.
   group: deploy-api
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build-push:
@@ -88,38 +54,17 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Compute the tag list from the event. See the TAG SCHEME note at the top.
-      # Two ways a build counts as RELEASED — a human-published release (the
-      # `type=semver` rules, which read the git tag) and a release.yml call (the
-      # `inputs.version` rules, since a called workflow's ref is still master and
-      # semver has no tag to read). `:latest` is attached by those two paths
-      # only, so a plain master build can never move it.
-      - uses: docker/metadata-action@v5
-        id: meta
-        with:
-          # Resolves to ghcr.io/<owner>/<repo>/api for whatever repo this runs in
-          # (a fork resolves to that fork's path), matching API_IMAGE in the
-          # host's /srv/.env.
-          images: ghcr.io/${{ github.repository }}/api
-          tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=${{ inputs.version }},enable=${{ inputs.version != '' }}
-            type=raw,value=latest,enable=${{ inputs.version != '' }}
-            type=raw,value=edge,enable={{is_default_branch}}
-            type=sha,prefix=sha-
-          # latest=auto attaches `:latest` on a semver git tag (the human path).
-          # The workflow_call path adds it explicitly above, because there is no
-          # tag for auto to read.
-          flavor: |
-            latest=auto
       - uses: docker/build-push-action@v6
         with:
           context: ./api
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          # Resolves to ghcr.io/<owner>/<repo>/api:latest for whatever repo this
+          # runs in (a fork resolves to that fork's path), matching API_IMAGE in
+          # the host's /srv/.env.
+          tags: ghcr.io/${{ github.repository }}/api:latest
           # Surfaced at /health, so a deploy can be verified from a client
-          # instead of by SSHing to the box.
+          # instead of by SSHing to the box — and it is how you identify which
+          # image to pin by digest if you ever need to roll back.
           build-args: |
             BUILD_SHA=${{ github.sha }}
 

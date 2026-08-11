@@ -4,10 +4,10 @@ The whole serving layer is **optional**. braindance works with nothing but a vau
 
 ## The model
 
-You build the app into a container image, deploy it to **your own infrastructure**, and it works against a local checkout of your vault, syncing periodically:
+You deploy a container image to **your own infrastructure**, where it works against a local checkout of your vault and syncs periodically. The image is published publicly, so running it needs no build and no GitHub account — building your own is the fork path, not the default:
 
 ```
-push to api/**  →  CI builds ghcr.io/<owner>/<repo>/api:latest
+a release  →  CI publishes ghcr.io/noon-moon/braindance/api:latest (public)
                         │
         the box pulls it itself (ops/braindance-sync.timer) — CI never SSHes in
                         ▼
@@ -37,7 +37,7 @@ Instance values live in `/srv/.env` on the host (`chmod 600`, never committed). 
 | Var | Used by | Purpose |
 |---|---|---|
 | `DOMAIN` | Caddy (`{$DOMAIN}`) | Public hostname for TLS + routing |
-| `API_IMAGE` | Compose interpolation | Your GHCR image, e.g. `ghcr.io/you/your-repo/api:latest` |
+| `API_IMAGE` | Compose interpolation | `ghcr.io/noon-moon/braindance/api:latest` — or `:X.Y.Z` to pin, `:edge` for master. See [`deploy.md`](deploy.md). |
 | `TAILSCALE_IP` | Compose interpolation | The only interface the api binds |
 | `REPO_PATH` | api + compose mount | The vault checkout the api owns |
 | `VAULT_SUBDIR` | api | Vault path *within* that checkout; empty for a standalone vault repo |
@@ -95,7 +95,7 @@ The api is a **local-first git store**: a capture writes a file + commits it to 
 - **Projection is what makes a calendar possible.** The vault holds only the CURRENT instance of a recurring atom — Obsidian Tasks writes the next one when you complete it — so a weekly chore exists exactly once on disk and would appear on a calendar exactly once. `occurrencesBetween()` expands an atom across a date window, marking every computed instance `projected: true`; only the real one can be ticked. An atom whose rule we can't parse yields just its real instance, which is the honest answer. A `when done` rule projects on its nominal cadence: the true next date depends on when you finish, but a calendar is asking about the pattern. **Set `TZ` in `/srv/.env`** (it's in `.env.example`) or the container's UTC day boundary decides what "Today" means — which in the Americas rolls over mid-afternoon, so an atom due tomorrow starts reading as due today.
 - **`GET /todo.ics` — subscribe once, see obligations where you already look.** An iCalendar feed of every open, dated atom, for Apple Calendar (or anything that speaks iCalendar): add it as a *subscribed calendar* at `webcal://<host>:3000/todo.ics` and tasks appear next to real events with nothing to maintain. Recurrence is emitted as **RRULE rather than expanded**, so the series is unbounded and a rule change re-expands everywhere instead of stranding stale copies; a rule `parseRecurrence` can't read emits a single dated event rather than a guess. Timed atoms (`@14:00`) become **floating local-time** events — no TZID, no VTIMEZONE block to get wrong, and "14:00 wherever you are" is what the notation means. UIDs are content-derived (note + text) so a re-fetch updates an event rather than duplicating it. Completed, cancelled and undated atoms are absent by construction. Read-only, Tailscale-only, no auth of its own — the URL is the credential. Knobs: `PUBLIC_BASE_URL` (adds a link back to the note), `TODO_ICS_ALARM_MIN` / `TODO_ICS_ALLDAY_ALARM_AT` (both comma-separated, both unset ⇒ silent). The two are separate because an all-day event starts at MIDNIGHT: a minutes-before trigger on one fires the night before, so all-day atoms take times of day on their own day (`09:00,18:00`) while timed atoms take minutes before the start. Setting only the timed knob still gives all-day atoms a 09:00 alert rather than inheriting an offset that would misfire. Client-controlled refresh, and it only refreshes while Tailscale is up.
 - **`/health` is the deploy diagnostic.** It reports the **build** the container is running (`version`, the commit SHA baked in at image build; `dev` when run from source) and the **task/calendar knobs it actually resolved** — `tz` and the day it thinks it is, the ics base URL, both alarm lists, and whether the suggestion worker is armed and on which model. From outside the box a stale image and an unapplied `/srv/.env` edit look identical (the feed just doesn't change), and answering "which is it?" otherwise means SSHing in. The knobs come from the SAME resolvers the behaviour does (`icsOptionsFromEnv()`, `aiSuggestConfig()`), so the report cannot drift from it. **Nothing secret is exposed** — the endpoint is unauthenticated, so it carries the task/calendar/worker knobs only, never a token, remote URL, notification endpoint or API key.
-- **Self-updating deploy.** CI (`.github/workflows/deploy-api.yml`) builds + pushes the api image to GHCR on every `api/**` / compose change; the droplet's `ops/braindance-sync.timer` pulls the new image (and, with `VAULT_EXTERNAL=1`, `git pull`s the deploy config) every few minutes — the box updates itself, CI never SSHes in.
+- **Self-updating deploy.** CI (`.github/workflows/deploy-api.yml`) publishes to GHCR: a push to `master` tags `:edge` and `:sha-<short>`, and publishing a GitHub Release tags `:X.Y.Z` and moves `:latest`. The host's `ops/braindance-sync.timer` pulls whatever `API_IMAGE` names (and, with `VAULT_EXTERNAL=1`, `git pull`s the deploy config) every few minutes — the box updates itself, CI never SSHes in. `:latest` tracks RELEASES, not master, precisely because that timer runs unattended.
 
 ### The suggestion worker (M0) — a reader that cannot write
 
@@ -117,4 +117,4 @@ Operationally it holds no state of its own: what was tried, what failed, and whe
 
 M1 (an interactive chat pane) is deliberately staged *after* M0 has run long enough to show what the suggestions actually get wrong. It is not built: this app still ships no client JS.
 
-Key `/srv/.env` knobs: `REPO_PATH`, `VAULT_SUBDIR`, `GITHUB_REPO`, `GITHUB_TOKEN`, `REQUIRE_LEASE`, `VAULT_EXTERNAL`, `PROPOSALS_DIR`, `DEDUP_TTL_MS`, `API_IMAGE`, `TAILSCALE_IP`, `TZ` (the `/todo` day boundary), `TASK_DEFAULT_DURATION_MIN`, `PUBLIC_BASE_URL`, `TODO_ICS_ALARM_MIN`, `TODO_ICS_ALLDAY_ALARM_AT`, and for the suggestion worker `AI_SUGGEST` (`1` to arm it), `ANTHROPIC_API_KEY` (the other half — both required), `AI_MODEL` (default `claude-opus-5`), `SUGGEST_INTERVAL_MS` (default `60000`; anything unparseable or under `5000` falls back to that default), `SUGGESTIONS_DIR`.
+Key `/srv/.env` knobs: `REPO_PATH`, `VAULT_SUBDIR`, `GITHUB_REPO`, `GITHUB_TOKEN`, `REQUIRE_LEASE`, `VAULT_EXTERNAL`, `PROPOSALS_DIR`, `DEDUP_TTL_MS`, `API_IMAGE`, `TAILSCALE_IP`, `TZ` (the `/todo` day boundary), `TASK_DEFAULT_DURATION_MIN`, `PUBLIC_BASE_URL`, `TODO_ICS_ALARM_MIN`, `TODO_ICS_ALLDAY_ALARM_AT`, and for the suggestion worker `AI_SUGGEST` (`1` to arm it), `ANTHROPIC_API_KEY` (the other half — both required), `AI_MODEL` (default `claude-sonnet-5`; must accept `output_config.effort`, so Sonnet- or Opus-tier), `SUGGEST_INTERVAL_MS` (default `60000`; anything unparseable or under `5000` falls back to that default), `SUGGESTIONS_DIR`.

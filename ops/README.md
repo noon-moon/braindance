@@ -1,7 +1,7 @@
 # ops/ — VPS self-update
 
 The box keeps itself current by **pulling**, not by CI pushing to it. CI
-(`.github/workflows/api.yml`) only builds and pushes the api image to GHCR; it
+(`.github/workflows/deploy-api.yml`) only builds and pushes the api image to GHCR; it
 never gets SSH or Docker access to the server. This is the whole update loop:
 
 - **`sync.sh`** — `git pull --ff-only` the repo (so the admin API's read-only

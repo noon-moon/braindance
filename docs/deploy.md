@@ -6,7 +6,7 @@ What you need before starting:
 
 - A host you can SSH into, with sudo.
 - **A vault repo** — a git repo of markdown notes. It can be empty; the app will start filing into `inbox/`.
-- **A GitHub token** with `repo` scope (the app commits captures) and `read:packages` (to pull the image).
+- **A GitHub token** with `repo` scope — the app commits captures to your vault repo. That's all it's for; the container image is public and needs no token to pull.
 - **A private network path** — [Tailscale](https://tailscale.com) is the easy one. The app has no authentication, so it must never be reachable from the public internet.
 
 > **Read that last point twice.** The api binds a single private interface and the compose file refuses to start without one. Everything below is arranged so that stays true.
@@ -43,13 +43,25 @@ curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker <you> && newgrp docker
 ```
 
-## 2. Get the image
+## 2. Pick an image tag
 
-The api ships as a container image built by `.github/workflows/deploy-api.yml` in your own clone — push to `main`/`master` and it publishes `ghcr.io/<owner>/<repo>/api:latest`. Authenticate the host to pull it:
+The api ships as a **public** container image. Nothing to build, no GitHub account needed, no `docker login` — the host pulls it anonymously:
 
 ```bash
-echo "<your GitHub token>" | docker login ghcr.io -u <your-github-username> --password-stdin
+docker pull ghcr.io/noon-moon/braindance/api:latest    # optional; deploy.sh pulls it anyway
 ```
+
+Which tag you point `API_IMAGE` at decides how the box updates itself:
+
+| Tag | Means | Use when |
+|---|---|---|
+| `:latest` | newest **release** | Default. The box self-updates, but only to deliberate versions. |
+| `:1.4.2` | that release, immutably | You want to upgrade on purpose and never be surprised. |
+| `:edge` | newest `master` build | You want unreleased work and accept it's untested. |
+
+`:latest` deliberately tracks releases rather than every merge to `master`, because `ops/braindance-sync.timer` pulls on a schedule with nobody watching — it should never hand an untested commit to a running instance.
+
+**Building your own instead?** Push to your fork and `.github/workflows/deploy-api.yml` publishes to `ghcr.io/<owner>/<repo>/api`; set `API_IMAGE` to that path. A private package needs `docker login ghcr.io -u <you> --password-stdin` with a `read:packages` token on the host.
 
 ## 3. Lay out `/srv` and clone
 
@@ -72,7 +84,7 @@ git clone https://<user>:<token>@github.com/<owner>/<your-vault>.git /srv/vault
 ```bash
 cat > /srv/.env <<'EOF'
 DOMAIN=example.com                       # Caddy's TLS hostname
-API_IMAGE=ghcr.io/<owner>/<repo>/api:latest
+API_IMAGE=ghcr.io/noon-moon/braindance/api:latest   # public; see step 2 for tags
 TAILSCALE_IP=100.x.y.z                   # from `tailscale ip -4`
 TZ=America/New_York                      # decides what "today" means for tasks
 GITHUB_TOKEN=<token>

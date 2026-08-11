@@ -79,15 +79,16 @@ console.log("test: the suggestion worker reports its state, not its credential")
 {
   const off = build({}).config.ai;
   check("with neither knob set the worker reads as off", off.suggest === false);
-  check("…and the model it would use is still reported", off.model === "claude-haiku-4-5");
+  check("…and the model it would use is still reported", off.model === "claude-sonnet-5");
   check("the flag alone is not enough — a key is the other half",
     build({ AI_SUGGEST: "1" }).config.ai.suggest === false);
   check("a key alone is not enough either — the flag is opt-in",
     build({ ANTHROPIC_API_KEY: "sk-ant-x" }).config.ai.suggest === false);
   check("both halves present reads as on",
     build({ AI_SUGGEST: "1", ANTHROPIC_API_KEY: "sk-ant-x" }).config.ai.suggest === true);
+  // Must differ from the default, or this passes even when the override is ignored.
   check("an AI_MODEL override is reported — answering 'did the env edit land?'",
-    build({ AI_MODEL: "claude-sonnet-5" }).config.ai.model === "claude-sonnet-5");
+    build({ AI_MODEL: "claude-opus-5" }).config.ai.model === "claude-opus-5");
 }
 
 console.log(`\n${passed} checks passed`);

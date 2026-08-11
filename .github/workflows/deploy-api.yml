@@ -64,13 +64,16 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # Separate lanes for a released build and a plain master build. Both fire for
-  # the SAME commit — release.yml calls this workflow while the push trigger also
-  # runs it — so a shared group with cancel-in-progress would let one cancel the
-  # other. Losing the released build is the bad case: a version tag exists with
-  # no image ever published for it. Keyed on the version so they can't collide.
-  group: deploy-api-${{ inputs.version || github.ref }}
-  cancel-in-progress: true
+  # Two builds fire for the SAME commit — release.yml calls this workflow while
+  # the push trigger also runs it — so cancel-in-progress MUST stay false. With
+  # it on, one cancels the other, and the bad case is losing the released build:
+  # a version tag that exists with no image ever published for it. Queueing costs
+  # about forty seconds; a tag with no image costs a broken `:latest`.
+  # (Keying the group on `inputs.version` would separate them too, but `inputs`
+  # is not dependably available in this expression when the workflow is entered
+  # by push rather than by call — not worth the risk on a build this short.)
+  group: deploy-api
+  cancel-in-progress: false
 
 jobs:
   build-push:

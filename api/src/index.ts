@@ -868,7 +868,21 @@ function uniqueDest(title: string): { rel: string; name: string } {
 // and the desk is where it gets edited, not just labelled.
 function triagePane(memo: InboxNote, funnelId: string, scopes: string[], suggestion: Suggestion | null, values?: Record<string, string>, error?: string) {
   const f = funnelById(funnelId) ?? funnelById("memo")!;
-  const val = (fl: Field) => values?.[fl.key] ?? prefillFor(fl, memo);
+  // The suggested TITLE arrives already in the box rather than waiting behind
+  // "apply". Titling is the one thing every triage does, and the one field the
+  // deterministic pre-fill is worst at — all it can offer is the note's own
+  // first line, which is the text you are reading directly above it, so it tells
+  // you nothing you don't already know. The rest of the suggestion stays inert
+  // until accepted: a wrong title is visible in the field you are looking at,
+  // while a wrong scope files the note somewhere you won't think to look.
+  //
+  // A DEFAULT only. `values` — a re-render after a rejected submit, or after
+  // "apply" — still wins, so this can never overwrite something you typed.
+  const val = (fl: Field) => {
+    if (values?.[fl.key] !== undefined) return values[fl.key];
+    if (fl.key === "title" && suggestion?.title.trim()) return suggestion.title;
+    return prefillFor(fl, memo);
+  };
   const act = `/review/triage/${encodeURIComponent(memo.name)}`;
   const here = `/review?note=${encodeURIComponent(memo.name)}`;
   const sf = suggestion ? funnelById(suggestion.funnel) : undefined;

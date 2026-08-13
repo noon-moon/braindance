@@ -5,7 +5,7 @@
 // what an atom LOOKS like (it has to survive a round-trip through the /todo
 // parser), and `appendTaskLine` decides where filing lands it. Both are pure.
 import assert from "node:assert/strict";
-import { taskLine, appendTaskLine, funnelById } from "../src/funnels.js";
+import { taskLine, appendTaskLine, funnelById, parseScopes, scopeLink } from "../src/funnels.js";
 import { parseTaskLine } from "../src/tasks.js";
 
 let passed = 0;
@@ -128,6 +128,44 @@ console.log("test: funnel registry");
   const withDetail = funnelById("task")!.build({ title: "Call the vet", body: "Ask about the limp.", due: "" });
   check("detail rides along BELOW the atom, not inside it",
     withDetail.body.endsWith("- [ ] Call the vet #task\n\nAsk about the limp."));
+}
+
+// The scope field stopped being a <select> when it went multi-valued, so this is
+// now the boundary between a free-text form field and a wikilink written into the
+// vault. Everything that reads or writes a scope goes through these two.
+console.log("test: parseScopes / scopeLink");
+{
+  const eq = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+  check("a single scope is the same answer it always was", eq(parseScopes("Home"), ["Home"]));
+  check("commas separate, surrounding whitespace doesn't count",
+    eq(parseScopes(" Home , Video Games ,Loon "), ["Home", "Video Games", "Loon"]));
+  check("order is kept — the first scope is the one a task files into",
+    eq(parseScopes("Loon, Home"), ["Loon", "Home"]));
+  check("the same scope twice is one scope", eq(parseScopes("Home, Home"), ["Home"]));
+  check("empty entries are not scopes", eq(parseScopes("Home,,  , Loon"), ["Home", "Loon"]));
+  check("nothing at all is no scopes", eq(parseScopes(""), []) && eq(parseScopes(undefined), []));
+  check("an array is accepted too — the JSON API can post one",
+    eq(parseScopes(["Home", "Loon"]), ["Home", "Loon"]));
+
+  // The output is interpolated straight into [[…]]. A name that can close its own
+  // link can write note body, so the brackets never survive the parse.
+  check("a name cannot close its own wikilink",
+    eq(parseScopes("Home]] and then [["), ["Home and then"]));
+  check("an alias pipe and a heading anchor are stripped, not honoured",
+    eq(parseScopes("Home|the house, Loon#Backlog"), ["Home the house", "Loon Backlog"]));
+  check("a newline cannot end the Tags: line early",
+    scopeLink("Home\nrest of the note") === "Tags: [[Home rest of the note]]\n");
+
+  check("one scope writes the line it always wrote", scopeLink("Home") === "Tags: [[Home]]\n");
+  check("several share the one line, space-separated",
+    scopeLink("Home, Loon, Music") === "Tags: [[Home]] [[Loon]] [[Music]]\n");
+  check("no scope writes no line",
+    scopeLink("") === "" && scopeLink(undefined) === "" && scopeLink([]) === "");
+
+  const many = funnelById("memo")!.build({ title: "", body: "a thought", scope: "Home, Loon" });
+  check("a captured memo hangs off every hub it was given",
+    many.body.startsWith("Tags: [[Home]] [[Loon]]\n"));
 }
 
 console.log(`\n${passed} checks passed`);

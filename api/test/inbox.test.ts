@@ -30,6 +30,8 @@ const check = (label: string, cond: boolean) => {
   passed++;
 };
 
+const eq = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+
 const write = (name: string, body: string) => {
   writeFileSync(join(VAULT, "inbox", `${name}.md`), body);
   return name;
@@ -89,17 +91,39 @@ console.log("test: the scope link is parsed back off the top");
 {
   const scoped = write("2026-08-09T10-11-18-345Z", "Tags: [[Home]]\n\nfix the door\n");
   const s = getInboxNote(scoped)!;
-  check("the capture-time scope is recovered for the triage dropdown", s.scope === "Home");
+  check("the capture-time scope is recovered for the triage picker", eq(s.scopes, ["Home"]));
   check("…and stripped from the text", s.text === "fix the door");
   check("…leaving the first line as the title", s.title === "fix the door");
 
   const aliased = write("2026-08-09T10-11-19-345Z", "Tags: [[Home|the house]]\n\nfix the door\n");
   check("an aliased wikilink resolves to its target, matching how vault.ts links",
-    getInboxNote(aliased)!.scope === "Home");
+    eq(getInboxNote(aliased)!.scopes, ["Home"]));
 
   const scopedTitle = write("2026-08-09T10-11-20-345Z-cool", "Tags: [[Home]]\n# Cool\n\nbody");
   check("a scope line above a heading doesn't hide the heading",
     getInboxNote(scopedTitle)!.title === "Cool");
+
+  // A note belongs to as many hubs as it belongs to. Order is meaning — the FIRST
+  // is the one a task files into — so it has to survive the round trip.
+  const many = write("2026-08-09T10-11-21-345Z", "Tags: [[Home]] [[Loon]] [[Music]]\n\nfix the door\n");
+  const m = getInboxNote(many)!;
+  check("every scope on the line comes back, in the order written",
+    eq(m.scopes, ["Home", "Loon", "Music"]));
+  check("…and the whole line is still stripped from the text", m.text === "fix the door");
+
+  const dupes = write("2026-08-09T10-11-22-345Z", "Tags: [[Home]] [[Home|the house]]\n\nfix the door\n");
+  check("the same hub twice is one scope", eq(getInboxNote(dupes)!.scopes, ["Home"]));
+
+  const none = write("2026-08-09T10-11-23-345Z", "fix the door\n");
+  check("a note with no scope line has no scopes rather than a null one",
+    eq(getInboxNote(none)!.scopes, []));
+
+  // The regex has to END at the last link. A sentence that opens with "Tags:" is
+  // prose, and eating it would silently delete a line of the note.
+  const prose = write("2026-08-09T10-11-24-345Z", "Tags: [[Home]] and also the shed\n\nfix the door\n");
+  const p = getInboxNote(prose)!;
+  check("a Tags: line that trails off into prose is not a scope line", eq(p.scopes, []));
+  check("…and that line is left in the note", p.text.startsWith("Tags: [[Home]] and also the shed"));
 }
 
 console.log("test: listing and path safety");

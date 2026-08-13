@@ -3,7 +3,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { html, raw } from "hono/html";
 import { layout } from "./layout.js";
-import { FUNNELS, funnelById, compose, taskLine, appendTaskLine, scopeLink, type Field, type Funnel } from "./funnels.js";
+import { FUNNELS, funnelById, compose, taskLine, appendTaskLine, scopeLink, parseScopes, type Field, type Funnel } from "./funnels.js";
 import { commitCapture, createNote, stamp, slug } from "./notes.js";
 import { VAULT_SUBDIR, vaultRel, aiSuggestConfig } from "./config.js";
 import { suggestionFor, dropSidecar, type Suggestion } from "./suggest.js";
@@ -39,16 +39,35 @@ function control(f: Field, scopes: string[], value = "") {
   if (f.type === "select")
     return html`<select name="${f.key}"${req}>${f.required ? "" : html`<option value=""></option>`}${(f.options ?? []).map((o) => html`<option${sel(o)}>${o}</option>`)}</select>`;
   if (f.type === "scope") {
-    // A dropdown over the live MOC list (every `scope`-tagged note, alphabetical) —
-    // pick the most relevant one and it becomes the note's leading `Tags: [[MOC]]`
-    // link. A native <select> beats a text input on the phone: no typing, and iOS
-    // gives its own scrollable picker. `_meta/` scopes (scope_kind: system) never
-    // appear — the flat index only reads the vault root.
-    // A current value that ISN'T a live scope (a carried-over capture whose MOC was
-    // since renamed) is kept as an extra option rather than silently dropped.
-    const opts = value && !scopes.includes(value) ? [value, ...scopes] : scopes;
-    const blank = f.required ? "— pick a scope —" : "— none —";
-    return html`<select name="${f.key}"${req}><option value="">${blank}</option>${opts.map((s) => html`<option${sel(s)}>${s}</option>`)}</select>`;
+    // MANY scopes, comma-separated, over the live MOC list (every `scope`-tagged
+    // note, alphabetical). They become the note's leading `Tags: [[A]] [[B]]` line,
+    // so it hangs off every hub it belongs to — a thought rarely belongs to exactly
+    // one area, and the old <select> made you pick the least wrong one. `_meta/`
+    // scopes (scope_kind: system) never appear: the flat index only reads the root.
+    //
+    // This was a <select>, which constrained the value structurally. A text field
+    // does not, so `parseScopes` sanitises on the way out and the filer checks each
+    // name against the vault before it writes.
+    //
+    // THREE TIERS, each usable on its own:
+    //   - no JS at all → a plain text input. Type `Loon, Music`. Works.
+    //   - no JS + <datalist> → the browser's own type-ahead. Whole-field only (the
+    //     spec has no notion of a token), so it completes the first scope and the
+    //     rest is typing — which is why the third tier exists.
+    //   - JS → chips + per-token type-ahead (scope-pick.js), which REPLACES the
+    //     datalist rather than stacking with it (two dropdowns over one field).
+    // Values that AREN'T live scopes (a carried-over capture whose MOC was since
+    // renamed) stay in the field and lead the option list rather than vanishing.
+    const cur = parseScopes(value);
+    const opts = [...cur.filter((s) => !scopes.includes(s)), ...scopes];
+    const list = `scope-opts-${f.key}`;
+    // `|` separates the JS tier's option list because `parseScopes` strips it out
+    // of every name, so it is the one character guaranteed not to be IN one.
+    return html`<input type="text" name="${f.key}"${req} class="scope-in" list="${list}"
+      autocomplete="off" autocapitalize="off" spellcheck="false"
+      placeholder="${f.placeholder || (f.required ? "scope" : "scope — comma-separated, optional")}"
+      value="${cur.join(", ")}" data-scopes="${opts.join("|")}"
+      ><datalist id="${list}">${opts.map((s) => html`<option value="${s}"></option>`)}</datalist>`;
   }
   const t = f.type === "url" ? "url" : f.type === "date" ? "date" : f.type === "number" ? "number" : "text";
   return html`<input type="${t}" name="${f.key}"${req} placeholder="${ph}" value="${value}">`;
@@ -69,7 +88,8 @@ function control(f: Field, scopes: string[], value = "") {
 //   - whether it's a thought or an ACTION, and if so when it's due.
 //
 // So the one classification the form does offer is "this is a task", which
-// reveals due + priority (pure CSS — this app runs no JS) and captures a real
+// reveals due + priority (pure CSS — every screen here works with scripting off)
+// and captures a real
 // `#task` atom instead of a memo. Everything stays optional: an untitled,
 // scopeless, untyped thought still captures in one tap. (The full typed funnel
 // schema still lives on the JSON /ingest API.)
@@ -299,7 +319,8 @@ const PRI_GLYPH: Record<string, string> = {
 };
 
 /** The checkbox. A real one for an atom we can complete — a tiny form, because
- *  this app runs no JS — and an inert glyph otherwise: done already, or a `🔁`
+ *  every screen here works with scripting off — and an inert glyph otherwise:
+ *  done already, or a `🔁`
  *  rule we won't roll forward (see canComplete), where ticking here would drop
  *  the recurrence. Those stay Obsidian's job, and say so. */
 function taskBox(t: Task, showDone: boolean, byScope: boolean, projected = false) {
@@ -599,7 +620,7 @@ app.get("/proposals", async (c) => {
 // ── /review — the triage desk ───────────────────────────────────────────────
 // One page, two panes: the untriaged queue on the left, the capture you're
 // working on to the right. SELECTION RIDES THE URL (`?note=<name>`) — that is
-// what makes a desk possible in an app with no JS. Picking a row is an ordinary
+// what makes a desk possible without any client-side state. Picking a row is an ordinary
 // link, both panes re-render on one request, and the state is bookmarkable,
 // back-buttonable, and still there after a rejected submit.
 //
@@ -809,10 +830,11 @@ const wholeTitle = (memo: InboxNote): string =>
 
 // Deterministic pre-fill (no LLM): the memo title → a `title` field, the memo
 // body → the funnel's main text field, a URL in the body → a `url` field, and the
-// scope picked at capture time → the scope dropdown (so it survives re-typing).
+// scopes picked at capture time → the scope picker, comma-separated (so the pick
+// survives re-typing).
 function prefillFor(f: Field, memo: InboxNote): string {
   if (f.key === "title") return memoAtom(memo)?.text || wholeTitle(memo);
-  if (f.type === "scope") return memo.scope ?? "";
+  if (f.type === "scope") return memo.scopes.join(", ");
   if (f.key === "due") return memoAtom(memo)?.due ?? "";
   if (f.key === "priority") return memoAtom(memo)?.priority ?? "";
   // The atom line is already represented by the title/due/priority fields — a
@@ -905,7 +927,7 @@ function triagePane(memo: InboxNote, funnelId: string, scopes: string[], suggest
     html`<label>${fl.label} ${fl.required ? html`<span class="req">*</span>` : ""}</label>${control(fl, scopes, val(fl))}`;
   return html`
     <a class="desk-back" href="/review">← queue</a>
-    <div class="meta">from inbox · ${memo.createdISO ? fmtDate(memo.createdISO) : ""} · <code>${memo.name}</code>${memo.scope ? html` <span class="tag">${memo.scope}</span>` : ""}</div>
+    <div class="meta">from inbox · ${memo.createdISO ? fmtDate(memo.createdISO) : ""} · <code>${memo.name}</code>${memo.scopes.map((s) => html` <span class="tag">${s}</span>`)}</div>
     ${error ? html`<p class="flash err">${error}</p>` : ""}
     <form method="post" action="${act}" class="triage-form">
       ${prose ? fieldRow(prose) : html`<p class="muted snippet">${memo.text}</p>`}
@@ -1053,11 +1075,18 @@ app.post("/review/triage/:name", async (c) => {
   // nothing to append to, so it falls through and files as its own note, which
   // still leaves a real (if scopeless) atom rather than losing the capture.
   const scopeKey = funnel.fields.find((fl) => fl.type === "scope")?.key;
-  const target = scopeKey ? input[scopeKey] : "";
+  const picked = scopeKey ? parseScopes(input[scopeKey]) : [];
+  // ONE atom, in ONE note. The first scope owns it and the rest ride along as
+  // links in the description, because a task is a line and a line appended to
+  // three hubs is three tasks: tick it in one and the other two stay open
+  // forever. The links still put the atom in every hub's backlinks, which is the
+  // thing having several scopes was for.
+  const target = picked[0] ?? "";
+  const alsoLinks = picked.slice(1).map((s) => `[[${s}]]`).join(" ");
   if (funnel.id === "task" && target && noteExists(target)) {
     const raw = readNoteRaw(target);
     if (!raw) return stuck(409, { funnelId, values: input, flash: { ok: false, msg: `✗ could not read “${target}”` } });
-    const line = taskLine(input);
+    const line = taskLine(alsoLinks ? { ...input, title: `${input.title} ${alsoLinks}` } : input);
     // A task is one line, so any DETAIL the capture carried has nowhere to go on
     // the scope note. Rather than drop it with the memo, it becomes a memo note
     // of its own in the same op — the action files, the context keeps. Clear the
@@ -1075,17 +1104,19 @@ app.post("/review/triage/:name", async (c) => {
         content: compose({
           title: input.title,
           frontmatter: { ...(memo.createdISO ? { created: memo.createdISO } : {}), tags: ["memo"] },
-          body: `${scopeLink(target)}# ${input.title}\n\n${detail}`,
+          body: `${scopeLink(picked)}# ${input.title}\n\n${detail}`,
         }),
       });
     }
     try {
       const res = await gitStore().commit({ ops }, {
-        message: `triage: task → ${target}${keep ? ` (+ memo ${keep.name})` : ""} ← inbox/${memo.name}`,
+        message: `triage: task → ${picked.join(", ")}${keep ? ` (+ memo ${keep.name})` : ""} ← inbox/${memo.name}`,
       });
       invalidate();
       await dropSidecar(memo.name);
-      return filed(`✓ filed atom → ${target}${keep ? `, detail kept as ${keep.name}` : ""} (op ${res.id.slice(0, 8)})`);
+      // The receipt names the hub the atom LIVES in and, separately, the ones it
+      // only links to — "filed to three places" would be a lie you'd act on.
+      return filed(`✓ filed atom → ${target}${alsoLinks ? ` (+ ${picked.length - 1} linked)` : ""}${keep ? `, detail kept as ${keep.name}` : ""} (op ${res.id.slice(0, 8)})`);
     } catch (e) {
       return stuck(409, { funnelId, values: input, flash: { ok: false, msg: `✗ file failed: ${(e as Error).message}` } });
     }

@@ -30,9 +30,11 @@ export interface InboxNote {
   text: string;
   /** Original capture time (ISO-8601), reconstructed from the filename stamp. */
   createdISO: string | null;
-  /** Scope MOC chosen at capture time (the leading `Tags: [[…]]` link), else null.
-   *  Carried into the triage form's scope dropdown so the pick isn't re-made. */
-  scope: string | null;
+  /** Scope MOCs chosen at capture time (the leading `Tags: [[…]]` links), in the
+   *  order written — empty when none was picked. Carried into the triage form's
+   *  scope picker so the pick isn't re-made, and the FIRST is the hub a task
+   *  files into. */
+  scopes: string[];
 }
 
 // A capture filename is `${stamp()}.md`, or `${stamp()}-${slug}.md` when a title
@@ -60,20 +62,30 @@ function splitHeading(body: string): { title: string; text: string } {
   return { title: h[1].trim(), text: lines.slice(i + 1).join("\n").trim() };
 }
 
-/** Pull a leading `Tags: [[Scope]]` line (the scope-link convention written by
- *  `funnels.ts`'s scopeLink) off the top of a body — it sits ABOVE the `# title`,
- *  so it has to come off before splitHeading can see the heading. */
-const SCOPE_LINE = /^Tags:\s*\[\[([^\]]+)\]\]\s*$/;
+/** Pull a leading `Tags: [[Scope]] [[Other]]` line (the scope-link convention
+ *  written by `funnels.ts`'s scopeLink) off the top of a body — it sits ABOVE the
+ *  `# title`, so it has to come off before splitHeading can see the heading.
+ *
+ *  Matches ONE OR MORE links, and only links: a line ending in prose is somebody's
+ *  sentence that happens to start with `Tags:`, and eating it would delete text
+ *  from the note. A single-link line is the same line it always was, so notes
+ *  captured before the field went multi read back unchanged. */
+const SCOPE_LINE = /^Tags:\s*((?:\[\[[^\]]+\]\]\s*)+)$/;
+const LINK_RE = /\[\[([^\]]+)\]\]/g;
 
-function splitScope(body: string): { scope: string | null; rest: string } {
+function splitScope(body: string): { scopes: string[]; rest: string } {
   const lines = body.split("\n");
   let i = 0;
   while (i < lines.length && lines[i].trim() === "") i++;
   const m = lines[i]?.trim().match(SCOPE_LINE);
-  if (!m) return { scope: null, rest: body };
+  if (!m) return { scopes: [], rest: body };
   // Strip any alias/anchor, matching how vault.ts resolves a wikilink target.
-  const scope = m[1].split("|")[0].split("#")[0].trim();
-  return { scope: scope || null, rest: lines.slice(i + 1).join("\n") };
+  const scopes: string[] = [];
+  for (const [, target] of m[1].matchAll(LINK_RE)) {
+    const s = target.split("|")[0].split("#")[0].trim();
+    if (s && !scopes.includes(s)) scopes.push(s);
+  }
+  return { scopes, rest: lines.slice(i + 1).join("\n") };
 }
 
 const humanise = (s: string): string => s.replace(/[-_]+/g, " ").trim();
@@ -132,13 +144,13 @@ function toInboxNote(fileName: string): InboxNote | null {
     return null;
   }
   const { content } = matter(raw);
-  const { scope, rest } = splitScope(content);
+  const { scopes, rest } = splitScope(content);
   const { title, text } = splitHeading(rest);
   const { createdISO, slugPart } = parseStamp(name);
   // Heading → filename slug → first line. The slug outranks the body because when
   // one exists it IS the title someone typed; the first line only carries an
   // untitled capture, which is now the common case.
-  return { name, title: title || humanise(slugPart) || firstLine(text) || "untitled", text, createdISO, scope };
+  return { name, title: title || humanise(slugPart) || firstLine(text) || "untitled", text, createdISO, scopes };
 }
 
 /** All untriaged inbox notes, newest capture first.

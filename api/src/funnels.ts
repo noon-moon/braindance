@@ -71,11 +71,39 @@ export function appendTaskLine(raw: string, line: string): string {
 export const compose = (n: BuiltNote): string =>
   `${yaml(n.frontmatter)}\n\n${n.body.trim()}\n`;
 
+/** The scope field is comma-separated free text — that is what the picker posts,
+ *  and what it degrades to with JS off. This is the ONE place that turns that
+ *  string into scope names, so the form, the writer, the parser and the filer can
+ *  never disagree about what `Loon, Music` means.
+ *
+ *  Each name is stripped of the wikilink alphabet — `[`, `]`, `|`, `#`, and any
+ *  newline — because the result is interpolated straight into `[[…]]`. A name
+ *  carrying `]]` would close its own link and let the rest of the field become
+ *  note body; `|` and `#` would silently retarget the link at an alias or a
+ *  heading. This is the field that stopped being a `<select>`, so it is the field
+ *  that has to stop trusting its own contents.
+ *
+ *  ORDER IS MEANING and is kept: the first scope is the one a task files INTO
+ *  (see the triage route). Duplicates drop — two links to one hub is one link. */
+export function parseScopes(value?: string | string[]): string[] {
+  const parts = Array.isArray(value) ? value : String(value ?? "").split(",");
+  const out: string[] = [];
+  for (const p of parts) {
+    const s = p.replace(/[[\]|#\r\n]/g, " ").replace(/\s+/g, " ").trim();
+    if (s && !out.includes(s)) out.push(s);
+  }
+  return out;
+}
+
 /** The vault's scope-link convention: a `Tags: [[MOC]]` line as the FIRST body
- *  line, above the `# title`, so the note joins its hub's backlinks. Empty when
- *  no scope was picked. Parsed back out by `inbox.ts` for triage pre-fill. */
-export const scopeLink = (scope?: string): string =>
-  scope?.trim() ? `Tags: [[${scope.trim()}]]\n` : "";
+ *  line, above the `# title`, so the note joins its hub's backlinks. Several hubs
+ *  share the one line (`Tags: [[A]] [[B]]`) — a note can belong to more than one
+ *  area, and Obsidian reads every link on it as a backlink to each. Empty when no
+ *  scope was picked. Parsed back out by `inbox.ts` for triage pre-fill. */
+export const scopeLink = (scope?: string | string[]): string => {
+  const s = parseScopes(scope);
+  return s.length ? `Tags: ${s.map((x) => `[[${x}]]`).join(" ")}\n` : "";
+};
 
 /** Obsidian Tasks' five priority levels → their signifiers. No entry = normal. */
 export const PRIORITY_SIGNIFIER: Record<string, string> = {

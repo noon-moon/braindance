@@ -42,6 +42,22 @@ Templates for new notes live in the vault's `_templates/`. The template ships ne
 
 Daily notes live in the vault's `daily/` directory, named `YYYY-MM-DD`, created via Obsidian's core Daily Notes plugin. **Convert relative dates to absolute** (`2026-08-01`, not "next month") — every roll-up and back-link depends on real dates.
 
+## Keeping the desk copy current — `ctx/tools/sys/vault-pull.sh`
+
+When a braindance instance also runs the api on a host, the vault has **two writers**: the deployment commits captures and todo state continuously, and you edit the same notes in Obsidian at the desk. Nothing reconciles the desk copy unless you remember to pull before you start typing, and forgetting is silent — you edit a stale note, and the next reconcile is a content conflict in a file you were halfway through. Left alone that compounds: a paused sync strands the host's captures indefinitely, and nobody notices because everything *looks* fine on both sides.
+
+`vault-pull.sh` removes the remembering. It resolves the active instance's vault through the same resolver everything else uses, and fast-forwards it:
+
+```console
+$ ctx/tools/sys/vault-pull.sh --install          # launchd agent, every 15 min + at login
+$ ctx/tools/sys/vault-pull.sh --status           # installed? loaded? last few runs?
+$ ctx/tools/sys/vault-pull.sh                    # one-shot
+```
+
+**It only ever pulls, and only when that is safe** — it never commits, stages, stashes, resets, or pushes. That limit is deliberate. A vault always carries uncommitted work (a half-written note, `.obsidian/workspace.json` churning as you move panes), so a timer running `git add -A` would sweep drafts into commits you never chose to make. Publishing your side stays deliberate. The pull is `--ff-only`; if incoming changes touch a file you have modified, git declines before touching anything and the tool reports it and moves on — the next run succeeds once you have committed or reverted. A true divergence (local commits *and* remote commits) is reported, never merged on a timer, because that is a decision you should see. Behaviour is pinned by `test_vault-pull.sh`, whose central assertions are that an uncommitted draft comes through byte-identical and that HEAD never moves on its own.
+
+`--install` is macOS/launchd; on Linux point a systemd user timer at the same script. Logs land in `~/Library/Logs/braindance-vault-pull.log`.
+
 ## `$vault/_ephemeral` — non-persisted scratch (rides with the vault)
 
 **`$vault/_ephemeral/` (default `ctx/vault/_ephemeral/`) is the default sink for anything we generate.** Unless the user names a destination (or a skill/task specifies otherwise), work products we produce — draft plans, reports, one-off analyses, query results, intermediate artifacts — go here, not the repo root, `/tmp`, or the vault proper. It is the workbench for anything transient — files dropped *in* for a task (screenshots, exports, clippings, data) and the work products we generate *out* alike. It is **gitignored and ephemeral**: read and write it freely, but don't rely on anything there persisting, and never treat it as canonical. It lives *inside* the vault (underscore-prefixed like `_meta`/`_templates`) — so it resolves **wherever the vault does** (never in the core), which is exactly what keeps its scratch **visible in Obsidian** without switching apps — but it is explicitly **not canonical**. **Keep transient scratch here instead of cluttering the vault with real notes.** If something is worth keeping, **promote it into a real vault note** in `ctx/vault/`. Scratch files here generally carry no frontmatter, so they stay out of Dataview queries and off to the side of the graph.

@@ -15,7 +15,7 @@ ctx/
   vault/     Obsidian vault — your knowledge base and working context (see below)
     _ephemeral/  Non-persisted scratch — transient inputs & outputs; gitignored but Obsidian-visible
   skills/    LLM-agnostic skill prompts; installed into a harness via ctx/tools/sys/sync.sh
-  tools/     Lifecycle tooling (sys/), orchestration/ (multi-agent fleet helpers), pub/ (the publish tool), + standalone tools (e.g. music/)
+  tools/     Lifecycle tooling (sys/), orchestration/ (multi-agent fleet helpers), pub/ (the publish tool)
 api/         Admin app: mobile note-capture API + read-only vault viewer (Hono/Node)
 Caddyfile, docker-compose.yml, deploy.sh, ops/   Serving stack — the public site itself lives in a SEPARATE repo
 repo/        Default (nested) home for target repos you're working on — gitignored

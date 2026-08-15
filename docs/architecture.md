@@ -93,3 +93,4 @@ Sequenced so each phase leaves the repo coherent:
 - Not a template to fork and merge.
 - Not a website. The public site is an output of `publish`, and lives in its own repo.
 - Not a general note-taking app. It assumes a flat markdown vault in git and is unapologetic about it — that assumption is what makes goal 3 achievable.
+- **Not a home for domain-specific tools.** Braindance is domain-agnostic: it encodes *how you work*, never *what you are into*. A utility that knows about a particular hobby, service, or media library belongs in a separate tools repo, even when it writes vault notes — such a tool takes the vault as an argument (`--vault`, `$VAULT_PATH`) rather than assuming this layout. The `music/` tools were extracted on exactly this line, along with the orphaned tournament scripts.

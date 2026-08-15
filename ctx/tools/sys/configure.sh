@@ -100,6 +100,25 @@ if [ -d "$INST_DIR" ]; then
   done
 fi
 
+# Re-emit any keys in an existing conf that this build does not write itself.
+# One registry is shared by every clone on the machine, and those clones can be
+# at different versions: a newer configure records settings an older one has
+# never heard of. A fixed template would silently drop them on the next rerun
+# from the older checkout — a downgrade nobody asked for and nothing reports.
+# Preserving unknown keys verbatim makes the rewrite lossless in both
+# directions, so the only key configure can remove is one it deliberately owns.
+_preserve_unknown() {
+  [ -f "$1" ] || return 0
+  local line k
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in \#*|"") continue ;; esac
+    k="${line%%=*}"
+    k="${k#"${k%%[![:space:]]*}"}"; k="${k%"${k##*[![:space:]]}"}"
+    case "$k" in core|vault|repos) continue ;; esac
+    printf '%s\n' "$line"
+  done < "$1"
+}
+
 # --- write (create or update in place) ---
 mkdir -p "$INST_DIR" || die "cannot create registry: $INST_DIR"
 tmp="$INST_DIR/.$name.conf.$$"
@@ -108,6 +127,7 @@ tmp="$INST_DIR/.$name.conf.$$"
   printf 'core  = %s\n' "$core"
   printf 'vault = %s\n' "$vault"
   printf 'repos = %s\n' "$repos"
+  _preserve_unknown "$INST_DIR/$name.conf"
 } > "$tmp" && mv "$tmp" "$INST_DIR/$name.conf" || die "cannot write $INST_DIR/$name.conf"
 
 [ -n "$set_default" ] && printf '%s\n' "$name" > "$REG/default"

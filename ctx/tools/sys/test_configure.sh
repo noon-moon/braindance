@@ -86,6 +86,21 @@ run --core "$TMP/dev/braindance" --vault "$TMP/dev/vault2" --repos "$TMP/dev/rep
 eq "update rc" "$RC" 0
 eq "update vault changed" "$(val "$REG/instances/personal.conf" vault)" "$TMP/dev/vault2"
 
+# 7b. a rerun preserves keys this build does not write. The registry is shared
+# by clones at different versions, so an older configure must not silently
+# strip a newer one's settings (`worktrees` was the live case).
+fresh_reg
+run --core "$TMP/dev/braindance" --vault "$TMP/dev/vault" --repos "$TMP/dev/repo" --name personal
+CF="$REG/instances/personal.conf"
+printf 'worktrees = %s\n' "$TMP/dev/worktrees" >> "$CF"
+printf 'future-key = somevalue\n' >> "$CF"
+run --core "$TMP/dev/braindance" --vault "$TMP/dev/vault2" --repos "$TMP/dev/repo" --name personal
+eq "rerun rc" "$RC" 0
+eq "known key still updated" "$(val "$CF" vault)" "$TMP/dev/vault2"
+eq "unknown key preserved"   "$(val "$CF" worktrees)" "$TMP/dev/worktrees"
+eq "second unknown preserved" "$(val "$CF" future-key)" "somevalue"
+eq "unknown key not duplicated" "$(grep -c '^worktrees' "$CF")" "1"
+
 # 8. --default writes the default pointer
 fresh_reg
 run --core "$TMP/dev/braindance" --vault "$TMP/dev/vault" --repos "$TMP/dev/repo" --name personal --default

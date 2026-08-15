@@ -107,14 +107,26 @@ fi
 # from the older checkout — a downgrade nobody asked for and nothing reports.
 # Preserving unknown keys verbatim makes the rewrite lossless in both
 # directions, so the only key configure can remove is one it deliberately owns.
+#
+# The owned set is declared once, here, and drives both the skip below and
+# nothing else — so teaching configure a new key means adding it to the writer
+# AND to this list. Keeping it as data rather than a hardcoded `case` is what
+# stops the two drifting: a key written but not listed would be emitted twice,
+# once by the writer and once by preservation.
+_OWNED_KEYS="core vault repos"
+
 _preserve_unknown() {
   [ -f "$1" ] || return 0
-  local line k
+  local line k owned skip
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in \#*|"") continue ;; esac
     k="${line%%=*}"
     k="${k#"${k%%[![:space:]]*}"}"; k="${k%"${k##*[![:space:]]}"}"
-    case "$k" in core|vault|repos) continue ;; esac
+    skip=""
+    for owned in $_OWNED_KEYS; do
+      [ "$k" = "$owned" ] && { skip=1; break; }
+    done
+    [ -n "$skip" ] && continue
     printf '%s\n' "$line"
   done < "$1"
 }

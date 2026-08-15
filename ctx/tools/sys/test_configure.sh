@@ -100,6 +100,12 @@ eq "known key still updated" "$(val "$CF" vault)" "$TMP/dev/vault2"
 eq "unknown key preserved"   "$(val "$CF" worktrees)" "$TMP/dev/worktrees"
 eq "second unknown preserved" "$(val "$CF" future-key)" "somevalue"
 eq "unknown key not duplicated" "$(grep -c '^worktrees' "$CF")" "1"
+# Generic drift guard: a key added to the writer but left out of _OWNED_KEYS
+# would be emitted twice — once written, once "preserved". Asserting it for
+# every key catches future keys too, not just the ones that exist today.
+eq "no key duplicated after rerun" \
+   "$(grep -v '^#' "$CF" | grep -v '^[[:space:]]*$' | sed 's/[[:space:]]*=.*//' | sort | uniq -d | tr '\n' ' ')" \
+   ""
 
 # 8. --default writes the default pointer
 fresh_reg

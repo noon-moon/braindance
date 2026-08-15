@@ -1274,5 +1274,37 @@ store.start();
 if (aiSuggestConfig().enabled) startSuggestWorker();
 
 const port = Number(process.env.PORT ?? 3000);
-serve({ fetch: app.fetch, port });
+const server = serve({ fetch: app.fetch, port });
 console.log(`braindance admin app on :${port}`);
+
+// Graceful shutdown — the deploy path depends on it. `docker compose up -d api`
+// stops this container and starts its replacement, and the replacement REFUSES
+// TO START while another holder owns the writer lease. Nothing used to call
+// stop(), so the lease was only ever freed by expiry: the new container
+// crash-looped for the whole TTL (60s by default) while the old one was already
+// gone. That is invisible when a deploy is a poll that eventually converges,
+// and fatal once CI gates the run on /health reporting the new commit — the
+// deploy lands, but only after the gate has given up and called it red.
+//
+// Releasing on the way out makes a rollover immediate: the replacement acquires
+// the lease on its first attempt.
+let shuttingDown = false;
+const shutdown = async (signal: string): Promise<void> => {
+  if (shuttingDown) return; // SIGTERM then SIGINT must not double-release
+  shuttingDown = true;
+  console.log(`${signal} — releasing writer lease, shutting down`);
+  // Stop accepting new work first, so nothing acquires mid-release. Both halves
+  // are best-effort: an exit that hangs is worse than one that skips a step,
+  // because docker escalates to SIGKILL and we lose the release entirely.
+  server.close();
+  // Bounded: docker sends SIGKILL ~10s after SIGTERM, and an exit that hangs
+  // past that loses the release entirely — the very thing this handler exists
+  // to prevent. Better to give up early and fall back to TTL expiry.
+  const watchdog = setTimeout(() => process.exit(0), 8_000);
+  watchdog.unref();
+  await store.stop();
+  process.exit(0);
+};
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.on(signal, () => void shutdown(signal));
+}

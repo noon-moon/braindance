@@ -159,7 +159,13 @@ jobs:
           #    The api binds to the tailnet address, so ask it there, from the box.
           TS_IP=$(awk -F= '$1=="TAILSCALE_IP"{gsub(/["'"'"' ]/,"",$2); print $2}' /srv/.env 2>/dev/null)
           [ -n "$TS_IP" ] || TS_IP=127.0.0.1
-          for i in $(seq 1 20); do
+          # 40×3s = 120s. It was 20×3s = 60s, which was exactly the writer-lease
+          # TTL — so a rollover that had to wait out the old lease lost this race
+          # by construction and reported red on a deploy that did land. The api
+          # now releases the lease on SIGTERM, making the normal case immediate;
+          # this budget is the margin for a container that had to be killed and
+          # whose lease therefore still has to expire.
+          for i in $(seq 1 40); do
             got=$(curl -fsS --max-time 3 "http://$TS_IP:3000/health" 2>/dev/null \
                   | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
             if [ "$got" = "$WANT_SHA" ]; then

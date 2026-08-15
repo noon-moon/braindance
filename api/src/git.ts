@@ -208,7 +208,12 @@ export class GitStore implements VaultAdapter {
     }
   }
 
-  stop(): void {
+  /** Stop the background loops and release the writer lease. The returned
+   *  promise settles once the release has actually landed, so a process
+   *  shutting down can AWAIT it — without that the lease is only freed by its
+   *  TTL, and the replacement instance cannot start for up to `leaseTtlMs`.
+   *  Sync callers may still ignore the result; the release is best-effort. */
+  stop(): Promise<void> {
     if (this.pullTimer) {
       clearInterval(this.pullTimer);
       this.pullTimer = null;
@@ -217,14 +222,12 @@ export class GitStore implements VaultAdapter {
       clearInterval(this.leaseRenewTimer);
       this.leaseRenewTimer = null;
     }
-    if (this.heldLease) {
-      const lease = this.heldLease;
-      this.heldLease = null;
-      // Best-effort release so a takeover proceeds sooner; never let a failure
-      // (e.g. the checkout already gone during shutdown) become an unhandled
-      // rejection.
-      void this.releaseLease(lease).catch(() => undefined);
-    }
+    if (!this.heldLease) return Promise.resolve();
+    const lease = this.heldLease;
+    this.heldLease = null;
+    // Best-effort: never let a failure (e.g. the checkout already gone during
+    // shutdown) become an unhandled rejection or block the exit.
+    return this.releaseLease(lease).catch(() => undefined);
   }
 
   /** Apply a changeset as ONE atomic operation (one commit), then enqueue an

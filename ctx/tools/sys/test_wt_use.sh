@@ -12,11 +12,18 @@ trap 'rm -rf "$TMP"' EXIT
 # clean env so the escape hatch / caller's real config doesn't interfere
 unset BD_ROOT VAULT_PATH REPOS_PATH BD_WT BD_ACTIVE_INSTANCE BD_USE
 REG="$TMP/registry"; export BD_REGISTRY="$REG"
+# Defense in depth behind --no-wire below: if a future edit drops that flag, the
+# wiring lands in $TMP rather than the developer's real settings.json.
+export BD_SETTINGS="$TMP/settings.json"
 
 mkdir -p "$TMP/dev/braindance" "$TMP/dev/vault" "$TMP/dev/repo/loon" \
          "$TMP/work/braindance" "$TMP/work/vault" "$TMP/work/repo"
-"$HERE/configure.sh" --core "$TMP/dev/braindance"  --vault "$TMP/dev/vault"  --repos "$TMP/dev/repo"  --name personal >/dev/null
-"$HERE/configure.sh" --core "$TMP/work/braindance" --vault "$TMP/work/vault" --repos "$TMP/work/repo" --name work     >/dev/null
+# --no-wire is LOAD-BEARING: without it configure.sh wires the caller's REAL
+# ~/.claude/settings.json and shell rc to point at this throwaway $TMP core,
+# which the EXIT trap then deletes — leaving the developer's harness sourcing
+# and exec'ing paths that no longer exist. This test only needs the registry.
+"$HERE/configure.sh" --core "$TMP/dev/braindance"  --vault "$TMP/dev/vault"  --repos "$TMP/dev/repo"  --name personal --no-wire >/dev/null
+"$HERE/configure.sh" --core "$TMP/work/braindance" --vault "$TMP/work/vault" --repos "$TMP/work/repo" --name work     --no-wire >/dev/null
 
 # BD_CORE self-resolves from wt.sh's location (this worktree); resolve.sh sits
 # beside it. Source with -u relaxed (wt.sh isn't written for nounset sourcing).

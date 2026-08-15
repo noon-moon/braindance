@@ -229,7 +229,13 @@ ul.tasks .box[title]:not(button) { cursor:help; }
 .t-meta .at { color:var(--fg); border:1px solid var(--border); border-radius:3px; padding:0 .35em; }
 .pri { flex:none; font-size:.85rem; }
 ul.tasks li.done .t-text { color:var(--muted); text-decoration:line-through; }
-.todo-foot { margin-top:1.3rem; }
+.todo-foot { margin-top:1.3rem; display:flex; gap:.9rem; align-items:center; flex-wrap:wrap; }
+.todo-foot form { margin:0; }
+/* "sync now" — deliberately quiet. It's a utility for when you've just pushed
+   from the laptop and don't want to wait out the reconcile timer, not one of the
+   page's actions, so it reads as muted text until you reach for it. */
+.sync-btn { padding:.15rem .55rem; font-size:.85rem; color:var(--muted); }
+.sync-btn:hover { color:var(--accent); }
 /* Calendar lens. The grid carries DENSITY only — a dot per occurrence — because
    a phone cell can't hold text; the selected day's atoms render below it as an
    ordinary task list, tick buttons and all. */

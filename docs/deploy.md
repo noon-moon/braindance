@@ -51,7 +51,7 @@ The api ships as a **public** container image. Nothing to build, no GitHub accou
 docker pull ghcr.io/noon-moon/braindance/api:latest    # optional; deploy.sh pulls it anyway
 ```
 
-`:latest` is the only tag published, and it always means the newest build of the default branch. It's what `API_IMAGE` points at and what `ops/braindance-sync.timer` pulls, so the box tracks upstream on its own.
+`:latest` is the only tag published, and it always means the newest build of the default branch. It's what `API_IMAGE` points at, what the CI deploy rolls, and what `ops/braindance-sync.timer` falls back to.
 
 **To freeze a box on one build**, pin a digest rather than a tag: `/health` reports the commit SHA the container is running, the GitHub Packages page lists the matching digest, and `API_IMAGE=ghcr.io/noon-moon/braindance/api@sha256:<digest>` holds it there. That is also how you roll back.
 
@@ -69,7 +69,7 @@ git clone https://<user>:<token>@github.com/<owner>/braindance.git /srv/braindan
 git clone https://<user>:<token>@github.com/<owner>/<your-vault>.git /srv/vault
 ```
 
-`/srv/braindance` is config only — the api never writes it, which is what makes the host-side `git pull --ff-only` in `ops/sync.sh` safe. `/srv/vault` is the api's read-write checkout and it is the single writer there.
+`/srv/braindance` is config only — the api never writes it, which is what makes the host-side `git pull --ff-only` (in `ops/sync.sh` and in the CI deploy) safe. **It must be owned by the deploy user**: root-owned, git refuses it as "dubious ownership" and the config silently stops shipping while image rolls keep working. `/srv/vault` is the api's read-write checkout and it is the single writer there.
 
 `/srv/www` and `/srv/garden` are what Caddy serves. They stay empty unless you publish a site into them ([`publishing.md`](publishing.md)).
 
@@ -103,7 +103,9 @@ Always go through `./deploy.sh` — it passes `--env-file /srv/.env`, and bare `
 
 ## 6. Keep it current
 
-The box updates itself: a systemd timer pulls new images (and, with `VAULT_EXTERNAL=1`, fast-forwards the deploy config). CI never SSHes in.
+Deploys are **push-based**: on every push to the default branch, `.github/workflows/deploy-api.yml` builds the image, SSHes in, fast-forwards the deploy config, rolls the container, and gates the run on `/health` reporting the commit it just built. Set `VPS_HOST`, `VPS_USER` and `VPS_SSH_KEY` as repository secrets to enable it; with `VPS_HOST` unset the deploy step skips and says so loudly in the run summary, so a green run never implies a deploy that didn't happen.
+
+The systemd timer below stays on as a **slow fallback** (~30 min) so a failed or unconfigured CI deploy still converges. Both paths are idempotent.
 
 ```bash
 sudo sed -i "s/^User=deploy/User=$USER/" /srv/braindance/ops/braindance-sync.service

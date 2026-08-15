@@ -1,15 +1,30 @@
-# ops/ — VPS self-update
+# ops/ — VPS fallback self-update
 
-The box keeps itself current by **pulling**, not by CI pushing to it. CI
-(`.github/workflows/deploy-api.yml`) only builds and pushes the api image to GHCR; it
-never gets SSH or Docker access to the server. This is the whole update loop:
+**CI is the primary deploy path.** `.github/workflows/deploy-api.yml` builds the
+image, SSHes to the box, pulls the deploy config, rolls the container, and then
+gates on `/health` reporting the commit it just built — so a green run means the
+code is serving, not merely that it compiled.
 
-- **`sync.sh`** — `git pull --ff-only` the repo (so the admin API's read-only
-  vault mount tracks `main`) and `./deploy.sh pull api && up -d api` (rolls the
-  container only if a newer image exists). `flock`-guarded against overlap.
+What lives here is the **fallback**: a timer that converges the box when CI
+didn't run, wasn't configured, or failed. Both paths are idempotent, so having
+both costs nothing but a slow poll.
+
+- **`sync.sh`** — `git pull --ff-only` the deploy config (guarded on
+  `VAULT_EXTERNAL`, since pre-cutover the api owns this checkout) and
+  `./deploy.sh pull api && up -d api`. `flock`-guarded against overlap.
 - **`braindance-sync.service`** — a `oneshot` unit that runs `sync.sh`.
-- **`braindance-sync.timer`** — fires the service ~2 min after boot and every
-  ~5 min after. Tune `OnUnitActiveSec` for how fast the box adopts a new push.
+- **`braindance-sync.timer`** — fires ~2 min after boot, then every ~30 min.
+
+> **Two failure modes this loop cannot see, and one it now shouts about.**
+> The config pull needs the checkout to be **writable by the unit's `User=`** and
+> its history to **fast-forward onto origin**. A root-owned `/srv/braindance`
+> fails the first; a force-pushed/re-rooted default branch fails the second. Both
+> have happened, together, and because the pull ended in `2>/dev/null || true`
+> the box ran a month-old `docker-compose.yml` while every check stayed green.
+> `sync.sh` now logs the failure to stderr (so `journalctl -u braindance-sync`
+> shows it) and the CI deploy fails the run outright. If you hit the re-rooted
+> case, `git fetch && git reset --hard origin/<branch>` is the repair — the
+> config is machine-owned, so there is nothing local to preserve.
 
 ## Install (on the VPS, after the stack is up)
 

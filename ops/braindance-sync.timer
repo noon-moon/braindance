@@ -1,12 +1,19 @@
-# Runs braindance-sync.service shortly after boot and every few minutes after.
-# Adjust OnUnitActiveSec to taste (how quickly the box picks up a new push).
+# Runs braindance-sync.service shortly after boot, then periodically as a SLOW
+# FALLBACK. CI is the primary deploy path (.github/workflows/deploy-api.yml SSHes
+# in on every push); this timer exists so a failed, skipped, or never-configured
+# deploy still converges instead of leaving the box silently stale.
+#
+# It used to run every 5 minutes because it WAS the deploy. At fallback cadence
+# the interval only bounds how long a missed CI deploy goes unrepaired, so it is
+# deliberately slow — a poll that costs a registry round-trip every 5 minutes to
+# discover nothing changed is the sort of thing that hides in a log forever.
 [Unit]
 Description=Run braindance-sync periodically
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=5min
-RandomizedDelaySec=30
+OnUnitActiveSec=30min
+RandomizedDelaySec=120
 Persistent=true
 
 [Install]

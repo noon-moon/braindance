@@ -86,6 +86,38 @@ if bd use ghost >/dev/null 2>&1; then bad "bad pin should fail"; else ok; fi
 eq "bad pin no stale BD_USE" "${BD_USE:-}" ""
 eq "bad pin keeps prior active" "${BD_ACTIVE_INSTANCE:-}" "personal"
 
+# 9. a stale exported BD_CORE must not disable the resolver. wt.sh keeps an
+# inherited BD_CORE, so locating resolve.sh under it would aim at nothing in any
+# shell opened before a core move — and _bd_apply would export nothing at all.
+# The scrub is what gives this test teeth: earlier cases leave BD_ACTIVE_INSTANCE
+# exported, and an inherited value would survive a no-op _bd_apply — so the
+# assertion would pass with the bug fully present.
+OUT9="$(env -u BD_ACTIVE_INSTANCE -u BD_USE -u VAULT_PATH -u REPOS_PATH -u BD_WT \
+        BD_CORE=/nonexistent/core BD_REGISTRY="$REG" bash -c "
+  cd '$TMP/dev/repo/loon'
+  set +u; . '$HERE/wt.sh'; set -u
+  printf '%s' \"\${BD_ACTIVE_INSTANCE:-}\"" 2>/dev/null)"
+eq "stale BD_CORE still resolves" "$OUT9" "personal"
+
+# 10. `bd where` must make the escape hatch legible: dead paths marked, and the
+# registry's own answer shown, so a shadowing env is not misread as a stale
+# registry (the two are otherwise indistinguishable at the point of use).
+# BD_ACTIVE_INSTANCE must be unset for step 0 to fire at all — with it set the
+# resolver treats the env as its own stamp and re-resolves normally.
+OUT10="$(env -u BD_ACTIVE_INSTANCE -u BD_USE -u BD_WT \
+         VAULT_PATH=/nope/vault REPOS_PATH=/nope/repos BD_REGISTRY="$REG" bash -c "
+  cd '$TMP/dev/repo/loon'
+  set +u; . '$HERE/wt.sh'; set -u
+  bd where" 2>/dev/null)"
+case "$OUT10" in *"(MISSING)"*) ok;; *) bad "where marks dead paths (got: $OUT10)";; esac
+case "$OUT10" in *"registry here says: personal"*) ok;; *) bad "where reports shadowed registry (got: $OUT10)";; esac
+
+# 11. a live path is NOT marked — the marker must mean something
+case "$(cd "$TMP/dev/repo/loon" && _bd_chpwd; bd where)" in
+  *"$TMP/dev/vault  (MISSING)"*) bad "live path wrongly marked MISSING";;
+  *) ok;;
+esac
+
 echo "-----"
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

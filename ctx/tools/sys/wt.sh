@@ -49,7 +49,8 @@
 # Self-resolve the checkout from this file's location (ctx/tools/sys/wt.sh → repo
 # root), portable across bash and zsh, so no instance path is baked in.
 _bd_self="${BASH_SOURCE[0]:-$0}"
-BD_CORE="${BD_CORE:-$(cd "$(dirname "$_bd_self")/../../.." && pwd)}"
+_BD_SELF_DIR="$(cd "$(dirname "$_bd_self")" && pwd)"
+BD_CORE="${BD_CORE:-$(cd "$_BD_SELF_DIR/../../.." && pwd)}"
 unset _bd_self
 # Repos dir: per-resource override, else the single external root, else nested.
 BD_REPOS="${REPOS_PATH:-${BD_ROOT:-$BD_CORE/repo}}"
@@ -64,7 +65,12 @@ export BD_WT
 # active instance, but wandering into neutral dirs (no match) leaves the last one
 # in place — the strict "stop, don't guess" is enforced for agents by the guard
 # hook, not by nagging every prompt. `bd use` pins/overrides explicitly.
-BD_RESOLVE="$BD_CORE/ctx/tools/sys/resolve.sh"
+# Locate the resolver beside THIS file, not under BD_CORE. BD_CORE is inherited
+# when already exported, so deriving the resolver from it means a shell holding a
+# pre-move BD_CORE aims at a resolver that no longer exists — _bd_apply then
+# silently exports nothing and every `bd` subcommand reports pre-move paths. The
+# resolver ships next to wt.sh, so its location is knowable without any env.
+BD_RESOLVE="$_BD_SELF_DIR/resolve.sh"
 
 _bd_apply() {  # resolve for $PWD and export what the resolver emits (if any)
   [ -x "$BD_RESOLVE" ] || return 0
@@ -99,6 +105,30 @@ _bd_trunk() {
   else
     echo master
   fi
+}
+
+# `bd where` reports paths, and the failure that actually bites is a path that
+# no longer exists — a moved core, a deleted worktree root. Printing it plain
+# reads as healthy, so mark it: a dead path should look dead.
+_bd_flag() {
+  [ -n "$1" ] || { printf '<unset>\n'; return 0; }
+  if [ -d "$1" ]; then printf '%s\n' "$1"; else printf '%s  (MISSING)\n' "$1"; fi
+}
+
+# In escape-hatch mode the exported env wins and the registry is never consulted,
+# which looks exactly like a stale registry. Re-run the resolver with the
+# shadowing vars stripped to show what the registry would have said.
+_bd_shadowed_by_registry() {
+  [ -x "$BD_RESOLVE" ] || return 0
+  local _reg_out _name _core
+  _reg_out="$(env -u VAULT_PATH -u REPOS_PATH -u BD_CORE -u BD_WT \
+                  -u BD_ACTIVE_INSTANCE "$BD_RESOLVE" "$PWD" 2>/dev/null)" || return 0
+  [ -n "$_reg_out" ] || return 0
+  _name="$(printf '%s\n' "$_reg_out" | sed -n 's/^BD_ACTIVE_INSTANCE=//p')"
+  _core="$(printf '%s\n' "$_reg_out" | sed -n 's/^BD_CORE=//p')"
+  [ -n "$_name" ] || return 0
+  printf "  registry here says: %s (core = %s)\n" "$_name" "$_core"
+  printf "  unset VAULT_PATH REPOS_PATH BD_CORE BD_WT to hand this shell back to it.\n"
 }
 
 bd() {
@@ -185,16 +215,23 @@ bd() {
       fi
       if [ -n "${BD_ACTIVE_INSTANCE:-}" ]; then
         printf "instance: %s%s\n" "$BD_ACTIVE_INSTANCE" "${BD_USE:+ (pinned)}"
-        printf "  core  = %s\n  vault = %s\n  repos = %s\n  worktrees = %s\n" \
-          "${BD_CORE:-<unset>}" "${VAULT_PATH:-<unset>}" "${REPOS_PATH:-<unset>}" \
-          "${BD_WT:-<unset>}"
+        printf "  core  = %s\n" "$(_bd_flag "${BD_CORE:-}")"
+        printf "  vault = %s\n" "$(_bd_flag "${VAULT_PATH:-}")"
+        printf "  repos = %s\n" "$(_bd_flag "${REPOS_PATH:-}")"
+        printf "  worktrees = %s\n" "$(_bd_flag "${BD_WT:-}")"
       elif [ -n "${VAULT_PATH:-}${REPOS_PATH:-}" ]; then
-        printf "instance: (none — manual VAULT_PATH/REPOS_PATH in effect)\n"
-        printf "  vault = %s\n  repos = %s\n  worktrees = %s\n" \
-          "${VAULT_PATH:-<unset>}" "${REPOS_PATH:-<unset>}" "${BD_WT:-<unset>}"
+        # Step 0. Values here came from the environment, not the registry, and a
+        # shell that exported them BEFORE a core move goes on reporting the old
+        # paths forever. Indistinguishable from a stale registry at the point of
+        # use — so say which it is, and show what the registry actually holds.
+        printf "instance: (none — manual VAULT_PATH/REPOS_PATH shadow the registry)\n"
+        printf "  vault = %s\n" "$(_bd_flag "${VAULT_PATH:-}")"
+        printf "  repos = %s\n" "$(_bd_flag "${REPOS_PATH:-}")"
+        printf "  worktrees = %s\n" "$(_bd_flag "${BD_WT:-}")"
+        _bd_shadowed_by_registry
       else
         printf "instance: (none — legacy nested defaults)\n"
-        printf "  worktrees = %s\n" "${BD_WT:-<unset>}"
+        printf "  worktrees = %s\n" "$(_bd_flag "${BD_WT:-}")"
       fi
       ;;
     ls-instances)

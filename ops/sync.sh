@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# VPS sync — runs on a systemd timer (braindance-sync). Rolls the api container
-# when a new image is pushed to GHCR (by api.yml). CI never SSHes in; the VPS
-# pulls itself. flock avoids overlapping runs.
+# VPS sync — runs on a systemd timer (braindance-sync) as a SLOW FALLBACK behind
+# CI. The primary deploy path is .github/workflows/deploy-api.yml, which SSHes in
+# on every push and verifies the result against /health; this script exists so a
+# failed or unconfigured CI deploy still converges. flock avoids overlapping runs.
+#
+# It used to be the only path, and the header here said "CI never SSHes in; the
+# VPS pulls itself" — that is no longer true, and the systemd unit's Description
+# still says so too if it hasn't been reinstalled.
 #
 # NOTE (Slice 1, local-first api): the repo `git pull` is NO LONGER done here.
 # The api container now owns a read-write working checkout of /srv/braindance
@@ -28,7 +33,11 @@ cd /srv/braindance || exit 0
 # pull (auth/diverged) no-ops and the next run retries.
 VAULT_EXTERNAL=$(awk -F= '$1=="VAULT_EXTERNAL"{gsub(/["'"'"' ]/,"",$2); print $2}' /srv/.env 2>/dev/null)
 case "$VAULT_EXTERNAL" in
-  1 | true | yes) git pull --ff-only 2>/dev/null || true ;;
+  1 | true | yes)
+    git pull --ff-only \
+      || echo "braindance-sync: deploy-config pull FAILED — /srv/braindance is stale." \
+              "Check it is writable by $(id -un) and that its history fast-forwards onto origin." >&2
+    ;;
 esac
 
 ./deploy.sh pull -q api 2>/dev/null || true   # no-op until GHCR has an image

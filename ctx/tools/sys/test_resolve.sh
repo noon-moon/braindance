@@ -17,10 +17,13 @@ mkdir -p "$TMP/dev/braindance" "$TMP/dev/vault" "$TMP/dev/repo/loon/src" \
          "$TMP/work/braindance" "$TMP/work/vault" "$TMP/work/repo/app" \
          "$TMP/scratch"
 
+# personal pins `worktrees` explicitly; work omits it, so work exercises the
+# default (a `worktrees` sibling of the core).
 cat > "$REG/instances/personal.conf" <<EOF
 core  = $TMP/dev/braindance
 vault = $TMP/dev/vault
 repos = $TMP/dev/repo
+worktrees = $TMP/dev/worktrees
 EOF
 cat > "$REG/instances/work.conf" <<EOF
 core  = $TMP/work/braindance
@@ -46,11 +49,14 @@ bad()  { fail=$((fail+1)); echo "FAIL: $1"; echo "  rc=$RC"; echo "  out=[$OUT]"
 eq()   { if [ "$2" = "$3" ]; then ok; else bad "$1 (want [$3] got [$2])"; fi; }
 
 emit() { # expected stdout for an instance, in _emit order
-  printf 'BD_ACTIVE_INSTANCE=%s\nBD_CORE=%s\nVAULT_PATH=%s\nREPOS_PATH=%s' \
-    "$1" "$2" "$3" "$4"
+  printf 'BD_ACTIVE_INSTANCE=%s\nBD_CORE=%s\nVAULT_PATH=%s\nREPOS_PATH=%s\nBD_WT=%s' \
+    "$1" "$2" "$3" "$4" "$5"
 }
-P="$(emit personal "$TMP/dev/braindance" "$TMP/dev/vault" "$TMP/dev/repo")"
-W="$(emit work "$TMP/work/braindance" "$TMP/work/vault" "$TMP/work/repo")"
+P="$(emit personal "$TMP/dev/braindance" "$TMP/dev/vault" "$TMP/dev/repo" \
+      "$TMP/dev/worktrees")"
+# work.conf has no `worktrees` key -> _wt_default: sibling of the core
+W="$(emit work "$TMP/work/braindance" "$TMP/work/vault" "$TMP/work/repo" \
+      "$TMP/work/worktrees")"
 
 # 1. location: deep under personal.repos -> personal
 reset_env; run "$TMP/dev/repo/loon/src"; eq "loc-personal-deep rc" "$RC" 0; eq "loc-personal-deep out" "$OUT" "$P"
@@ -90,6 +96,19 @@ case "$ERR" in *"bd use"*) ok;; *) bad "unresolved err suggests bd use";; esac
 reset_env; echo personal > "$REG/default"
 run "$TMP/scratch"; eq "default rc" "$RC" 0; eq "default out" "$OUT" "$P"
 rm -f "$REG/default"
+
+# 12a. BD_WT is always emitted, so it cannot leak across a switch: resolving
+# work must report work's worktrees even with personal's still in the env.
+reset_env; export BD_WT="$TMP/dev/worktrees"; run "$TMP/work/repo/app"
+case "$OUT" in *"BD_WT=$TMP/work/worktrees"*) ok;; *) bad "wt no leak across switch";; esac
+
+# 12b. a stale BD_WT does not override the instance's configured value
+reset_env; export BD_WT=/stale/wt; run "$TMP/dev/repo/loon"
+case "$OUT" in *"BD_WT=$TMP/dev/worktrees"*) ok;; *) bad "wt conf beats stale env";; esac
+
+# 12c. worktrees is NOT a territory — a cwd under it must not resolve by location
+reset_env; mkdir -p "$TMP/dev/worktrees/some-task"; run "$TMP/dev/worktrees/some-task"
+eq "wt-not-territory rc" "$RC" 3
 
 # 12. zero instances registered -> legacy no-op (no output, exit 0)
 EMPTY="$TMP/empty-reg"; mkdir -p "$EMPTY/instances"

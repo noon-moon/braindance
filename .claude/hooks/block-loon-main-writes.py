@@ -12,7 +12,7 @@ Contract (deliberately narrow — a guardrail that misfires is worse than the bu
       under  <repos>/loon        (the resolved guarded checkout; see below)
       but NOT under <repos>/loon/.claude/worktrees/   (agents live here)
   ALLOW everything else: worktree writes, reads, MCP tools, and every path
-      outside the Loon main checkout (the braindance repo, bd-wt/, /tmp, ...).
+      outside the Loon main checkout (the braindance repo, $BD_WT/, /tmp, ...).
 
 Path resolution (single-root model — see CLAUDE.md `$BD_ROOT`): the guarded
 `<repos>` dir is REPOS_PATH, else BD_ROOT (the single external root holding the

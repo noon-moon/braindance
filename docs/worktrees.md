@@ -22,20 +22,20 @@ On-demand detail for the worktree guardrails stated tightly in [`AGENTS.md`](../
 
 The braindance main tree (the braindance checkout — wherever you cloned it; `bd where` reports it) is sacred: it stays on `main`, it's the Obsidian window and the integration point. **Agents don't write here.** Occasionally `git pull --ff-only` it.
 
-Agent sessions work in sibling worktrees under `~/dev/bd-wt/<task>` — **outside** the vault, so Obsidian never indexes them. Helper `bd` (in `ctx/tools/sys/wt.sh`, sourced from your shell rc):
+Agent sessions work in sibling worktrees under `$BD_WT/<task>` — **outside** the vault, so Obsidian never indexes them. `$BD_WT` is per-instance configuration: the `worktrees` key in the instance's registry conf (set it with `./configure --worktrees <path>`), defaulting to a `worktrees` sibling of the core. `bd where` reports the current value. Helper `bd` (in `ctx/tools/sys/wt.sh`, sourced from your shell rc):
 
 - `bd new <task>` — worktree + branch `wt/<task>` off **freshly-fetched** `origin/main`, cd in
 - `bd wip [msg]` — checkpoint uncommitted work in the worktree (a rebasable commit; squashed at land) — leave one before you yield so a stop/crash never loses work (R4)
 - `bd land` — **re-fetch + rebase onto `origin/main` before pushing** (R2), then open + squash-merge a PR (self-land; the PR is the audit trail, `main` stays linear)
 - `bd rm <task>` — remove the worktree + local branch
 
-**Always address a worktree by its ABSOLUTE path** (`~/dev/bd-wt/<task>/…`); never rely on an ambient `cwd` or repo-relative paths that could resolve into the sacred main tree. A session is: `bd new fix-tags` → work → `bd land` → `bd rm fix-tags`. Because the flat vault is file-per-note, disjoint-file sessions rebase and land with no conflict.
+**Always address a worktree by its ABSOLUTE path** (`$BD_WT/<task>/…`); never rely on an ambient `cwd` or repo-relative paths that could resolve into the sacred main tree. A session is: `bd new fix-tags` → work → `bd land` → `bd rm fix-tags`. Because the flat vault is file-per-note, disjoint-file sessions rebase and land with no conflict.
 
 Orthogonal ingress: VPS/`api` captures land directly on `main` in `ctx/vault/inbox/` (funnel-shaped, triaged in-vault at the desk) — a separate ingress from this worktree flow, but now sharing `main` as the target. See [`serving.md`](serving.md).
 
 ## Tooling (source of truth for the rules above)
 
-- `ctx/tools/sys/wt.sh` — the `bd` helpers for braindance-repo sessions: `bd new` (fresh-base worktree under `~/dev/bd-wt/<task>`), `bd wip` (R4 checkpoint), `bd land` (R2 rebase-before-push + squash-merge PR), `bd rm`. Source it from your shell rc.
+- `ctx/tools/sys/wt.sh` — the `bd` helpers for braindance-repo sessions: `bd new` (fresh-base worktree under `$BD_WT/<task>`), `bd wip` (R4 checkpoint), `bd land` (R2 rebase-before-push + squash-merge PR), `bd rm`. Source it from your shell rc.
 - `ctx/tools/orchestration/` — fleet tooling for parallel agents in a target project: `rebase-open-prs.sh` (R5/R6), `loadguard.sh` (R3), `agent-ledger.md` (R7 template), and `README.md` describing the post-merge ritual and perf policy. It lives in the **braindance core** — a separate git repo from any target project, located via `$BD_ROOT` rather than by being a parent dir of a nested `repo/<project>` — so a target project's own write-guard (scoped to *its* checkout) never blocks the orchestrator from running or updating it, whether repos are nested or external siblings under `$BD_ROOT`.
 - A target repo's local guards (e.g. a `PreToolUse` hook blocking writes to its main checkout, or a `Stop` hook that checkpoints worktree WIP) live in that harness's config (e.g. `.claude/hooks/`) and enforce R1 / R4 mechanically.
 

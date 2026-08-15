@@ -50,10 +50,25 @@ owns three **territories**:
 
 "Which braindance is current" ≡ "which instance's territory is my cwd in."
 
-**Key continuity:** the resolver's output is *exactly* the existing env contract
-(`BD_CORE` / `VAULT_PATH` / `REPOS_PATH`). Every current consumer already reads
-those — the `api`, `wt.sh`, `gen-topics.sh`, the `block-loon-main-writes.py`
-guard — so **none of them change**. The resolver is only a front-end that chooses
+An instance also carries one **non-territory** setting:
+
+| Setting | What | The env knob it becomes |
+|---|---|---|
+| `worktrees` | where its agent worktrees live (`bd new <task>` → `<worktrees>/<task>`) | `BD_WT` |
+
+It is deliberately **not** a territory. It confers no ownership, takes no part in
+the disjointness check, and is never matched at step 2 — a worktree is already
+attributed to its instance through `git --git-common-dir`, and two instances that
+default under one parent directory must stay legal to register. Defaults, in
+order: `--worktrees`, `$BD_WT`, `$BD_ROOT/worktrees`, then a `worktrees` sibling
+of the core. It must sit outside both the core (you cannot cut a worktree into
+its own checkout) and the vault (Obsidian would index every agent branch);
+`./configure` warns if you point it at either.
+
+**Key continuity:** the resolver's output is the established env contract
+(`BD_CORE` / `VAULT_PATH` / `REPOS_PATH`, plus `BD_WT`). Every current consumer
+already reads those — the `api`, `wt.sh`, `gen-topics.sh`, the
+`block-loon-main-writes.py` guard — so **none of them change**. The resolver is only a front-end that chooses
 *which* values to export, per-context, instead of a human setting them once.
 
 ## The registry — single source of truth
@@ -64,17 +79,20 @@ trees (nothing to gitignore, nothing to drift, one place to read):
 ```
 ${XDG_CONFIG_HOME:-~/.config}/braindance/
   instances/
-    work.conf         core  = /Users/you/work/braindance
-                      vault = /Users/you/work/vault
-                      repos = /Users/you/work/repo
-    personal.conf     core  = /Users/you/dev/braindance
-                      vault = /Users/you/dev/vault
-                      repos = /Users/you/dev/repo
+    work.conf         core      = /Users/you/work/braindance
+                      vault     = /Users/you/work/vault
+                      repos     = /Users/you/work/repo
+                      worktrees = /Users/you/work/worktrees
+    personal.conf     core      = /Users/you/dev/braindance
+                      vault     = /Users/you/dev/vault
+                      repos     = /Users/you/dev/repo
+                      worktrees = /Users/you/dev/worktrees
   default             personal            # optional: one instance name
 ```
 
-`*.conf` is `key = value`, one absolute path per territory. `default` holds a
-single instance name (optional). The registry is user-global on purpose: it is
+`*.conf` is `key = value`, one absolute path per key. `worktrees` is optional —
+omit it and the instance gets a `worktrees` sibling of its core. `default` holds
+a single instance name (optional). The registry is user-global on purpose: it is
 the index across a user's instances, and `bd use <name>` resolves by name against
 it. It is **never committed** to any clone — it is per-machine, per-user state.
 
@@ -107,7 +125,12 @@ BD_ACTIVE_INSTANCE=<name>     # the stamp — step 0 checks it
 BD_CORE=<core>
 VAULT_PATH=<vault>
 REPOS_PATH=<repos>
+BD_WT=<worktrees>             # always emitted, so it cannot leak across a switch
 ```
+
+`BD_WT` is emitted on every hit — falling back to the derived default when the
+conf omits the key — precisely so switching instances can never leave the
+previous instance's worktree root in the environment.
 
 The stamp is what makes re-resolution idempotent: a fresh `cd` re-runs the ladder
 and re-exports; a manually pre-set `VAULT_PATH`/`REPOS_PATH` (no stamp) is left
@@ -128,8 +151,10 @@ untouched at step 0, so the `api` and one-off overrides keep working.
   wins (so a repo nested deep under `repos` resolves to that instance, not to a
   shorter-prefix sibling). When cwd is inside a git worktree, the worktree's
   `--git-common-dir` (its main checkout) is *also* tested — so a braindance-core
-  worktree under `~/dev/bd-wt/<task>` resolves through its common dir back to the
+  worktree under `$BD_WT/<task>` resolves through its common dir back to the
   core's territory, and a target-repo worktree resolves through to that repo.
+  This is why `worktrees` needs no territory of its own, and why relocating it
+  changes nothing about resolution.
 - **Step 3 — the default pointer.** Only consulted when the pin is unset and cwd
   matched nothing. Convenience for `cwd=~`; opt-in per registry.
 - **Step 4 — legacy compat.** With **zero** instances registered, the resolver
@@ -162,7 +187,8 @@ Run in a clone's root. It:
 
 1. Resolves this clone's territories: `core = $PWD`; `vault`/`repos` from
    `--vault`/`--repos` flags, else the current `$BD_ROOT`/`VAULT_PATH`/
-   `REPOS_PATH` env, else the nested defaults.
+   `REPOS_PATH` env, else the nested defaults. `worktrees` resolves the same way
+   from `--worktrees`/`$BD_WT`/`$BD_ROOT`, else a sibling of the core.
 2. Derives `--name` (default: basename of `core`, or a `--name` flag); validates
    it is unique and its territories are **disjoint** from every registered
    instance (else it errors and changes nothing).
@@ -202,7 +228,7 @@ The automatic half is hooks. Same split braindance already uses for R1.
 
 ```
 cwd = ~/dev/repo/loon             -> step 2: under personal.repos          -> personal
-cwd = ~/dev/bd-wt/some-task       -> step 2 via common-dir -> ~/dev/braindance (personal.core) -> personal
+cwd = ~/dev/worktrees/some-task   -> step 2 via common-dir -> ~/dev/braindance (personal.core) -> personal
 cwd = ~/work/repo/app  (no pin)   -> step 2: under work.repos              -> work
 cwd = ~/work/repo/app  + bd use personal -> step 1 (pin)                   -> personal
 cwd = ~  + default=personal       -> step 3                                -> personal

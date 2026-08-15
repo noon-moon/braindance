@@ -22,7 +22,13 @@ def _canon(p):
 
 
 def load_instances():
-    """[(name, {'core':.., 'vault':.., 'repos':..}), ...] with canonical paths."""
+    """[(name, {'core':.., 'vault':.., 'repos':.., 'worktrees':..}), ...], canonical.
+
+    `worktrees` is read but is NOT a territory: `owner()` defaults to the three
+    real territories, so worktree dirs never confer ownership and never widen
+    what the cross-instance write guard blocks. A worktree is attributed to its
+    instance through `git --git-common-dir`, the same as before.
+    """
     d = os.path.join(registry_dir(), "instances")
     out = []
     try:
@@ -41,7 +47,7 @@ def load_instances():
                         continue
                     k, v = line.split("=", 1)
                     k, v = k.strip(), v.strip()
-                    if k in ("core", "vault", "repos") and v:
+                    if k in ("core", "vault", "repos", "worktrees") and v:
                         terr[k] = _canon(v)
         except OSError:
             continue

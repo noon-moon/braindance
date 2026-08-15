@@ -10,7 +10,7 @@ TMP="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/bdwtuse.XXXXXX")" && pwd -P)"
 trap 'rm -rf "$TMP"' EXIT
 
 # clean env so the escape hatch / caller's real config doesn't interfere
-unset BD_ROOT VAULT_PATH REPOS_PATH BD_ACTIVE_INSTANCE BD_USE
+unset BD_ROOT VAULT_PATH REPOS_PATH BD_WT BD_ACTIVE_INSTANCE BD_USE
 REG="$TMP/registry"; export BD_REGISTRY="$REG"
 
 mkdir -p "$TMP/dev/braindance" "$TMP/dev/vault" "$TMP/dev/repo/loon" \
@@ -32,12 +32,15 @@ cd "$TMP/dev/repo/loon"; _bd_chpwd
 eq "chpwd active"  "${BD_ACTIVE_INSTANCE:-}" "personal"
 eq "chpwd vault"   "${VAULT_PATH:-}"         "$TMP/dev/vault"
 eq "chpwd repos"   "${REPOS_PATH:-}"         "$TMP/dev/repo"
+# BD_WT is part of the contract, so `bd new` cuts worktrees for THIS instance
+eq "chpwd wt"      "${BD_WT:-}"              "$TMP/dev/worktrees"
 
 # 2. bd use work pins and switches, regardless of cwd
 bd use work >/dev/null 2>&1
 eq "use active" "${BD_ACTIVE_INSTANCE:-}" "work"
 eq "use pin"    "${BD_USE:-}"             "work"
 eq "use vault"  "${VAULT_PATH:-}"         "$TMP/work/vault"
+eq "use wt"     "${BD_WT:-}"              "$TMP/work/worktrees"
 
 # 3. pin is sticky across cd into another instance's territory
 cd "$TMP/dev/repo/loon"; _bd_chpwd
@@ -55,6 +58,7 @@ eq "neutral dir sticky" "${BD_ACTIVE_INSTANCE:-}" "personal"
 # 6. bd where reports the active instance
 W="$(cd "$TMP/dev/repo/loon" && _bd_chpwd; bd where)"
 case "$W" in *"instance: personal"*) ok;; *) bad "where reports personal (got: $W)";; esac
+case "$W" in *"worktrees = $TMP/dev/worktrees"*) ok;; *) bad "where reports worktrees (got: $W)";; esac
 
 # 7. ls-instances lists both, marks active + default
 echo personal > "$REG/default"

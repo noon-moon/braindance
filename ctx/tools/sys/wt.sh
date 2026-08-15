@@ -13,6 +13,14 @@
 #   BD_REPOS  where target repos live: REPOS_PATH, else BD_ROOT, else <core>/repo.
 #             Nothing here clones into it yet — it's the shared convention the docs
 #             and guard hooks resolve against; exported so tooling can reuse it.
+#   BD_WT     where THIS instance's agent worktrees live — `bd new <task>` creates
+#             $BD_WT/<task>. Configured per-instance by the `worktrees` key in the
+#             registry conf (./configure --worktrees), which the resolver emits;
+#             that value wins, so the assignment below is only the fallback for
+#             when the resolver is dormant (legacy / escape-hatch mode). The
+#             fallback is a `worktrees` sibling of the core, matching the default
+#             configure.sh and resolve.sh compute — never inside the core or the
+#             vault, so a checkout stays clean and Obsidian indexes no branches.
 #
 # One terminal = one worktree = one branch. Keeps the main tree (your Obsidian
 # window) sacred: agents never write there, so no shared index/HEAD collisions.
@@ -46,7 +54,8 @@ unset _bd_self
 # Repos dir: per-resource override, else the single external root, else nested.
 BD_REPOS="${REPOS_PATH:-${BD_ROOT:-$BD_CORE/repo}}"
 export BD_REPOS
-BD_WT="${BD_WT:-$HOME/dev/bd-wt}"
+BD_WT="${BD_WT:-$(dirname "$BD_CORE")/worktrees}"
+export BD_WT
 
 # --- active-instance resolution (the multi-instance model; docs/instances.md) -
 # Which braindance is "current" is resolved from where you are, per-shell. The
@@ -176,13 +185,16 @@ bd() {
       fi
       if [ -n "${BD_ACTIVE_INSTANCE:-}" ]; then
         printf "instance: %s%s\n" "$BD_ACTIVE_INSTANCE" "${BD_USE:+ (pinned)}"
-        printf "  core  = %s\n  vault = %s\n  repos = %s\n" \
-          "${BD_CORE:-<unset>}" "${VAULT_PATH:-<unset>}" "${REPOS_PATH:-<unset>}"
+        printf "  core  = %s\n  vault = %s\n  repos = %s\n  worktrees = %s\n" \
+          "${BD_CORE:-<unset>}" "${VAULT_PATH:-<unset>}" "${REPOS_PATH:-<unset>}" \
+          "${BD_WT:-<unset>}"
       elif [ -n "${VAULT_PATH:-}${REPOS_PATH:-}" ]; then
         printf "instance: (none — manual VAULT_PATH/REPOS_PATH in effect)\n"
-        printf "  vault = %s\n  repos = %s\n" "${VAULT_PATH:-<unset>}" "${REPOS_PATH:-<unset>}"
+        printf "  vault = %s\n  repos = %s\n  worktrees = %s\n" \
+          "${VAULT_PATH:-<unset>}" "${REPOS_PATH:-<unset>}" "${BD_WT:-<unset>}"
       else
         printf "instance: (none — legacy nested defaults)\n"
+        printf "  worktrees = %s\n" "${BD_WT:-<unset>}"
       fi
       ;;
     ls-instances)

@@ -15,7 +15,7 @@ TMP="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/bdconfig.XXXXXX")" && pwd -P)"
 trap 'rm -rf "$TMP"' EXIT
 
 # Don't let the caller's real instance env leak into the default-resolution tests.
-unset BD_ROOT VAULT_PATH REPOS_PATH BD_ACTIVE_INSTANCE BD_USE
+unset BD_ROOT VAULT_PATH REPOS_PATH BD_WT BD_ACTIVE_INSTANCE BD_USE
 
 pass=0; fail=0
 ok()  { pass=$((pass+1)); }
@@ -43,6 +43,8 @@ if [ -f "$CF" ]; then ok; else bad "personal.conf written"; fi
 eq "conf core"  "$(val "$CF" core)"  "$TMP/dev/braindance"
 eq "conf vault" "$(val "$CF" vault)" "$TMP/dev/vault"
 eq "conf repos" "$(val "$CF" repos)" "$TMP/dev/repo"
+# worktrees is always recorded; unflagged it defaults to a sibling of the core
+eq "conf worktrees default" "$(val "$CF" worktrees)" "$TMP/dev/worktrees"
 
 # 2. name defaults to basename(core)
 fresh_reg
@@ -68,6 +70,33 @@ run --core "$TMP/dev/braindance" --name nested
 CF="$REG/instances/nested.conf"
 eq "nested vault" "$(val "$CF" vault)" "$TMP/dev/braindance/ctx/vault"
 eq "nested repos" "$(val "$CF" repos)" "$TMP/dev/braindance/repo"
+
+# 5a. --worktrees is recorded verbatim, and resolve.sh then emits it as BD_WT
+fresh_reg
+run --core "$TMP/dev/braindance" --vault "$TMP/dev/vault" --repos "$TMP/dev/repo" \
+    --name personal --worktrees "$TMP/dev/agent-wt"
+CF="$REG/instances/personal.conf"
+eq "flag worktrees" "$(val "$CF" worktrees)" "$TMP/dev/agent-wt"
+unset BD_USE VAULT_PATH REPOS_PATH BD_ACTIVE_INSTANCE
+RESOLVED="$("$RESOLVE" "$TMP/dev/vault" 2>/dev/null)"
+case "$RESOLVED" in *"BD_WT=$TMP/dev/agent-wt"*) ok;; *) bad "resolve emits configured BD_WT (got [$RESOLVED])";; esac
+
+# 5b. BD_ROOT supplies the worktrees default, like it does vault/repos
+fresh_reg
+BD_ROOT="$TMP/work" run --core "$TMP/work/braindance" --name work-wt
+eq "env worktrees" "$(val "$REG/instances/work-wt.conf" worktrees)" "$TMP/work/worktrees"
+
+# 5c. BD_WT in the env is honoured as the default when no flag is given
+fresh_reg
+BD_WT="$TMP/dev/from-env" run --core "$TMP/dev/braindance" --name envwt
+eq "BD_WT env default" "$(val "$REG/instances/envwt.conf" worktrees)" "$TMP/dev/from-env"
+
+# 5d. worktrees inside the vault warns (Obsidian would index agent branches)
+fresh_reg
+run --core "$TMP/dev/braindance" --vault "$TMP/dev/vault" --repos "$TMP/dev/repo" \
+    --name badwt --worktrees "$TMP/dev/vault/wt"
+eq "worktrees-in-vault still registers" "$RC" 0
+case "$ERR" in *WARNING*vault*) ok;; *) bad "worktrees-in-vault warns (err=[$ERR])";; esac
 
 # 6. disjointness: reject an instance whose repos nests under another's repos
 fresh_reg

@@ -476,8 +476,16 @@ app.get("/todo", (c) => {
   // Same post/redirect/get receipt the capture screen uses.
   const ok = c.req.query("ok");
   const err = c.req.query("err");
+  const synced = c.req.query("synced");
   return c.html(layout("todo", html`
     ${ok !== undefined ? html`<div class="toast">✓ completed${ok ? html` → “${ok}”` : ""}</div>` : ""}
+    ${synced !== undefined
+      ? synced === "slow"
+        // The reconcile outlived the request; it is still running, so this is a
+        // "check back", not a failure.
+        ? html`<div class="toast dup">↻ still syncing — reload in a moment</div>`
+        : html`<div class="toast">✓ synced</div>`
+      : ""}
     ${err ? html`<div class="toast err">✗ ${err}</div>` : ""}
     <h1>todo <span class="muted">(${open})</span></h1>
     <div class="meta">${today}${overdue ? html` · <span class="late">${overdue} overdue</span>` : ""}
@@ -490,11 +498,15 @@ app.get("/todo", (c) => {
         : byScope
           ? groupByScope(all, today).map(scopeSection)
           : groupByDue(all, today).map(dateSection)}
-    <p class="todo-foot">
+    <div class="todo-foot">
       ${showDone
         ? html`<a href="${url(here)}">hide completed</a>`
         : html`<a href="${url(here, "done=1")}">show completed</a>`}
-    </p>
+      <form method="post" action="/sync">
+        <input type="hidden" name="back" value="${url(here, showDone ? "done=1" : "")}" />
+        <button class="btn sync-btn" type="submit" title="pull the vault repo now, instead of waiting for the reconcile timer">↻ sync</button>
+      </form>
+    </div>
     ${done.length
       ? html`<section class="tg">
           <h2>Completed <span class="n">${done.length}</span></h2>
@@ -1239,6 +1251,49 @@ app.post("/notes", async (c) => {
   if (!b.content || !b.scope) return c.json({ error: "content and scope are required" }, 400);
   return c.json(await createNote({ content: b.content, scope: b.scope }), 201);
 });
+// ── POST /sync — reconcile NOW, instead of at the next tick ─────────────────
+//
+// The background timer is a safety net, and a poll can only ever average half
+// its own interval because it has no idea when you actually pushed. This is the
+// other half: an explicit "I just pushed, go and look", which costs one
+// round-trip and nothing at all while idle. Two callers:
+//
+//   - the ↻ button on /todo, for when you're already on the page;
+//   - the laptop, immediately after a push — which is what makes the whole
+//     edit-in-Obsidian loop feel immediate rather than eventually-consistent:
+//       git push && curl -sX POST http://<tailscale-ip>:3000/sync
+//
+// Tailscale-only like every other route, so it carries no auth of its own. That
+// is defensible here because the endpoint takes no content and grants no new
+// capability: the worst a caller achieves is making the box fetch its own
+// remote, which is exactly what the timer already does unprompted.
+//
+// How long to hold the request open before answering "still going". The
+// reconcile does not stop when we stop waiting — it keeps running on the push
+// worker — so this only decides whether you get a receipt or a "check back".
+const SYNC_WAIT_MS = 8000;
+
+app.post("/sync", async (c) => {
+  const b = await c.req.parseBody();
+  // Where to land afterwards. A form field, NOT the Referer header: this
+  // response is a redirect, and a redirect target the client supplies is an
+  // open redirect. Site-relative paths only — a leading `//` is
+  // protocol-relative, i.e. off-site, so it is rejected along with the rest.
+  const asked = String(b.back ?? "/todo");
+  const back = /^\/(?!\/)[\w\-./?=&%+]*$/.test(asked) ? asked : "/todo";
+
+  const store = gitStore();
+  store.requestPush();
+  // Never hang the request on a slow or unreachable remote — a phone left
+  // spinning is worse than a stale page you can reload.
+  const settled = await Promise.race([
+    store.flush().then(() => true),
+    new Promise<boolean>((r) => setTimeout(() => r(false), SYNC_WAIT_MS)),
+  ]);
+  invalidate(); // drops the vault index AND the task scan (see vault.ts)
+  return c.redirect(`${back}${back.includes("?") ? "&" : "?"}synced=${settled ? "1" : "slow"}`, 303);
+});
+
 // `/health` doubles as the deploy diagnostic. Twice now, a `/srv/.env` edit and
 // an image roll have been indistinguishable from outside the box: the feed just
 // looks the same, and answering "is the new build live, did the env land?"

@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
-import { GitStore, redactToken } from "../src/git.js";
+import { GitStore, redactToken, reconcileIntervalMs } from "../src/git.js";
 import { vaultRel } from "../src/config.js";
 
 let passed = 0;
@@ -160,6 +160,75 @@ async function testConflictAbort() {
   // The remote still has only its own commit — the api did not force anything.
   git(other, "log", "-1", "--format=%s");
   check("remote unchanged (api did not push over the conflict)", git(other, "show", "HEAD:shared.md") === "REMOTE version");
+}
+
+async function testSkipsNoOpPush() {
+  console.log("test: an idle reconcile pulls but sends no push");
+  const { repo, remote, other } = setup();
+  const store = newStore(repo, remote);
+  await store.init();
+
+  // Nothing local to send — the checkout IS the remote tip.
+  store.requestPush();
+  await store.flush();
+  check("idle reconcile sent no push", store.pushesSent === 0);
+
+  // An inbound-only reconcile is still idle as far as pushing goes: pulling
+  // someone else's commit gives us nothing of our own to send back.
+  writeFileSync(join(other, "laptop-note.md"), "from the laptop\n");
+  git(other, "add", "-A");
+  git(other, "commit", "-m", "laptop: external note");
+  git(other, "push", "origin", "main");
+  store.requestPush();
+  await store.flush();
+  check("external commit pulled in", existsSync(join(repo, "laptop-note.md")));
+  check("pull-only reconcile still sent no push", store.pushesSent === 0);
+
+  // …but a local commit must still go out, or the skip has eaten a write.
+  await store.commitCapture("ctx/vault/inbox/2026-08-15-s.md", "local\n", "inbox: local capture");
+  await store.flush();
+  check("a local commit is still pushed", store.pushesSent === 1);
+  git(other, "pull", "origin", "main");
+  check("and the remote received it", existsSync(join(other, "ctx/vault/inbox/2026-08-15-s.md")));
+}
+
+async function testConflictClearsOnCleanReconcile() {
+  console.log("test: the conflict flag clears on a clean reconcile, push or no push");
+  const { repo, remote, other } = setup();
+  const store = newStore(repo, remote);
+  await store.init();
+
+  // Drive it into the conflicted state, exactly as testConflictAbort does.
+  writeFileSync(join(other, "shared.md"), "REMOTE version\n");
+  git(other, "add", "-A");
+  git(other, "commit", "-m", "laptop: shared REMOTE");
+  git(other, "push", "origin", "main");
+  await store.commitCapture("shared.md", "LOCAL version\n", "api: shared LOCAL");
+  await store.flush();
+  check("precondition: the flag is raised", store.status().conflicted === true);
+
+  // Resolve it the way an operator would — drop the local commit, take the
+  // remote's. The box is now IDLE: in sync, with nothing to push. The flag used
+  // to be cleared only as a side effect of a successful push, so this is the
+  // case that would strand it raised forever.
+  git(repo, "reset", "--hard", "HEAD~1");
+  const sentBefore = store.pushesSent;
+  store.requestPush();
+  await store.flush();
+
+  check("a clean reconcile cleared the flag with no push to hang it on", store.status().conflicted === false);
+  check("and it did skip the push", store.pushesSent === sentBefore);
+}
+
+function testReconcileInterval() {
+  console.log("test: reconcileIntervalMs never yields NaN (which would disarm the timer)");
+  const D = 5 * 60_000;
+  check("unset → the default", reconcileIntervalMs(undefined, D) === D);
+  check("empty → the default", reconcileIntervalMs("", D) === D);
+  check("a real value is used", reconcileIntervalMs("10000", D) === 10_000);
+  check("a typo falls back rather than disarming the timer", reconcileIntervalMs("30s", D) === D);
+  check("negative falls back", reconcileIntervalMs("-1", D) === D);
+  check("an explicit 0 is preserved — that IS the off switch", reconcileIntervalMs("0", D) === 0);
 }
 
 async function testAtomicChangeset() {
@@ -348,10 +417,13 @@ async function main() {
   try {
     testRedactToken();
     testVaultRel();
+    testReconcileInterval();
     await testCaptureCommitAndPush();
     await testConcurrentCapturesSerialized();
     await testPullRebaseReconcile();
     await testConflictAbort();
+    await testSkipsNoOpPush();
+    await testConflictClearsOnCleanReconcile();
     await testAtomicChangeset();
     await testUnsafePathRejected();
     await testHistoryAndRevert();

@@ -142,6 +142,10 @@ export class GitStore implements VaultAdapter {
   private pushRequested = false;
   private pushRunning = false;
   private conflicted = false;
+  /** Pushes actually sent — a reconcile that skipped a no-op push does not count.
+   *  A diagnostic and the hook the tests assert the skip through; deliberately
+   *  NOT part of `status()`, because a raw counter means nothing to /health. */
+  pushesSent = 0;
   private pullTimer: ReturnType<typeof setInterval> | null = null;
   private heldLease: Lease | null = null;
   private leaseRenewTimer: ReturnType<typeof setInterval> | null = null;
@@ -515,9 +519,9 @@ export class GitStore implements VaultAdapter {
     }
   }
 
-  /** The serialized reconcile: pull --rebase incoming history, then push. On a
-   *  rebase conflict, abort + flag (never clobber). Runs under the one lock so
-   *  it never races a concurrent commit. */
+  /** The serialized reconcile: pull --rebase incoming history, then push IF we
+   *  actually have something to send. On a rebase conflict, abort + flag (never
+   *  clobber). Runs under the one lock so it never races a concurrent commit. */
   private async reconcileAndPush(): Promise<void> {
     if (!this.remoteUrl) return;
     await this.lock.run(async () => {
@@ -532,9 +536,44 @@ export class GitStore implements VaultAdapter {
         }
         throw e; // network/other — bubble up to the retry loop
       }
-      await this.git.push(this.remoteUrl!, `HEAD:${this.branch}`);
+      // An idle tick has nothing to send, and pushing anyway is half the cost of
+      // the poll: a full round-trip (TLS, auth, ref advertisement) to be told
+      // "Everything up-to-date". At a 5-minute interval that's noise; at the
+      // 10-30s interval this timer is useful at, it's the difference between one
+      // network operation per tick and two.
+      const ahead = await this.aheadOfFetchHead();
+      if (ahead === null || ahead > 0) {
+        await this.git.push(this.remoteUrl!, `HEAD:${this.branch}`);
+        this.pushesSent++;
+      }
+      // Cleared on a clean RECONCILE, not on a successful push. Before the skip
+      // above this line was only reachable by pushing, so an idle box whose
+      // conflict had been resolved by hand would have carried the flag forever.
+      // A pull that rebases without conflict IS the proof it's resolved.
       this.conflicted = false;
     });
+  }
+
+  /** Commits HEAD has that the tip we just fetched doesn't — exactly what a push
+   *  would send.
+   *
+   *  It reads FETCH_HEAD rather than a remote-tracking ref because this store
+   *  syncs by explicit URL (so the PAT never lands in `.git/config`), and
+   *  `git pull <url>` updates no `refs/remotes/*` — FETCH_HEAD is the only local
+   *  record of the tip we just reconciled against. After a `--rebase` pull HEAD
+   *  is either exactly that tip (nothing local) or a descendant of it (local
+   *  commits replayed on top), so this count is exact.
+   *
+   *  Null means "couldn't tell", and the caller pushes anyway: a redundant push
+   *  costs one round-trip, whereas a wrongly-skipped one strands a commit on the
+   *  box where nobody is looking for it. Fail toward sending. */
+  private async aheadOfFetchHead(): Promise<number | null> {
+    try {
+      const n = Number((await this.git.raw(["rev-list", "--count", "FETCH_HEAD..HEAD"])).trim());
+      return Number.isFinite(n) ? n : null;
+    } catch {
+      return null;
+    }
   }
 
   private async isRebaseInProgress(): Promise<boolean> {
@@ -565,6 +604,23 @@ export function authRemoteUrl(token?: string, repo?: string): string | null {
   return `https://x-access-token:${token}@github.com/${repo}.git`;
 }
 
+/** A reconcile interval read from the environment, in ms.
+ *
+ *  Unparseable input falls back to `fallback` rather than reaching `start()` as
+ *  NaN: the timer is armed by `if (this.pullIntervalMs > 0)`, and `NaN > 0` is
+ *  false, so `GIT_PULL_INTERVAL_MS=30s` would silently switch inbound sync OFF
+ *  and the box would never pull again — with nothing in the log to say why.
+ *
+ *  An explicit `0` is preserved, because that IS the documented off switch (for
+ *  a local-only box, or one driven entirely by POST /sync). Only garbage and
+ *  negatives fall back. */
+export function reconcileIntervalMs(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return n;
+}
+
 let store: GitStore | null = null;
 
 /** Process-wide singleton, configured from env. */
@@ -577,7 +633,7 @@ export function gitStore(): GitStore {
     remoteUrl: authRemoteUrl(process.env.GITHUB_TOKEN, process.env.GITHUB_REPO),
     authorName: process.env.GIT_AUTHOR_NAME,
     authorEmail: process.env.GIT_AUTHOR_EMAIL,
-    pullIntervalMs: Number(process.env.GIT_PULL_INTERVAL_MS ?? 5 * 60_000),
+    pullIntervalMs: reconcileIntervalMs(process.env.GIT_PULL_INTERVAL_MS, 5 * 60_000),
     // Single-writer lease: off by default (pre-cutover behaviour unchanged);
     // set REQUIRE_LEASE=1 at cutover so a stray second instance can't co-write.
     requireLease: /^(1|true|yes)$/i.test(process.env.REQUIRE_LEASE ?? ""),

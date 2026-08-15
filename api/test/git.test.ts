@@ -313,13 +313,13 @@ async function testLeaseGatedCommit() {
   check("B commit refused without the lease", refused);
   check("B's write did not land", !existsSync(join(repo, "ctx/vault/g2.md")));
 
-  a.stop(); // releases A's lease (async, best-effort)
-  let bGot = false;
-  for (let i = 0; i < 25 && !bGot; i++) {
-    bGot = await b.acquireWriterLease();
-    if (!bGot) await new Promise((r) => setTimeout(r, 10));
-  }
-  check("B acquires the lease after A releases", bGot);
+  // Awaiting stop() must leave the lease ACTUALLY released — not merely release
+  // it eventually. The deploy path turns on this: the replacement container has
+  // one shot at acquiring, and if the outgoing process exits before the release
+  // lands, the new one crash-loops for the whole TTL. So B must win on its FIRST
+  // attempt, with no polling.
+  await a.stop();
+  check("B acquires the lease immediately after A's awaited release", (await b.acquireWriterLease()) === true);
   await b.commit({ ops: [{ op: "put", path: "ctx/vault/g3.md", content: "3\n" }] }, { message: "b: g3" });
   await b.flush();
   check("B commits after taking over the lease", existsSync(join(repo, "ctx/vault/g3.md")));

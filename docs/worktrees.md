@@ -28,6 +28,9 @@ Agent sessions work in sibling worktrees under `$BD_WT/<task>` — **outside** t
 - `bd wip [msg]` — checkpoint uncommitted work in the worktree (a rebasable commit; squashed at land) — leave one before you yield so a stop/crash never loses work (R4)
 - `bd land` — **re-fetch + rebase onto `origin/main` before pushing** (R2), then open + squash-merge a PR (self-land; the PR is the audit trail, `main` stays linear)
 - `bd rm <task>` — remove the worktree + local branch
+- `bd repair` — re-point worktrees orphaned by a moved or renamed core, then prune
+
+**After moving the core, run `bd repair`.** A linked worktree stores an *absolute* gitdir pointer, and the admin dir under `.git/worktrees/<id>` stores an absolute path back, so relocating the core breaks every worktree at once in both directions — `git status` in one fails with `not a git repository`. `bd repair` walks `$BD_WT`, fixes both pointers wherever the admin dir survives, and only then prunes. Directories whose admin dir is gone are **reported and left alone**: they are no longer reproducible from git, so deleting them is the user's call, never the tool's. Pruning before repairing would destroy the admin dirs repair needs, turning fixable worktrees into unrecoverable ones — which is why the order is fixed.
 
 **Always address a worktree by its ABSOLUTE path** (`$BD_WT/<task>/…`); never rely on an ambient `cwd` or repo-relative paths that could resolve into the sacred main tree. A session is: `bd new fix-tags` → work → `bd land` → `bd rm fix-tags`. Because the flat vault is file-per-note, disjoint-file sessions rebase and land with no conflict.
 

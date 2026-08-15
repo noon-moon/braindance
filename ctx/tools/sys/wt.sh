@@ -31,6 +31,7 @@
 #   bd wip [msg]    checkpoint uncommitted work in this worktree (rebasable commit)
 #   bd land         rebase onto trunk, push branch, open + squash-merge a PR (audit trail)
 #   bd rm <task>    remove the worktree and its local branch
+#   bd repair       re-point worktrees orphaned by a moved/renamed core, then prune
 #   bd use [<name>] pin this shell to instance <name> (no arg / --auto: back to auto)
 #   bd where        show which instance is current for $PWD, and how it resolved
 #   bd ls-instances list registered instances (* = active, marks the default)
@@ -176,6 +177,35 @@ bd() {
       cd "$BD_CORE" || return 1
       git worktree remove "$BD_WT/$2" && git branch -D "wt/$2" 2>/dev/null
       ;;
+    repair)
+      # A linked worktree stores an ABSOLUTE gitdir pointer, and the admin dir
+      # under .git/worktrees/<id> stores an absolute path back. Moving or
+      # renaming the core breaks every worktree at once, in both directions.
+      # `git worktree repair` rewrites both wherever the admin dir survives.
+      local _d _bad _fixed
+      _bad=0; _fixed=0
+      [ -d "$BD_WT" ] || { printf 'no worktrees dir: %s\n' "$BD_WT"; return 0; }
+      for _d in "$BD_WT"/*; do
+        [ -d "$_d" ] || continue
+        [ -e "$_d/.git" ] || continue          # never was a worktree — not ours
+        git -C "$BD_CORE" worktree repair "$_d" >/dev/null 2>&1
+        if git -C "$_d" rev-parse --git-dir >/dev/null 2>&1; then
+          _fixed=$((_fixed+1)); printf '  ok            %s\n' "$_d"
+        else
+          # Admin dir (and possibly the branch) is gone: the directory is now
+          # just files. Only the user knows whether they matter, and they are
+          # NOT reproducible from git — so report and keep hands off.
+          _bad=$((_bad+1))
+          printf '  UNRECOVERABLE %s — files only, left untouched\n' "$_d"
+        fi
+      done
+      # Prune LAST. Pruning first would delete the very admin dirs repair needs
+      # to re-point a worktree whose directory moved, converting a fixable
+      # worktree into an unrecoverable one.
+      git -C "$BD_CORE" worktree prune
+      printf 'repaired %d, unrecoverable %d (root: %s)\n' "$_fixed" "$_bad" "$BD_WT"
+      [ "$_bad" -eq 0 ]
+      ;;
     use)
       # bd use <name>  -> pin this shell to <name> (wins over location)
       # bd use --auto  -> clear the pin; resume location-based resolution
@@ -251,7 +281,7 @@ bd() {
       fi
       ;;
     *)
-      echo "usage: bd {new <task>|ls|wip [msg]|land|rm <task>|use [<name>|--auto]|where|ls-instances}"
+      echo "usage: bd {new <task>|ls|wip [msg]|land|rm <task>|repair|use [<name>|--auto]|where|ls-instances}"
       ;;
   esac
 }

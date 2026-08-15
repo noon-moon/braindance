@@ -118,6 +118,32 @@ case "$(cd "$TMP/dev/repo/loon" && _bd_chpwd; bd where)" in
   *) ok;;
 esac
 
+# 12. bd repair — reproduce the real incident: the core is moved out from under
+# its worktrees, breaking every absolute gitdir pointer at once.
+RT="$TMP/repair"; mkdir -p "$RT/wt"
+git -C "$RT" init -q old-core
+git -C "$RT/old-core" -c user.email=t@e -c user.name=t commit -q --allow-empty -m init
+git -C "$RT/old-core" worktree add -q "$RT/wt/live" -b wt/live >/dev/null 2>&1
+# a directory that was a worktree of a core that is simply gone (no admin dir)
+mkdir -p "$RT/wt/dead"
+printf 'gitdir: /nonexistent/core/.git/worktrees/dead\n' > "$RT/wt/dead/.git"
+printf 'keep me\n' > "$RT/wt/dead/precious.txt"
+mv "$RT/old-core" "$RT/new-core"                       # <- the core move
+
+# broken before repair
+if git -C "$RT/wt/live" rev-parse --git-dir >/dev/null 2>&1; then
+  bad "fixture: live worktree should be broken by the move"
+else ok; fi
+
+REPOUT="$( BD_CORE="$RT/new-core" BD_WT="$RT/wt"; bd repair 2>&1 )" || true
+case "$REPOUT" in *"ok  "*live*) ok;; *) bad "repair fixes the moved worktree (got: $REPOUT)";; esac
+if git -C "$RT/wt/live" rev-parse --git-dir >/dev/null 2>&1; then ok
+else bad "live worktree usable after repair"; fi
+
+# the unrecoverable one is reported and, critically, still on disk
+case "$REPOUT" in *UNRECOVERABLE*dead*) ok;; *) bad "repair reports unrecoverable dir";; esac
+if [ -f "$RT/wt/dead/precious.txt" ]; then ok; else bad "repair must not delete unrecoverable dirs"; fi
+
 echo "-----"
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

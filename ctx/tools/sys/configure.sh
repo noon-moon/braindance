@@ -12,6 +12,7 @@
 #   --core <path>     the checkout (default: $PWD)
 #   --vault <path>    knowledge base (default: $VAULT_PATH | $BD_ROOT/vault | <core>/ctx/vault)
 #   --repos <path>    repos dir     (default: $REPOS_PATH | $BD_ROOT | <core>/repo)
+#   --worktrees <p>   agent worktrees (default: $BD_WT | $BD_ROOT/worktrees | <core>/../worktrees)
 #   --default         also set this instance as the registry `default` pointer
 #   --registry <dir>  registry location (default: $BD_REGISTRY | ~/.config/braindance)
 #   --no-wire         register only; skip installing the hook/shell wiring
@@ -27,7 +28,7 @@
 # resolver dormant (escape hatch); configure warns if it finds them.
 set -u
 
-name=""; core=""; vault=""; repos=""; set_default=""; no_wire=""
+name=""; core=""; vault=""; repos=""; worktrees=""; set_default=""; no_wire=""
 REG="${BD_REGISTRY:-${XDG_CONFIG_HOME:-$HOME/.config}/braindance}"
 SETTINGS="${BD_SETTINGS:-$HOME/.claude/settings.json}"
 RC=""
@@ -40,12 +41,13 @@ while [ $# -gt 0 ]; do
     --core)     core="${2:-}"; shift 2 ;;
     --vault)    vault="${2:-}"; shift 2 ;;
     --repos)    repos="${2:-}"; shift 2 ;;
+    --worktrees) worktrees="${2:-}"; shift 2 ;;
     --registry) REG="${2:-}"; shift 2 ;;
     --settings) SETTINGS="${2:-}"; shift 2 ;;
     --rc)       RC="${2:-}"; shift 2 ;;
     --default)  set_default=1; shift ;;
     --no-wire)  no_wire=1; shift ;;
-    -h|--help)  sed -n '2,24p' "$0"; exit 0 ;;
+    -h|--help)  sed -n '2,25p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -65,7 +67,12 @@ core="$(_canon "${core:-$PWD}")"
 [ -d "$core" ] || die "core is not a directory: $core"
 vault="${vault:-${VAULT_PATH:-${BD_ROOT:+$BD_ROOT/vault}}}"; vault="${vault:-$core/ctx/vault}"
 repos="${repos:-${REPOS_PATH:-${BD_ROOT:-$core/repo}}}"
-vault="$(_canon "$vault")"; repos="$(_canon "$repos")"
+# Worktrees are never nested in the core (a worktree inside its own checkout) nor
+# in the vault (Obsidian would index every agent branch) — so the last-resort
+# default is a sibling of the core, matching resolve.sh's _wt_default.
+worktrees="${worktrees:-${BD_WT:-${BD_ROOT:+$BD_ROOT/worktrees}}}"
+worktrees="${worktrees:-$(dirname "$core")/worktrees}"
+vault="$(_canon "$vault")"; repos="$(_canon "$repos")"; worktrees="$(_canon "$worktrees")"
 
 name="${name:-$(basename "$core")}"
 case "$name" in
@@ -113,7 +120,7 @@ fi
 # AND to this list. Keeping it as data rather than a hardcoded `case` is what
 # stops the two drifting: a key written but not listed would be emitted twice,
 # once by the writer and once by preservation.
-_OWNED_KEYS="core vault repos"
+_OWNED_KEYS="core vault repos worktrees"
 
 _preserve_unknown() {
   [ -f "$1" ] || return 0
@@ -139,6 +146,7 @@ tmp="$INST_DIR/.$name.conf.$$"
   printf 'core  = %s\n' "$core"
   printf 'vault = %s\n' "$vault"
   printf 'repos = %s\n' "$repos"
+  printf 'worktrees = %s\n' "$worktrees"
   _preserve_unknown "$INST_DIR/$name.conf"
 } > "$tmp" && mv "$tmp" "$INST_DIR/$name.conf" || die "cannot write $INST_DIR/$name.conf"
 
@@ -147,9 +155,19 @@ tmp="$INST_DIR/.$name.conf.$$"
 # --- friendly warnings (non-fatal) ---
 [ -d "$vault" ] || printf 'configure: note — vault does not exist yet: %s\n' "$vault" >&2
 [ -d "$repos" ] || printf 'configure: note — repos dir does not exist yet: %s\n' "$repos" >&2
+# `bd new` mkdir -p's the worktrees dir, so absence is normal — but a worktrees
+# dir INSIDE the vault or the core is a standing hazard, not a first-run detail.
+if _under "$worktrees" "$vault"; then
+  printf 'configure: WARNING — worktrees is inside the vault: %s\n' "$worktrees" >&2
+  printf '           Obsidian will index every agent branch. Move it outside.\n' >&2
+elif _under "$worktrees" "$core"; then
+  printf 'configure: WARNING — worktrees is inside the core checkout: %s\n' "$worktrees" >&2
+  printf '           worktrees must live outside the repo they are cut from.\n' >&2
+fi
 
 printf "registered instance '%s'%s\n" "$name" "${set_default:+ (default)}"
-printf '  core  = %s\n  vault = %s\n  repos = %s\n' "$core" "$vault" "$repos"
+printf '  core  = %s\n  vault = %s\n  repos = %s\n  worktrees = %s\n' \
+  "$core" "$vault" "$repos" "$worktrees"
 printf '  registry: %s\n' "$REG"
 
 # --- wiring (idempotent; skipped with --no-wire) ---------------------------

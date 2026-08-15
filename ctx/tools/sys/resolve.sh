@@ -6,9 +6,17 @@
 #     BD_CORE=<core>
 #     VAULT_PATH=<vault>
 #     REPOS_PATH=<repos>
+#     BD_WT=<worktrees>
 # Callers apply it: `eval "$(resolve.sh)"` (shell / chphd), or the SessionStart
-# hook parses it. Output is exactly the existing single-root env contract, so no
-# downstream consumer (api, wt.sh, gen-topics.sh, the guard hook) changes.
+# hook parses it. Output is the single-root env contract, so no downstream
+# consumer (api, wt.sh, gen-topics.sh, the guard hook) changes.
+#
+# BD_WT is where this instance's agent worktrees live — the `worktrees` key, or,
+# when the conf omits it, a `worktrees` sibling of the core. It is ALWAYS emitted
+# so the value can never leak across a switch between instances, but it is NOT a
+# territory: it takes no part in ownership, disjointness, or step 2 below. A
+# worktree already resolves through its `git --git-common-dir` to the core that
+# owns it, and two instances defaulting under one parent dir must stay legal.
 #
 # Usage:  resolve.sh [dir]     # resolve for `dir` (default: $PWD)
 #
@@ -48,22 +56,30 @@ _under() {  # true if $1 == $2 or $1 is under $2/
 }
 
 # --- read the registry into parallel arrays (bash 3.2: indexed arrays only) ---
-names=(); cores=(); vaults=(); repos=()
+names=(); cores=(); vaults=(); repos=(); wts=()
 if [ -d "$INST_DIR" ]; then
   for f in "$INST_DIR"/*.conf; do
     [ -e "$f" ] || continue
-    c=""; v=""; r=""
+    c=""; v=""; r=""; w=""
     while IFS= read -r line || [ -n "$line" ]; do
       case "$line" in \#*|"") continue ;; esac
       key="${line%%=*}"; val="${line#*=}"
       key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
       val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
-      case "$key" in core) c="$val" ;; vault) v="$val" ;; repos) r="$val" ;; esac
+      case "$key" in
+        core) c="$val" ;; vault) v="$val" ;; repos) r="$val" ;; worktrees) w="$val" ;;
+      esac
     done < "$f"
     names+=("$(basename "$f" .conf)"); cores+=("$c"); vaults+=("$v"); repos+=("$r")
+    wts+=("$w")
   done
 fi
 n_inst=${#names[@]}
+
+_wt_default() {  # $1=core -> the worktrees dir an instance gets when unconfigured
+  [ -n "$1" ] || return 0
+  printf '%s/worktrees\n' "$(dirname "$1")"
+}
 
 _emit() {  # $1=name -> print the instance's env contract, or return 1
   local i
@@ -74,6 +90,7 @@ _emit() {  # $1=name -> print the instance's env contract, or return 1
       printf 'BD_CORE=%s\n' "${cores[$i]}"
       printf 'VAULT_PATH=%s\n' "${vaults[$i]}"
       printf 'REPOS_PATH=%s\n' "${repos[$i]}"
+      printf 'BD_WT=%s\n' "${wts[$i]:-$(_wt_default "${cores[$i]}")}"
       return 0
     fi
   done

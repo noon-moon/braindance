@@ -13,6 +13,14 @@
 #   BD_REPOS  where target repos live: REPOS_PATH, else BD_ROOT, else <core>/repo.
 #             Nothing here clones into it yet — it's the shared convention the docs
 #             and guard hooks resolve against; exported so tooling can reuse it.
+#   BD_WT     where THIS instance's agent worktrees live — `bd new <task>` creates
+#             $BD_WT/<task>. Configured per-instance by the `worktrees` key in the
+#             registry conf (./configure --worktrees), which the resolver emits;
+#             that value wins, so the assignment below is only the fallback for
+#             when the resolver is dormant (legacy / escape-hatch mode). The
+#             fallback is a `worktrees` sibling of the core, matching the default
+#             configure.sh and resolve.sh compute — never inside the core or the
+#             vault, so a checkout stays clean and Obsidian indexes no branches.
 #
 # One terminal = one worktree = one branch. Keeps the main tree (your Obsidian
 # window) sacred: agents never write there, so no shared index/HEAD collisions.
@@ -23,6 +31,7 @@
 #   bd wip [msg]    checkpoint uncommitted work in this worktree (rebasable commit)
 #   bd land         rebase onto trunk, push branch, open + squash-merge a PR (audit trail)
 #   bd rm <task>    remove the worktree and its local branch
+#   bd repair       re-point worktrees orphaned by a moved/renamed core, then prune
 #   bd use [<name>] pin this shell to instance <name> (no arg / --auto: back to auto)
 #   bd where        show which instance is current for $PWD, and how it resolved
 #   bd ls-instances list registered instances (* = active, marks the default)
@@ -41,12 +50,14 @@
 # Self-resolve the checkout from this file's location (ctx/tools/sys/wt.sh → repo
 # root), portable across bash and zsh, so no instance path is baked in.
 _bd_self="${BASH_SOURCE[0]:-$0}"
-BD_CORE="${BD_CORE:-$(cd "$(dirname "$_bd_self")/../../.." && pwd)}"
+_BD_SELF_DIR="$(cd "$(dirname "$_bd_self")" && pwd)"
+BD_CORE="${BD_CORE:-$(cd "$_BD_SELF_DIR/../../.." && pwd)}"
 unset _bd_self
 # Repos dir: per-resource override, else the single external root, else nested.
 BD_REPOS="${REPOS_PATH:-${BD_ROOT:-$BD_CORE/repo}}"
 export BD_REPOS
-BD_WT="${BD_WT:-$HOME/dev/bd-wt}"
+BD_WT="${BD_WT:-$(dirname "$BD_CORE")/worktrees}"
+export BD_WT
 
 # --- active-instance resolution (the multi-instance model; docs/instances.md) -
 # Which braindance is "current" is resolved from where you are, per-shell. The
@@ -55,7 +66,12 @@ BD_WT="${BD_WT:-$HOME/dev/bd-wt}"
 # active instance, but wandering into neutral dirs (no match) leaves the last one
 # in place — the strict "stop, don't guess" is enforced for agents by the guard
 # hook, not by nagging every prompt. `bd use` pins/overrides explicitly.
-BD_RESOLVE="$BD_CORE/ctx/tools/sys/resolve.sh"
+# Locate the resolver beside THIS file, not under BD_CORE. BD_CORE is inherited
+# when already exported, so deriving the resolver from it means a shell holding a
+# pre-move BD_CORE aims at a resolver that no longer exists — _bd_apply then
+# silently exports nothing and every `bd` subcommand reports pre-move paths. The
+# resolver ships next to wt.sh, so its location is knowable without any env.
+BD_RESOLVE="$_BD_SELF_DIR/resolve.sh"
 
 _bd_apply() {  # resolve for $PWD and export what the resolver emits (if any)
   [ -x "$BD_RESOLVE" ] || return 0
@@ -90,6 +106,30 @@ _bd_trunk() {
   else
     echo master
   fi
+}
+
+# `bd where` reports paths, and the failure that actually bites is a path that
+# no longer exists — a moved core, a deleted worktree root. Printing it plain
+# reads as healthy, so mark it: a dead path should look dead.
+_bd_flag() {
+  [ -n "$1" ] || { printf '<unset>\n'; return 0; }
+  if [ -d "$1" ]; then printf '%s\n' "$1"; else printf '%s  (MISSING)\n' "$1"; fi
+}
+
+# In escape-hatch mode the exported env wins and the registry is never consulted,
+# which looks exactly like a stale registry. Re-run the resolver with the
+# shadowing vars stripped to show what the registry would have said.
+_bd_shadowed_by_registry() {
+  [ -x "$BD_RESOLVE" ] || return 0
+  local _reg_out _name _core
+  _reg_out="$(env -u VAULT_PATH -u REPOS_PATH -u BD_CORE -u BD_WT \
+                  -u BD_ACTIVE_INSTANCE "$BD_RESOLVE" "$PWD" 2>/dev/null)" || return 0
+  [ -n "$_reg_out" ] || return 0
+  _name="$(printf '%s\n' "$_reg_out" | sed -n 's/^BD_ACTIVE_INSTANCE=//p')"
+  _core="$(printf '%s\n' "$_reg_out" | sed -n 's/^BD_CORE=//p')"
+  [ -n "$_name" ] || return 0
+  printf "  registry here says: %s (core = %s)\n" "$_name" "$_core"
+  printf "  unset VAULT_PATH REPOS_PATH BD_CORE BD_WT to hand this shell back to it.\n"
 }
 
 bd() {
@@ -137,6 +177,35 @@ bd() {
       cd "$BD_CORE" || return 1
       git worktree remove "$BD_WT/$2" && git branch -D "wt/$2" 2>/dev/null
       ;;
+    repair)
+      # A linked worktree stores an ABSOLUTE gitdir pointer, and the admin dir
+      # under .git/worktrees/<id> stores an absolute path back. Moving or
+      # renaming the core breaks every worktree at once, in both directions.
+      # `git worktree repair` rewrites both wherever the admin dir survives.
+      local _d _bad _fixed
+      _bad=0; _fixed=0
+      [ -d "$BD_WT" ] || { printf 'no worktrees dir: %s\n' "$BD_WT"; return 0; }
+      for _d in "$BD_WT"/*; do
+        [ -d "$_d" ] || continue
+        [ -e "$_d/.git" ] || continue          # never was a worktree — not ours
+        git -C "$BD_CORE" worktree repair "$_d" >/dev/null 2>&1
+        if git -C "$_d" rev-parse --git-dir >/dev/null 2>&1; then
+          _fixed=$((_fixed+1)); printf '  ok            %s\n' "$_d"
+        else
+          # Admin dir (and possibly the branch) is gone: the directory is now
+          # just files. Only the user knows whether they matter, and they are
+          # NOT reproducible from git — so report and keep hands off.
+          _bad=$((_bad+1))
+          printf '  UNRECOVERABLE %s — files only, left untouched\n' "$_d"
+        fi
+      done
+      # Prune LAST. Pruning first would delete the very admin dirs repair needs
+      # to re-point a worktree whose directory moved, converting a fixable
+      # worktree into an unrecoverable one.
+      git -C "$BD_CORE" worktree prune
+      printf 'repaired %d, unrecoverable %d (root: %s)\n' "$_fixed" "$_bad" "$BD_WT"
+      [ "$_bad" -eq 0 ]
+      ;;
     use)
       # bd use <name>  -> pin this shell to <name> (wins over location)
       # bd use --auto  -> clear the pin; resume location-based resolution
@@ -176,13 +245,23 @@ bd() {
       fi
       if [ -n "${BD_ACTIVE_INSTANCE:-}" ]; then
         printf "instance: %s%s\n" "$BD_ACTIVE_INSTANCE" "${BD_USE:+ (pinned)}"
-        printf "  core  = %s\n  vault = %s\n  repos = %s\n" \
-          "${BD_CORE:-<unset>}" "${VAULT_PATH:-<unset>}" "${REPOS_PATH:-<unset>}"
+        printf "  core  = %s\n" "$(_bd_flag "${BD_CORE:-}")"
+        printf "  vault = %s\n" "$(_bd_flag "${VAULT_PATH:-}")"
+        printf "  repos = %s\n" "$(_bd_flag "${REPOS_PATH:-}")"
+        printf "  worktrees = %s\n" "$(_bd_flag "${BD_WT:-}")"
       elif [ -n "${VAULT_PATH:-}${REPOS_PATH:-}" ]; then
-        printf "instance: (none — manual VAULT_PATH/REPOS_PATH in effect)\n"
-        printf "  vault = %s\n  repos = %s\n" "${VAULT_PATH:-<unset>}" "${REPOS_PATH:-<unset>}"
+        # Step 0. Values here came from the environment, not the registry, and a
+        # shell that exported them BEFORE a core move goes on reporting the old
+        # paths forever. Indistinguishable from a stale registry at the point of
+        # use — so say which it is, and show what the registry actually holds.
+        printf "instance: (none — manual VAULT_PATH/REPOS_PATH shadow the registry)\n"
+        printf "  vault = %s\n" "$(_bd_flag "${VAULT_PATH:-}")"
+        printf "  repos = %s\n" "$(_bd_flag "${REPOS_PATH:-}")"
+        printf "  worktrees = %s\n" "$(_bd_flag "${BD_WT:-}")"
+        _bd_shadowed_by_registry
       else
         printf "instance: (none — legacy nested defaults)\n"
+        printf "  worktrees = %s\n" "$(_bd_flag "${BD_WT:-}")"
       fi
       ;;
     ls-instances)
@@ -202,7 +281,7 @@ bd() {
       fi
       ;;
     *)
-      echo "usage: bd {new <task>|ls|wip [msg]|land|rm <task>|use [<name>|--auto]|where|ls-instances}"
+      echo "usage: bd {new <task>|ls|wip [msg]|land|rm <task>|repair|use [<name>|--auto]|where|ls-instances}"
       ;;
   esac
 }

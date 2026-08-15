@@ -9,8 +9,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TMP="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/bdwtuse.XXXXXX")" && pwd -P)"
 trap 'rm -rf "$TMP"' EXIT
 
-# clean env so the escape hatch / caller's real config doesn't interfere
-unset BD_ROOT VAULT_PATH REPOS_PATH BD_WT BD_ACTIVE_INSTANCE BD_USE
+# clean env so the escape hatch / caller's real config doesn't interfere.
+# BD_CORE and BD_REPOS belong in this list: wt.sh keeps an inherited BD_CORE
+# (`${BD_CORE:-...}`), so a caller whose shell exports a stale one — the normal
+# state of any terminal opened before the core moved — points BD_RESOLVE at a
+# path that no longer exists. _bd_apply then finds no executable resolver, exits
+# 0 without exporting anything, and EVERY assertion below fails with an empty
+# BD_ACTIVE_INSTANCE. That failure is environmental, not a real regression.
+unset BD_ROOT BD_CORE BD_REPOS VAULT_PATH REPOS_PATH BD_WT BD_ACTIVE_INSTANCE BD_USE
 REG="$TMP/registry"; export BD_REGISTRY="$REG"
 # Defense in depth behind --no-wire below: if a future edit drops that flag, the
 # wiring lands in $TMP rather than the developer's real settings.json.

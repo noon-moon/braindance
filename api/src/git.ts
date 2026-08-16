@@ -614,6 +614,8 @@ export function authRemoteUrl(token?: string, repo?: string): string | null {
  *  An explicit `0` is preserved, because that IS the documented off switch (for
  *  a local-only box, or one driven entirely by POST /sync). Only garbage and
  *  negatives fall back. */
+export const DEFAULT_RECONCILE_INTERVAL_MS = 5 * 60_000;
+
 export function reconcileIntervalMs(raw: string | undefined, fallback: number): number {
   if (raw === undefined || raw.trim() === "") return fallback;
   const n = Number(raw);
@@ -633,7 +635,7 @@ export function gitStore(): GitStore {
     remoteUrl: authRemoteUrl(process.env.GITHUB_TOKEN, process.env.GITHUB_REPO),
     authorName: process.env.GIT_AUTHOR_NAME,
     authorEmail: process.env.GIT_AUTHOR_EMAIL,
-    pullIntervalMs: reconcileIntervalMs(process.env.GIT_PULL_INTERVAL_MS, 5 * 60_000),
+    pullIntervalMs: reconcileIntervalMs(process.env.GIT_PULL_INTERVAL_MS, DEFAULT_RECONCILE_INTERVAL_MS),
     // Single-writer lease: off by default (pre-cutover behaviour unchanged);
     // set REQUIRE_LEASE=1 at cutover so a stray second instance can't co-write.
     requireLease: /^(1|true|yes)$/i.test(process.env.REQUIRE_LEASE ?? ""),

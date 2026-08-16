@@ -47,6 +47,19 @@ console.log("test: health payload");
     JSON.stringify(set.config.ics.allDayAlarmsAt) === '["09:00"]');
   check("a nonsense duration falls back rather than reporting NaN",
     build({ TASK_DEFAULT_DURATION_MIN: "abc" }).config.taskDefaultDurationMin === 30);
+
+  // The reconcile interval is otherwise unobservable from outside the box, and
+  // its failure mode is silent: an unparseable value falls back to the default
+  // rather than disarming the timer, so a typo looks exactly like never having
+  // set it. Reporting the RESOLVED value is what tells those two apart.
+  check("the default interval is reported even when implicit",
+    bare.config.reconcileIntervalMs === 5 * 60_000);
+  check("a shortened interval is reported — answering 'did the env edit land?'",
+    build({ GIT_PULL_INTERVAL_MS: "10000" }).config.reconcileIntervalMs === 10_000);
+  check("a typo reports the default it actually fell back to, not the typo",
+    build({ GIT_PULL_INTERVAL_MS: "10s" }).config.reconcileIntervalMs === 5 * 60_000);
+  check("an explicit 0 is reported as 0 — the timer is off, /sync only",
+    build({ GIT_PULL_INTERVAL_MS: "0" }).config.reconcileIntervalMs === 0);
 }
 
 console.log("test: no secret reaches an unauthenticated endpoint");
@@ -72,7 +85,8 @@ console.log("test: no secret reaches an unauthenticated endpoint");
   }
   // The allowlist itself: adding a field means updating this, which is the point.
   const keys = Object.keys(build({}).config).sort().join(",");
-  check("config exposes only the known-safe keys", keys === "ai,ics,taskDefaultDurationMin,today,tz");
+  check("config exposes only the known-safe keys",
+    keys === "ai,ics,reconcileIntervalMs,taskDefaultDurationMin,today,tz");
 }
 
 console.log("test: the suggestion worker reports its state, not its credential");

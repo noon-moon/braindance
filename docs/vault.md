@@ -49,10 +49,13 @@ When a braindance instance also runs the api on a host, the vault has **two writ
 `vault-pull.sh` removes the remembering. It resolves the active instance's vault through the same resolver everything else uses, and fast-forwards it:
 
 ```console
-$ ctx/tools/sys/vault-pull.sh --install          # launchd agent, every 15 min + at login
-$ ctx/tools/sys/vault-pull.sh --status           # installed? loaded? last few runs?
-$ ctx/tools/sys/vault-pull.sh                    # one-shot
+$ ctx/tools/sys/vault-pull.sh --install                  # launchd agent, every 15 min + at login
+$ ctx/tools/sys/vault-pull.sh --install --interval 30    # or near-continuously
+$ ctx/tools/sys/vault-pull.sh --status                   # installed? loaded? what is it doing?
+$ ctx/tools/sys/vault-pull.sh                            # one-shot
 ```
+
+**The log records changes, not ticks** — which is what makes a short interval practical. A 30-second cadence is ~2,900 runs a day, and a line each would grow without bound and bury the one entry that mattered. So every run writes its outcome to a stamp file, and the log gets a line only when that outcome *differs* from the previous run's: the history reads as transitions (began holding back, cleared, went offline, came back) rather than a heartbeat. Fast-forwards and hard errors always log, since those are real events however often they happen. `--status` reads both — the stamp for "alive and currently doing X", the log for "what has happened".
 
 **It only ever pulls, and only when that is safe** — it never commits, stages, stashes, resets, or pushes. That limit is deliberate. A vault always carries uncommitted work (a half-written note, `.obsidian/workspace.json` churning as you move panes), so a timer running `git add -A` would sweep drafts into commits you never chose to make. Publishing your side stays deliberate. The pull is `--ff-only`; if incoming changes touch a file you have modified, git declines before touching anything and the tool reports it and moves on — the next run succeeds once you have committed or reverted. A true divergence (local commits *and* remote commits) is reported, never merged on a timer, because that is a decision you should see. Behaviour is pinned by `test_vault-pull.sh`, whose central assertions are that an uncommitted draft comes through byte-identical and that HEAD never moves on its own.
 

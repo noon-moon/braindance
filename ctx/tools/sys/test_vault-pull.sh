@@ -37,7 +37,11 @@ git_q "$OTHER" push origin HEAD:main
 git clone -q -b main "$ORIGIN" "$DESK"
 git -C "$DESK" config user.email t@example.com; git -C "$DESK" config user.name t
 
+# Isolate the stamp/log so the tests never read or write the real state dir.
+export BD_VAULT_PULL_STATE_DIR="$TMP/state"
+mkdir -p "$BD_VAULT_PULL_STATE_DIR"
 run() { VAULT_PATH="$DESK" bash "$PULL" --pull 2>&1; }
+stamp_outcome() { cut -d' ' -f2 < "$BD_VAULT_PULL_STATE_DIR/braindance-vault-pull.last" 2>/dev/null; }
 
 echo "test: pulls when the remote has moved and the desk is clean"
 printf 'two\n' >> "$OTHER/note.md"
@@ -47,10 +51,19 @@ check "exits 0" "$([ $rc -eq 0 ] && echo 0 || echo 1)"
 check "reports the fast-forward" "$(echo "$out" | grep -q 'fast-forwarded' && echo 0 || echo 1)"
 check "the new content actually arrived" "$(grep -q two "$DESK/note.md" && echo 0 || echo 1)"
 
-echo "test: a second run with nothing to do is a quiet no-op"
+echo "test: a second run with nothing to do reports the transition once"
 out="$(run)"; rc=$?
 check "exits 0" "$([ $rc -eq 0 ] && echo 0 || echo 1)"
 check "says up to date" "$(echo "$out" | grep -q 'up to date' && echo 0 || echo 1)"
+
+echo "test: A STEADY STATE IS SILENT — the log records changes, not ticks"
+# At a 30s cadence a line per run is thousands of identical entries a day. Only
+# the transition INTO a state is logged; repeats of it say nothing.
+out3="$(run)"; out4="$(run)"; out5="$(run)"
+check "repeat runs print nothing at all" "$([ -z "$out3$out4$out5" ] && echo 0 || echo 1)"
+check "…but they still exit 0" "$([ $? -eq 0 ] && echo 0 || echo 1)"
+check "…and the stamp is refreshed every run, so liveness is still visible" \
+  "$([ "$(stamp_outcome)" = "uptodate" ] && echo 0 || echo 1)"
 
 echo "test: UNCOMMITTED WORK IS NEVER TOUCHED — the whole point of the tool"
 printf 'my unsaved thought\n' >> "$DESK/wip.md"      # dirty, and the remote is about to move the SAME file
@@ -63,6 +76,11 @@ check "explains that local edits overlap" "$(echo "$out" | grep -q 'held back' &
 check "the uncommitted draft is BYTE-IDENTICAL" "$([ "$(cat "$DESK/wip.md")" = "$before" ] && echo 0 || echo 1)"
 check "it did not commit the draft" "$(git -C "$DESK" status --porcelain | grep -q '^ M wip.md' && echo 0 || echo 1)"
 check "it did not stash the draft" "$([ -z "$(git -C "$DESK" stash list)" ] && echo 0 || echo 1)"
+
+echo "test: a repeated hold is silent too, but a fast-forward always logs"
+out_a="$(run)"
+check "the second consecutive hold prints nothing" "$([ -z "$out_a" ] && echo 0 || echo 1)"
+check "stamp still shows the hold" "$([ "$(stamp_outcome)" = "held" ] && echo 0 || echo 1)"
 
 echo "test: …and it clears itself once the overlap is gone, with no intervention"
 git_q "$DESK" checkout -- wip.md

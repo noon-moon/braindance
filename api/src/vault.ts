@@ -31,6 +31,26 @@ interface Index {
 
 let cache: { at: number; idx: Index } | null = null;
 
+/** Every `[[wikilink]]` target in a frontmatter VALUE, at any depth. Obsidian
+ *  resolves links in properties as ordinary links, and the vault's containment
+ *  fields (`Contains` / `Contained By`) are the main place a note's structural
+ *  links now live — so a scan that only read the body would report a hub with no
+ *  backlinks from the very notes filed into it. Values are walked rather than
+ *  looked up by name: `topic`, `source`, a template's own field can each hold a
+ *  link, and the index has no business knowing which keys those are.
+ *
+ *  Keys are deliberately NOT scanned — a key is a field name, and `[[…]]` in one
+ *  is a malformed note rather than a link. */
+function fmLinks(value: unknown, into: string[]): void {
+  if (typeof value === "string") {
+    for (const m of value.matchAll(WIKILINK)) into.push(m[1].split("|")[0].split("#")[0].trim());
+  } else if (Array.isArray(value)) {
+    for (const v of value) fmLinks(v, into);
+  } else if (value && typeof value === "object") {
+    for (const v of Object.values(value)) fmLinks(v, into);
+  }
+}
+
 function parse(name: string, raw: string): VaultNote {
   const { data, content } = matter(raw);
   const tags = Array.isArray(data?.tags) ? data.tags.map(String) : [];
@@ -38,6 +58,7 @@ function parse(name: string, raw: string): VaultNote {
   for (const m of content.matchAll(WIKILINK)) {
     outlinks.push(m[1].split("|")[0].split("#")[0].trim());
   }
+  fmLinks(data, outlinks);
   return { name, data: data ?? {}, body: content, tags, outlinks };
 }
 

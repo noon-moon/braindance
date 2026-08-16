@@ -64,7 +64,7 @@ const SCOPES = ["Home", "Braindance"];
  *  failure names the field that broke rather than the whole object. */
 const ok = (over: Record<string, unknown> = {}) => ({
   title: "Order a soldering iron",
-  funnel: "task",
+  funnel: "todo",
   scope: "Home",
   tags: ["tools"],
   due: "2026-08-12",
@@ -77,7 +77,7 @@ console.log("test: validate — a whole suggestion is rejected or it isn't");
 {
   const v = validate(ok(), SCOPES)!;
   check("a clean suggestion survives intact",
-    v.title === "Order a soldering iron" && v.funnel === "task" && v.scope === "Home" && v.due === "2026-08-12");
+    v.title === "Order a soldering iron" && v.funnel === "todo" && v.scope === "Home" && v.due === "2026-08-12");
 
   check("a non-object is not a suggestion", validate("{}", SCOPES) === null);
   check("null is not a suggestion", validate(null, SCOPES) === null);
@@ -89,7 +89,7 @@ console.log("test: validate — a whole suggestion is rejected or it isn't");
   check("an invented funnel id rejects the suggestion", validate(ok({ funnel: "brainstorm" }), SCOPES) === null);
   check("a non-string funnel likewise", validate(ok({ funnel: 7 }), SCOPES) === null);
   check("a retired funnel id resolves to its canonical one",
-    validate(ok({ funnel: "todo" }), SCOPES)!.funnel === "task");
+    validate(ok({ funnel: "task" }), SCOPES)!.funnel === "todo");
 }
 
 console.log("test: validate — scope membership is checked against the LIVE list");

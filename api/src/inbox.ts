@@ -30,11 +30,15 @@ export interface InboxNote {
   text: string;
   /** Original capture time (ISO-8601), reconstructed from the filename stamp. */
   createdISO: string | null;
-  /** Scope MOCs chosen at capture time (the leading `Tags: [[…]]` links), in the
-   *  order written — empty when none was picked. Carried into the triage form's
-   *  scope picker so the pick isn't re-made, and the FIRST is the hub a task
-   *  files into. */
-  scopes: string[];
+  /** The hubs this capture belongs to — `Contained By` frontmatter, plus any
+   *  legacy `Tags: [[…]]` line — in the order written, empty when none was
+   *  picked. Carried into the desk's "contained by" picker so a capture-time
+   *  pick isn't re-made, and for a TODO it is the note the atom files into. */
+  containedBy: string[];
+  /** The other direction: what this capture is a hub FOR. Only a `Contains`
+   *  frontmatter list, since the legacy line could never express it. Almost
+   *  always empty on a capture — it is the desk's question, not the thumb's. */
+  contains: string[];
 }
 
 // A capture filename is `${stamp()}.md`, or `${stamp()}-${slug}.md` when a title
@@ -62,16 +66,24 @@ function splitHeading(body: string): { title: string; text: string } {
   return { title: h[1].trim(), text: lines.slice(i + 1).join("\n").trim() };
 }
 
-/** Pull a leading `Tags: [[Scope]] [[Other]]` line (the scope-link convention
- *  written by `funnels.ts`'s scopeLink) off the top of a body — it sits ABOVE the
- *  `# title`, so it has to come off before splitHeading can see the heading.
+/** Pull a leading `Tags: [[Scope]] [[Other]]` line off the top of a body — it sits
+ *  ABOVE the `# title`, so it has to come off before splitHeading can see the
+ *  heading.
+ *
+ *  LEGACY, and read-only: this was the scope-link convention until containment
+ *  moved into frontmatter (`funnels.ts`'s `containment`). Nothing writes one any
+ *  more, but the inbox is a synced directory — a capture made by an older client,
+ *  or one that was already sitting in the queue — so the desk still has to
+ *  recover the pick rather than silently drop it.
  *
  *  Matches ONE OR MORE links, and only links: a line ending in prose is somebody's
  *  sentence that happens to start with `Tags:`, and eating it would delete text
- *  from the note. A single-link line is the same line it always was, so notes
- *  captured before the field went multi read back unchanged. */
+ *  from the note. */
 const SCOPE_LINE = /^Tags:\s*((?:\[\[[^\]]+\]\]\s*)+)$/;
 const LINK_RE = /\[\[([^\]]+)\]\]/g;
+
+/** A wikilink target, as vault.ts resolves one: alias and anchor stripped. */
+const linkTarget = (raw: string): string => raw.split("|")[0].split("#")[0].trim();
 
 function splitScope(body: string): { scopes: string[]; rest: string } {
   const lines = body.split("\n");
@@ -79,13 +91,30 @@ function splitScope(body: string): { scopes: string[]; rest: string } {
   while (i < lines.length && lines[i].trim() === "") i++;
   const m = lines[i]?.trim().match(SCOPE_LINE);
   if (!m) return { scopes: [], rest: body };
-  // Strip any alias/anchor, matching how vault.ts resolves a wikilink target.
   const scopes: string[] = [];
   for (const [, target] of m[1].matchAll(LINK_RE)) {
-    const s = target.split("|")[0].split("#")[0].trim();
+    const s = linkTarget(target);
     if (s && !scopes.includes(s)) scopes.push(s);
   }
   return { scopes, rest: lines.slice(i + 1).join("\n") };
+}
+
+/** Scope names out of a containment frontmatter field. The vault writes these as
+ *  a list of quoted wikilinks (`- "[[Music]]"`), which gray-matter hands back as
+ *  a string array — but a hand-edited note may carry a lone string, a bare name
+ *  with no brackets, or a null from an emptied Obsidian property, and none of
+ *  those should cost the desk the whole pick. Anything that isn't a usable name
+ *  is dropped; nothing here throws. */
+function fmScopes(value: unknown): string[] {
+  const items = Array.isArray(value) ? value : value == null ? [] : [value];
+  const out: string[] = [];
+  for (const item of items) {
+    if (typeof item !== "string") continue;
+    // A `[[link]]` yields its target; anything else is taken as a plain name.
+    const m = [...item.matchAll(LINK_RE)].map(([, t]) => linkTarget(t));
+    for (const s of m.length ? m : [item.trim()]) if (s && !out.includes(s)) out.push(s);
+  }
+  return out;
 }
 
 const humanise = (s: string): string => s.replace(/[-_]+/g, " ").trim();
@@ -143,14 +172,24 @@ function toInboxNote(fileName: string): InboxNote | null {
   } catch {
     return null;
   }
-  const { content } = matter(raw);
+  const { data, content } = matter(raw);
   const { scopes, rest } = splitScope(content);
   const { title, text } = splitHeading(rest);
   const { createdISO, slugPart } = parseStamp(name);
+  // Frontmatter first, legacy line after: the two can only both be present on a
+  // note somebody hand-edited, and the field is the convention now.
+  const containedBy = [...new Set([...fmScopes(data?.["Contained By"]), ...scopes])];
   // Heading → filename slug → first line. The slug outranks the body because when
   // one exists it IS the title someone typed; the first line only carries an
   // untitled capture, which is now the common case.
-  return { name, title: title || humanise(slugPart) || firstLine(text) || "untitled", text, createdISO, scopes };
+  return {
+    name,
+    title: title || humanise(slugPart) || firstLine(text) || "untitled",
+    text,
+    createdISO,
+    containedBy,
+    contains: fmScopes(data?.Contains),
+  };
 }
 
 /** All untriaged inbox notes, newest capture first.

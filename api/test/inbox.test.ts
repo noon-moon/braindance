@@ -87,17 +87,21 @@ console.log("test: the title fallback chain, in order");
   check("…and still resolves a title", h.title === "Hand written");
 }
 
-console.log("test: the scope link is parsed back off the top");
+// The LEGACY scope line. Nothing writes one any more — containment lives in
+// frontmatter — but the inbox is a synced directory, so a capture made by an
+// older client (or one that was already in the queue) still has to give its pick
+// back to the desk rather than have it silently dropped.
+console.log("test: the legacy scope link is parsed back off the top");
 {
   const scoped = write("2026-08-09T10-11-18-345Z", "Tags: [[Home]]\n\nfix the door\n");
   const s = getInboxNote(scoped)!;
-  check("the capture-time scope is recovered for the triage picker", eq(s.scopes, ["Home"]));
+  check("the capture-time scope is recovered for the triage picker", eq(s.containedBy, ["Home"]));
   check("…and stripped from the text", s.text === "fix the door");
   check("…leaving the first line as the title", s.title === "fix the door");
 
   const aliased = write("2026-08-09T10-11-19-345Z", "Tags: [[Home|the house]]\n\nfix the door\n");
   check("an aliased wikilink resolves to its target, matching how vault.ts links",
-    eq(getInboxNote(aliased)!.scopes, ["Home"]));
+    eq(getInboxNote(aliased)!.containedBy, ["Home"]));
 
   const scopedTitle = write("2026-08-09T10-11-20-345Z-cool", "Tags: [[Home]]\n# Cool\n\nbody");
   check("a scope line above a heading doesn't hide the heading",
@@ -108,22 +112,52 @@ console.log("test: the scope link is parsed back off the top");
   const many = write("2026-08-09T10-11-21-345Z", "Tags: [[Home]] [[Loon]] [[Music]]\n\nfix the door\n");
   const m = getInboxNote(many)!;
   check("every scope on the line comes back, in the order written",
-    eq(m.scopes, ["Home", "Loon", "Music"]));
+    eq(m.containedBy, ["Home", "Loon", "Music"]));
   check("…and the whole line is still stripped from the text", m.text === "fix the door");
 
   const dupes = write("2026-08-09T10-11-22-345Z", "Tags: [[Home]] [[Home|the house]]\n\nfix the door\n");
-  check("the same hub twice is one scope", eq(getInboxNote(dupes)!.scopes, ["Home"]));
+  check("the same hub twice is one scope", eq(getInboxNote(dupes)!.containedBy, ["Home"]));
 
   const none = write("2026-08-09T10-11-23-345Z", "fix the door\n");
   check("a note with no scope line has no scopes rather than a null one",
-    eq(getInboxNote(none)!.scopes, []));
+    eq(getInboxNote(none)!.containedBy, []));
 
   // The regex has to END at the last link. A sentence that opens with "Tags:" is
   // prose, and eating it would silently delete a line of the note.
   const prose = write("2026-08-09T10-11-24-345Z", "Tags: [[Home]] and also the shed\n\nfix the door\n");
   const p = getInboxNote(prose)!;
-  check("a Tags: line that trails off into prose is not a scope line", eq(p.scopes, []));
+  check("a Tags: line that trails off into prose is not a scope line", eq(p.containedBy, []));
   check("…and that line is left in the note", p.text.startsWith("Tags: [[Home]] and also the shed"));
+}
+
+// The convention captures write NOW: both relationships, in frontmatter, so the
+// desk can pre-fill each picker from its own side.
+console.log("test: containment comes back off the frontmatter");
+{
+  const fm = (body: string, extra = "") =>
+    `---\ntags:\n  - memo\n${extra}---\n\n${body}`;
+
+  const both = write("2026-08-09T11-00-01-000Z", fm("fix the door\n",
+    'Contains:\n  - "[[Latches]]"\nContained By:\n  - "[[Home]]"\n  - "[[Loon]]"\n'));
+  const b = getInboxNote(both)!;
+  check("contained by comes back in the order written", eq(b.containedBy, ["Home", "Loon"]));
+  check("…and contains is its own, separate answer", eq(b.contains, ["Latches"]));
+  check("…with the body untouched by either", b.text === "fix the door");
+
+  const bare = write("2026-08-09T11-00-02-000Z", fm("x\n", "Contained By:\n  - Home\n"));
+  check("a hand-typed name with no brackets is still a scope",
+    eq(getInboxNote(bare)!.containedBy, ["Home"]));
+
+  const emptied = write("2026-08-09T11-00-03-000Z", fm("x\n", "Contained By:\nContains: []\n"));
+  const e2 = getInboxNote(emptied)!;
+  check("an emptied Obsidian property is no scopes, not a crash",
+    eq(e2.containedBy, []) && eq(e2.contains, []));
+
+  // A note somebody hand-edited can carry both. The field is the convention, so
+  // it leads; the legacy line follows, and neither is dropped.
+  const mixed = write("2026-08-09T11-00-04-000Z", fm("Tags: [[Loon]]\n\nx\n", 'Contained By:\n  - "[[Home]]"\n'));
+  check("frontmatter leads, the legacy line follows, nothing is lost",
+    eq(getInboxNote(mixed)!.containedBy, ["Home", "Loon"]));
 }
 
 console.log("test: listing and path safety");

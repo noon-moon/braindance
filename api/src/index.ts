@@ -6,7 +6,7 @@ import { layout } from "./layout.js";
 import { FUNNELS, funnelById, compose, taskLine, appendTaskLine, containment, parseScopes, type Field, type Funnel } from "./funnels.js";
 import { commitCapture, createNote, stamp, slug, noteName } from "./notes.js";
 import { VAULT_SUBDIR, vaultRel, aiSuggestConfig } from "./config.js";
-import { suggestionFor, dropSidecar, type Suggestion } from "./suggest.js";
+import { suggestionFor, dropSidecar, readSidecar, type Suggestion } from "./suggest.js";
 import { startSuggestWorker } from "./worker.js";
 import { seenRecently, contentHash } from "./dedup.js";
 import { randomUUID } from "node:crypto";
@@ -698,6 +698,31 @@ interface ReviewView {
  *  queue row and the detail header above it can't disagree about a capture. */
 const hhmm = (iso: string): string => iso.slice(11, 16);
 
+/** WHY there is no suggestion card — the four answers the desk used to give as
+ *  one word.
+ *
+ *  "no suggestion." is true of a worker that was never armed, a note the worker
+ *  hasn't reached yet, one it is backing off from, and one it gave up on. Those
+ *  need four different things from the operator and the desk was reporting them
+ *  identically, which is how a feature stays switched off without anyone
+ *  noticing: the pane looked exactly the way a working install looks between
+ *  ticks. `/health` knew, but nobody reads /health while triaging. */
+type SugState =
+  | { kind: "off" }
+  | { kind: "pending" }
+  | { kind: "retry"; error: string; at: string }
+  | { kind: "dead"; error: string };
+
+async function suggestState(name: string): Promise<SugState> {
+  // The flag and the key, exactly as the worker resolves them — one function,
+  // so the desk can't claim it's on while startSuggestWorker disagrees.
+  if (!aiSuggestConfig().enabled) return { kind: "off" };
+  const sc = await readSidecar(name);
+  if (!sc || sc.state === "ok") return { kind: "pending" };
+  if (sc.state === "dead") return { kind: "dead", error: sc.error };
+  return { kind: "retry", error: sc.error, at: sc.nextAttemptAt };
+}
+
 // A queue row is the timestamp over the note's label — which for the ordinary
 // untitled capture is its first line (inbox.ts). Nothing else fits a phone-width
 // rail, and nothing else is needed: the row's job is to be recognisable enough
@@ -717,6 +742,9 @@ async function renderReview(v: ReviewView = {}) {
   const proposals = await listProposals("pending");
   const inbox = listInbox();
   const sel = v.selected?.name ?? null;
+  // Derived here rather than passed in, so every caller that renders the desk
+  // gets the same answer without having to remember to ask for it.
+  const sugState = v.selected && !v.suggestion ? await suggestState(v.selected.name) : null;
   return layout(
     "review",
     html`
@@ -732,7 +760,8 @@ async function renderReview(v: ReviewView = {}) {
         </div>
         <div class="desk-detail">
           ${v.selected
-            ? triagePane(v.selected, v.funnelId ?? "memo", getScopes(), v.suggestion ?? null, v.values, v.error)
+            ? triagePane(v.selected, v.funnelId ?? "memo", getScopes(), v.suggestion ?? null,
+                sugState ?? { kind: "pending" }, v.values, v.error)
             : html`<p class="muted desk-empty">${inbox.length
                 ? "pick a capture from the queue to triage it."
                 : "nothing waiting."}</p>`}
@@ -956,7 +985,17 @@ function uniqueDest(title: string, asTyped = false): { rel: string; name: string
 // Title, containment and the type-specific fields follow it. Nothing is read-only
 // — a capture is a first draft, and the desk is where it gets edited, not just
 // labelled.
-function triagePane(memo: InboxNote, funnelId: string, scopes: string[], suggestion: Suggestion | null, values?: Record<string, string>, error?: string) {
+/** The empty-state line, per reason. Says what to DO about it where there is
+ *  something to do — the worker is off in the deployment's env file, not in
+ *  anything the desk can reach, so the pane's job is to name the knob. */
+function sugWhy(s: SugState) {
+  if (s.kind === "off") return html`suggestions are off — set <code>AI_SUGGEST=1</code> and <code>ANTHROPIC_API_KEY</code> in the deployment's env, then restart.`;
+  if (s.kind === "dead") return html`gave up on this capture: ${s.error}`;
+  if (s.kind === "retry") return html`retrying after ${fmtDate(s.at)} — last error: ${s.error}`;
+  return html`no suggestion yet.`;
+}
+
+function triagePane(memo: InboxNote, funnelId: string, scopes: string[], suggestion: Suggestion | null, sugState: SugState, values?: Record<string, string>, error?: string) {
   const f = funnelById(funnelId) ?? funnelById("memo")!;
   // The suggested TITLE arrives already in the box rather than waiting behind
   // "apply". Titling is the one thing every triage does, and the one field the
@@ -1046,7 +1085,7 @@ function triagePane(memo: InboxNote, funnelId: string, scopes: string[], suggest
                   : html`<span class="muted">then pick ${sugMissing.join(" + ")}</span>`}
               </div>
             </div>`
-          : html`<p class="muted sug-none">no suggestion.</p>`}
+          : html`<p class="muted sug-none">${sugWhy(sugState)}</p>`}
       </div>
 
       <div class="cap-fields">

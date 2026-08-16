@@ -7,10 +7,15 @@ import { ANY_SIGNIFIER } from "./tasks.js";
 export interface Field {
   key: string;
   label: string;
-  type: "text" | "textarea" | "select" | "scope" | "date" | "url" | "number";
+  type: "text" | "textarea" | "select" | "scope" | "date" | "url" | "number" | "checkbox";
   required?: boolean;
   options?: string[];
   placeholder?: string;
+  /** `scope` fields only: this picker takes exactly ONE scope. A task is filed by
+   *  living in a note, and a line appended to three hubs is three tasks — so the
+   *  control that picks that note has to be able to say "one", structurally,
+   *  rather than leave the filer to quietly take the first of however many. */
+  single?: boolean;
 }
 
 export interface BuiltNote {
@@ -32,6 +37,11 @@ const yaml = (fm: Record<string, unknown>): string => {
   for (const [k, v] of Object.entries(fm)) {
     if (v === undefined || v === "" || v === null) continue;
     if (Array.isArray(v)) {
+      // An empty list is the same fact as an absent key, and `Contains:` with
+      // nothing under it is a property Obsidian shows on every note that never
+      // had one. Containment is optional on both sides, so both sides can be
+      // empty and neither should be written.
+      if (v.length === 0) continue;
       lines.push(`${k}:`);
       for (const item of v) lines.push(`  - ${item}`);
     } else {
@@ -95,15 +105,33 @@ export function parseScopes(value?: string | string[]): string[] {
   return out;
 }
 
-/** The vault's scope-link convention: a `Tags: [[MOC]]` line as the FIRST body
- *  line, above the `# title`, so the note joins its hub's backlinks. Several hubs
- *  share the one line (`Tags: [[A]] [[B]]`) — a note can belong to more than one
- *  area, and Obsidian reads every link on it as a backlink to each. Empty when no
- *  scope was picked. Parsed back out by `inbox.ts` for triage pre-fill. */
-export const scopeLink = (scope?: string | string[]): string => {
-  const s = parseScopes(scope);
-  return s.length ? `Tags: ${s.map((x) => `[[${x}]]`).join(" ")}\n` : "";
-};
+/** Scope names → the YAML link list the vault's containment fields hold:
+ *  `"[[Music]]"`, one per item. Double-quoted because a bare `[[…]]` opens a flow
+ *  sequence in YAML, which is why every hand-written note in the vault quotes it
+ *  too; the quote and backslash inside a name are escaped rather than stripped,
+ *  since this is a serialisation boundary and not a sanitising one (`parseScopes`
+ *  already removed everything that could break out of the `[[…]]` itself). */
+const linkList = (value?: string | string[]): string[] =>
+  parseScopes(value).map((s) => `"[[${s.replace(/["\\]/g, "\\$&")}]]"`);
+
+/** The vault's TWO containment relationships, as frontmatter — `Contains` and
+ *  `Contained By` (see `_meta/Tags.md`). This replaced the old `Tags: [[MOC]]`
+ *  body line, which could only say one of the two and said it in a place nothing
+ *  but this app understood: scopes and references already carry containment in
+ *  frontmatter, Obsidian resolves links there as ordinary links (so the hub still
+ *  gets its backlink), and a dataview can query a field but not a prose line.
+ *
+ *  Both sides are optional and an empty one is simply absent (see `yaml`). Order
+ *  is kept — for a note filed into several hubs the first is the primary — and
+ *  `Contains` leads because that is the direction you read a hub in.
+ *
+ *  Legacy `Tags:` lines are still READ, by `inbox.ts`, so captures made before
+ *  this (and by older clients) still pre-fill the desk's pickers. Nothing writes
+ *  one any more. */
+export const containment = (i: { contains?: string; containedBy?: string }): Record<string, unknown> => ({
+  Contains: linkList(i.contains),
+  "Contained By": linkList(i.containedBy),
+});
 
 /** Obsidian Tasks' five priority levels → their signifiers. No entry = normal. */
 export const PRIORITY_SIGNIFIER: Record<string, string> = {
@@ -154,15 +182,39 @@ const MEDIA_SCOPE: Record<string, string> = {
   Film: "Film",
 };
 
+/** The two containment pickers, in the order the desk asks them. Shared by every
+ *  type so the pair reads the same wherever it appears — these are the two
+ *  relationships triage is FOR, not per-type metadata. */
+const CONTAINMENT_FIELDS: Field[] = [
+  { key: "containedBy", label: "contained by", type: "scope", placeholder: "the hub(s) this belongs to — comma-separated" },
+  { key: "contains", label: "contains", type: "scope", placeholder: "what this is a hub for — comma-separated" },
+];
+
+/** The three things a capture can turn out to be. This dropdown used to list the
+ *  four *shapes of form* the app happened to have — Memo, Task, Resource, Media —
+ *  which is a question about note templates, not about the thought in front of
+ *  you. Media and Resource were memos with extra fields; the real fork at the desk
+ *  is structural:
+ *
+ *    - MEMO  — a note. The default, and what nearly everything is.
+ *    - SCOPE — a hub: a note other notes hang off, so it is the one type whose
+ *              own `Contains` side is the point.
+ *    - TODO  — not a note at all. A task is a LINE, filed by living in its
+ *              scope's note, so filing one appends an atom and writes no note of
+ *              its own (see the triage route).
+ *
+ *  Media and Resource live on in `LEGACY_FUNNELS` — off the dropdown, still
+ *  resolvable, because the JSON `/ingest` API is a published contract.
+ */
 export const FUNNELS: Funnel[] = [
   {
     id: "memo",
     label: "Memo",
-    hint: "a thought → inbox, optionally linked to a scope",
+    hint: "a thought → a note at the vault root",
     fields: [
       { key: "title", label: "title", type: "text" },
       { key: "body", label: "body", type: "textarea", required: true },
-      { key: "scope", label: "scope", type: "scope" },
+      ...CONTAINMENT_FIELDS,
     ],
     // The capture screen posts a body and nothing else — naming a thought is a
     // decision the desk makes, not the thumb. So an untitled memo gets NO heading
@@ -174,20 +226,54 @@ export const FUNNELS: Funnel[] = [
     // {funnel, title, body} to /ingest, keeps landing titled notes.
     build: (i) => ({
       title: i.title,
-      frontmatter: { tags: ["memo"] },
-      body: `${scopeLink(i.scope)}${i.title ? `# ${i.title}\n` : ""}\n${i.body}`,
+      frontmatter: { tags: ["memo"], ...containment(i) },
+      body: `${i.title ? `# ${i.title}\n` : ""}\n${i.body}`,
     }),
   },
   {
-    id: "task",
-    label: "Task",
-    hint: "a dated atom — one next action",
+    id: "scope",
+    label: "Scope",
+    hint: "a hub for an area — the thing other notes hang off",
+    fields: [
+      { key: "title", label: "name", type: "text", required: true },
+      { key: "body", label: "what it's for", type: "textarea" },
+      ...CONTAINMENT_FIELDS,
+      { key: "ingestable", label: "a capture destination (offer it on the capture form)", type: "checkbox" },
+    ],
+    // A hub, written the way the vault's own hubs are: `tags: [scope]`, the
+    // containment fields, and a line of prose saying what it covers. NO `# title`
+    // heading — a scope's name is its filename and the existing hubs open
+    // straight into their description, so a heading here would be the one thing
+    // about a generated hub that didn't match a hand-written one.
+    //
+    // `ingestable` stacks on the tag rather than replacing it (see the vault's
+    // `_meta/Tags.md`): it is what puts the new hub in the capture form's
+    // dropdown, and it is a checkbox rather than automatic because most hubs are
+    // places notes get filed INTO, not places you think at.
+    build: (i) => ({
+      title: i.title,
+      frontmatter: {
+        tags: i.ingestable ? ["scope", "ingestable"] : ["scope"],
+        ...containment(i),
+      },
+      body: i.body ?? "",
+    }),
+  },
+  {
+    id: "todo",
+    label: "TODO",
+    hint: "a dated atom — one next action, filed into one scope",
     fields: [
       { key: "title", label: "what needs doing", type: "text", required: true },
       { key: "body", label: "detail", type: "textarea" },
       { key: "due", label: "due", type: "date" },
       { key: "priority", label: "priority", type: "select", options: Object.keys(PRIORITY_SIGNIFIER) },
-      { key: "scope", label: "scope", type: "scope" },
+      // ONE scope, and a picker that says so. Not `required` here, because this
+      // spec is also what the phone's one-tap task capture is validated against
+      // and a thought must never be rejected for want of filing. The DESK
+      // requires it — that is where "file it" means "append the atom to this
+      // note", and there is nothing to append to without one.
+      { key: "containedBy", label: "file into", type: "scope", single: true, placeholder: "the scope note this atom lives in" },
     ],
     // A task is a LINE, not a note (see [[Tags]]) — so this builds the smallest
     // note that CARRIES one. Captured, it lands in `inbox/` and `/todo` shows it
@@ -199,10 +285,17 @@ export const FUNNELS: Funnel[] = [
     // it goes — the line to the scope, the prose to a memo of its own.
     build: (i) => ({
       title: i.title,
-      frontmatter: { tags: ["memo"] },
-      body: `${scopeLink(i.scope)}# ${i.title}\n\n${taskLine(i)}${i.body ? `\n\n${i.body}` : ""}`,
+      frontmatter: { tags: ["memo"], ...containment(i) },
+      body: `# ${i.title}\n\n${taskLine(i)}${i.body ? `\n\n${i.body}` : ""}`,
     }),
   },
+];
+
+/** Off the dropdown, still resolvable. Both are memos with extra fields — the
+ *  desk types them as memos now — but the JSON `/ingest` API names its funnel
+ *  outright, and an iOS Shortcut posting `funnel: "media"` must not start 400ing
+ *  because a *dropdown* was shortened. */
+export const LEGACY_FUNNELS: Funnel[] = [
   {
     id: "media",
     label: "Media",
@@ -217,10 +310,11 @@ export const FUNNELS: Funnel[] = [
     ],
     build: (i) => ({
       title: i.title,
-      frontmatter: { tags: ["memo"], kind: i.kind, status: i.status || "want", url: i.url || undefined },
-      body:
-        `${scopeLink(MEDIA_SCOPE[i.kind] ?? "Media")}# ${i.title}\n\n` +
-        `${i.creator ? `*${i.creator}*\n\n` : ""}${i.why || ""}`,
+      frontmatter: {
+        tags: ["memo"], kind: i.kind, status: i.status || "want", url: i.url || undefined,
+        ...containment({ containedBy: MEDIA_SCOPE[i.kind] ?? "Media" }),
+      },
+      body: `# ${i.title}\n\n${i.creator ? `*${i.creator}*\n\n` : ""}${i.why || ""}`,
     }),
   },
   {
@@ -235,15 +329,19 @@ export const FUNNELS: Funnel[] = [
     ],
     build: (i) => ({
       title: i.title,
-      frontmatter: { tags: ["memo", "reference"], url: i.url || undefined },
-      body: `${scopeLink(i.activity)}# ${i.title}\n\n${i.note || ""}`,
+      frontmatter: {
+        tags: ["memo", "reference"], url: i.url || undefined,
+        ...containment({ containedBy: i.activity }),
+      },
+      body: `# ${i.title}\n\n${i.note || ""}`,
     }),
   },
 ];
 
 /** Retired funnel ids, kept resolvable so an existing caller (an iOS Shortcut
- *  posting `funnel: "todo"` to /ingest) doesn't start 400ing on a rename. */
-const ALIASES: Record<string, string> = { todo: "task" };
+ *  posting `funnel: "task"` to /ingest) doesn't start 400ing on a rename. `task`
+ *  and `todo` have now swapped places twice; both have always meant the atom. */
+const ALIASES: Record<string, string> = { task: "todo" };
 
 export const funnelById = (id: string): Funnel | undefined =>
-  FUNNELS.find((f) => f.id === (ALIASES[id] ?? id));
+  [...FUNNELS, ...LEGACY_FUNNELS].find((f) => f.id === (ALIASES[id] ?? id));

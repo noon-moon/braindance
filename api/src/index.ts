@@ -3,10 +3,10 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { html, raw } from "hono/html";
 import { layout } from "./layout.js";
-import { FUNNELS, funnelById, compose, taskLine, appendTaskLine, scopeLink, parseScopes, type Field, type Funnel } from "./funnels.js";
-import { commitCapture, createNote, stamp, slug } from "./notes.js";
+import { FUNNELS, funnelById, compose, taskLine, appendTaskLine, containment, parseScopes, type Field, type Funnel } from "./funnels.js";
+import { commitCapture, createNote, stamp, slug, noteName } from "./notes.js";
 import { VAULT_SUBDIR, vaultRel, aiSuggestConfig } from "./config.js";
-import { suggestionFor, dropSidecar, type Suggestion } from "./suggest.js";
+import { suggestionFor, dropSidecar, readSidecar, type Suggestion } from "./suggest.js";
 import { startSuggestWorker } from "./worker.js";
 import { seenRecently, contentHash } from "./dedup.js";
 import { randomUUID } from "node:crypto";
@@ -38,12 +38,23 @@ function control(f: Field, scopes: string[], value = "") {
   if (f.type === "textarea") return html`<textarea name="${f.key}"${req} placeholder="${ph}">${value}</textarea>`;
   if (f.type === "select")
     return html`<select name="${f.key}"${req}>${f.required ? "" : html`<option value=""></option>`}${(f.options ?? []).map((o) => html`<option${sel(o)}>${o}</option>`)}</select>`;
+  if (f.type === "checkbox") {
+    // Inline, label to the right of the box — the field loop already printed a
+    // <label> above it, so this one is the affordance and that one is the name.
+    return html`<div class="check"><input type="checkbox" id="cb-${f.key}" name="${f.key}" value="1"${value ? raw(" checked") : ""}><label for="cb-${f.key}">${f.label}</label></div>`;
+  }
   if (f.type === "scope") {
-    // MANY scopes, comma-separated, over the live MOC list (every `scope`-tagged
-    // note, alphabetical). They become the note's leading `Tags: [[A]] [[B]]` line,
-    // so it hangs off every hub it belongs to — a thought rarely belongs to exactly
-    // one area, and the old <select> made you pick the least wrong one. `_meta/`
-    // scopes (scope_kind: system) never appear: the flat index only reads the root.
+    // Scopes, comma-separated, over the live MOC list (every `scope`-tagged note,
+    // alphabetical). They become the note's `Contains` / `Contained By`
+    // frontmatter, so it hangs off every hub it belongs to — a thought rarely
+    // belongs to exactly one area, and the old <select> made you pick the least
+    // wrong one. `_meta/` scopes (scope_kind: system) never appear: the flat index
+    // only reads the root.
+    //
+    // `single` narrows that to exactly one, for the picker that names the note a
+    // TODO's atom is appended to. It is a property of the FIELD, not of this
+    // control's own guesswork, so all three tiers below can honour it and the
+    // filer can trust the value it gets.
     //
     // This was a <select>, which constrained the value structurally. A text field
     // does not, so `parseScopes` sanitises on the way out and the filer checks each
@@ -53,20 +64,22 @@ function control(f: Field, scopes: string[], value = "") {
     //   - no JS at all → a plain text input. Type `Loon, Music`. Works.
     //   - no JS + <datalist> → the browser's own type-ahead. Whole-field only (the
     //     spec has no notion of a token), so it completes the first scope and the
-    //     rest is typing — which is why the third tier exists.
-    //   - JS → chips + per-token type-ahead (scope-pick.js), which REPLACES the
+    //     rest is typing — which is why the third tier exists. For a `single`
+    //     field the whole field IS one token, so this tier is already complete.
+    //   - JS → chips + per-token type-ahead (SCOPE_PICK_JS), which REPLACES the
     //     datalist rather than stacking with it (two dropdowns over one field).
     // Values that AREN'T live scopes (a carried-over capture whose MOC was since
     // renamed) stay in the field and lead the option list rather than vanishing.
-    const cur = parseScopes(value);
+    const cur = f.single ? parseScopes(value).slice(0, 1) : parseScopes(value);
     const opts = [...cur.filter((s) => !scopes.includes(s)), ...scopes];
     const list = `scope-opts-${f.key}`;
+    const fallback = f.single ? "one scope" : "scope — comma-separated, optional";
     // `|` separates the JS tier's option list because `parseScopes` strips it out
     // of every name, so it is the one character guaranteed not to be IN one.
     return html`<input type="text" name="${f.key}"${req} class="scope-in" list="${list}"
       autocomplete="off" autocapitalize="off" spellcheck="false"
-      placeholder="${f.placeholder || (f.required ? "scope" : "scope — comma-separated, optional")}"
-      value="${cur.join(", ")}" data-scopes="${opts.join("|")}"
+      placeholder="${f.placeholder || fallback}"
+      value="${cur.join(", ")}" data-scopes="${opts.join("|")}"${f.single ? raw(' data-single="1"') : ""}
       ><datalist id="${list}">${opts.map((s) => html`<option value="${s}"></option>`)}</datalist>`;
   }
   const t = f.type === "url" ? "url" : f.type === "date" ? "date" : f.type === "number" ? "number" : "text";
@@ -117,7 +130,7 @@ interface CaptureView {
 
 function captureForm(v: CaptureView = {}) {
   const memo = funnelById("memo") ?? FUNNELS[0];
-  const task = funnelById("task")!;
+  const todo = funnelById("todo")!;
   // Only `ingestable` hubs here — a phone dropdown over every scope in the vault
   // is a scroll, not a pick. Triage still files into anything (triagePane).
   const scopes = getIngestableScopes();
@@ -146,15 +159,15 @@ function captureForm(v: CaptureView = {}) {
         <input type="hidden" name="idem" value="${randomUUID()}">
         <div class="cap-fields">
           ${field(of(memo, "body"))}
-          ${field(of(memo, "scope"))}
+          ${field(of(memo, "containedBy"))}
         </div>
         <div class="as-task">
           <input type="checkbox" id="as-task" name="as_task" value="1"${v.asTask ? raw(" checked") : ""}>
           <label for="as-task">this is a task</label>
         </div>
         <div class="task-fields">
-          ${field(of(task, "due"))}
-          ${field(of(task, "priority"))}
+          ${field(of(todo, "due"))}
+          ${field(of(todo, "priority"))}
         </div>
         <div class="cap-actions">
           <button class="btn" type="submit">capture</button>
@@ -172,6 +185,23 @@ app.get("/", (c) => {
 // old per-funnel URLs fold into the single untyped capture form
 app.get("/new/:funnel", (c) => c.redirect("/"));
 
+/** A submitted body → the funnel's fields, and nothing else. The ONE reader for
+ *  both capture and triage, so a spec change lands on both at once.
+ *
+ *  A `single` scope field is truncated HERE rather than trusted from the client:
+ *  the capture screen draws the memo funnel's multi-scope picker and only decides
+ *  which funnel it posts to when the task box is ticked, so "A, B" can reach a
+ *  field whose whole point is that it holds one name. The spec is the authority
+ *  on that, not whichever control happened to render. */
+function readFields(funnel: Funnel, raw: Record<string, unknown>): Record<string, string> {
+  const input: Record<string, string> = {};
+  for (const fl of funnel.fields) {
+    const v = String(raw[fl.key] ?? "").trim();
+    input[fl.key] = fl.type === "scope" && fl.single ? (parseScopes(v)[0] ?? "") : v;
+  }
+  return input;
+}
+
 // Shared capture: validate → build → de-dup → commit. Used by the web form
 // (HTML) and the JSON API alike, so both behave identically.
 type CaptureResult =
@@ -182,8 +212,7 @@ type CaptureResult =
 async function doCapture(funnelId: string, raw: Record<string, unknown>, idem?: string): Promise<CaptureResult> {
   const funnel = funnelById(funnelId);
   if (!funnel) return { kind: "error", message: "unknown funnel" };
-  const input: Record<string, string> = {};
-  for (const fl of funnel.fields) input[fl.key] = String(raw[fl.key] ?? "").trim();
+  const input = readFields(funnel, raw);
   const missing = funnel.fields.filter((fl) => fl.required && !input[fl.key]).map((fl) => fl.label);
   if (missing.length) return { kind: "error", message: `missing required: ${missing.join(", ")}` };
 
@@ -233,7 +262,7 @@ app.post("/ingest", async (c) => {
   // The web form carries no funnel id — its task toggle picks one. JSON callers
   // still name the funnel outright, so the typed schema is unchanged for them.
   const asTask = raw.as_task === "1" || raw.as_task === true;
-  const funnelId = String(raw.funnel ?? (asTask ? "task" : "memo"));
+  const funnelId = String(raw.funnel ?? (asTask ? "todo" : "memo"));
   if (asTask && !wantsJson) splitTitleFromBody(raw);
   const idem = raw.idem ? String(raw.idem).trim() : undefined;
   const res = await doCapture(funnelId, raw, idem);
@@ -669,6 +698,31 @@ interface ReviewView {
  *  queue row and the detail header above it can't disagree about a capture. */
 const hhmm = (iso: string): string => iso.slice(11, 16);
 
+/** WHY there is no suggestion card — the four answers the desk used to give as
+ *  one word.
+ *
+ *  "no suggestion." is true of a worker that was never armed, a note the worker
+ *  hasn't reached yet, one it is backing off from, and one it gave up on. Those
+ *  need four different things from the operator and the desk was reporting them
+ *  identically, which is how a feature stays switched off without anyone
+ *  noticing: the pane looked exactly the way a working install looks between
+ *  ticks. `/health` knew, but nobody reads /health while triaging. */
+type SugState =
+  | { kind: "off" }
+  | { kind: "pending" }
+  | { kind: "retry"; error: string; at: string }
+  | { kind: "dead"; error: string };
+
+async function suggestState(name: string): Promise<SugState> {
+  // The flag and the key, exactly as the worker resolves them — one function,
+  // so the desk can't claim it's on while startSuggestWorker disagrees.
+  if (!aiSuggestConfig().enabled) return { kind: "off" };
+  const sc = await readSidecar(name);
+  if (!sc || sc.state === "ok") return { kind: "pending" };
+  if (sc.state === "dead") return { kind: "dead", error: sc.error };
+  return { kind: "retry", error: sc.error, at: sc.nextAttemptAt };
+}
+
 // A queue row is the timestamp over the note's label — which for the ordinary
 // untitled capture is its first line (inbox.ts). Nothing else fits a phone-width
 // rail, and nothing else is needed: the row's job is to be recognisable enough
@@ -688,6 +742,9 @@ async function renderReview(v: ReviewView = {}) {
   const proposals = await listProposals("pending");
   const inbox = listInbox();
   const sel = v.selected?.name ?? null;
+  // Derived here rather than passed in, so every caller that renders the desk
+  // gets the same answer without having to remember to ask for it.
+  const sugState = v.selected && !v.suggestion ? await suggestState(v.selected.name) : null;
   return layout(
     "review",
     html`
@@ -703,7 +760,8 @@ async function renderReview(v: ReviewView = {}) {
         </div>
         <div class="desk-detail">
           ${v.selected
-            ? triagePane(v.selected, v.funnelId ?? "memo", getScopes(), v.suggestion ?? null, v.values, v.error)
+            ? triagePane(v.selected, v.funnelId ?? "memo", getScopes(), v.suggestion ?? null,
+                sugState ?? { kind: "pending" }, v.values, v.error)
             : html`<p class="muted desk-empty">${inbox.length
                 ? "pick a capture from the queue to triage it."
                 : "nothing waiting."}</p>`}
@@ -842,11 +900,18 @@ const wholeTitle = (memo: InboxNote): string =>
 
 // Deterministic pre-fill (no LLM): the memo title → a `title` field, the memo
 // body → the funnel's main text field, a URL in the body → a `url` field, and the
-// scopes picked at capture time → the scope picker, comma-separated (so the pick
-// survives re-typing).
+// containment picked at capture time → the matching picker, comma-separated (so
+// the pick survives re-typing).
+//
+// The two relationships are pre-filled from their OWN side and never from each
+// other: `contains` is nearly always empty on a capture, and seeding it with the
+// hubs a thought belongs to would invert the relationship in the one field the
+// desk exists to get right. A `single` picker takes the first of what the capture
+// carried, since it can only hold one.
 function prefillFor(f: Field, memo: InboxNote): string {
   if (f.key === "title") return memoAtom(memo)?.text || wholeTitle(memo);
-  if (f.type === "scope") return memo.scopes.join(", ");
+  if (f.key === "contains") return memo.contains.join(", ");
+  if (f.type === "scope") return (f.single ? memo.containedBy.slice(0, 1) : memo.containedBy).join(", ");
   if (f.key === "due") return memoAtom(memo)?.due ?? "";
   if (f.key === "priority") return memoAtom(memo)?.priority ?? "";
   // The atom line is already represented by the title/due/priority fields — a
@@ -865,8 +930,14 @@ function prefillFor(f: Field, memo: InboxNote): string {
 // & file" posts it. They must not be able to disagree about what "the suggestion"
 // means — a card that fills one set of fields and files another is worse than no
 // card at all.
+//
+// The model is asked for ONE scope and it means "where does this belong", so it
+// answers the `contained by` side only. `contains` keeps its deterministic
+// pre-fill — there is nothing to suggest from, and filling it with the answer to
+// the other question would point the relationship backwards.
 function suggestedValue(fl: Field, memo: InboxNote, s: Suggestion): string {
   if (fl.key === "title") return s.title;
+  if (fl.key === "contains") return prefillFor(fl, memo);
   if (fl.type === "scope") return s.scope ?? prefillFor(fl, memo);
   if (fl.key === "due") return s.due ?? prefillFor(fl, memo);
   if (fl.key === "priority") return s.priority ?? prefillFor(fl, memo);
@@ -883,8 +954,16 @@ const suggestedValues = (memo: InboxNote, f: Funnel, s: Suggestion): Record<stri
 // are title-cased) and read off the directory rather than the index. Filing is
 // the only place in the app that invents a NEW filename, so this is the one
 // place that decides whether a triage can overwrite a note.
-function uniqueDest(title: string): { rel: string; name: string } {
-  const base = slug(title);
+//
+// `asTyped` keeps the name as written instead of slugging it. That is right for
+// exactly one thing — a SCOPE — because a hub is addressed by its filename: it is
+// what a `Contains: "[[Woodworking]]"` link points at, what the pickers list, and
+// what the Topics manifest prints. Slugged, a hub you named `Woodworking` becomes
+// `woodworking` and stops matching both the links you write by hand and the
+// vault's own title-cased hubs. A memo is found by its title and its links, so it
+// keeps the slug and the tidy filenames that come with it. (See `noteName`.)
+function uniqueDest(title: string, asTyped = false): { rel: string; name: string } {
+  const base = asTyped ? noteName(title) : slug(title);
   const taken = takenRootNames();
   let name = base;
   for (let i = 2; taken.has(name.toLowerCase()); i++) name = `${base}-${i}`;
@@ -893,14 +972,30 @@ function uniqueDest(title: string): { rel: string; name: string } {
 
 // The right pane: the capture, editable, and everything needed to file it.
 //
-// The order is the order you think in — read the thought, then say what it is.
-// So the funnel's prose field is hoisted out of the field loop and leads the
-// pane: it is the same input the funnel already owns (memo `body`, task
-// `detail`, media `why`), but here it isn't one control among several, it IS the
-// note. Type, title, scope and the type-specific fields follow it as metadata
-// about that text. Nothing is read-only any more — a capture is a first draft,
-// and the desk is where it gets edited, not just labelled.
-function triagePane(memo: InboxNote, funnelId: string, scopes: string[], suggestion: Suggestion | null, values?: Record<string, string>, error?: string) {
+// TYPE LEADS. It used to sit below the prose, on the theory that you read the
+// thought before you say what it is — but the type is not metadata about the
+// text, it decides what the rest of the pane even IS: whether the fields below
+// describe a note, a hub, or a task line that will never become a note at all.
+// Reading the thought and then finding the wrong form under it is a re-render;
+// picking the type first is the one decision every other control depends on.
+//
+// The funnel's prose field comes second, still hoisted out of the field loop: it
+// is the same input the funnel already owns (memo `body`, scope `what it's for`,
+// todo `detail`), but here it isn't one control among several, it IS the note.
+// Title, containment and the type-specific fields follow it. Nothing is read-only
+// — a capture is a first draft, and the desk is where it gets edited, not just
+// labelled.
+/** The empty-state line, per reason. Says what to DO about it where there is
+ *  something to do — the worker is off in the deployment's env file, not in
+ *  anything the desk can reach, so the pane's job is to name the knob. */
+function sugWhy(s: SugState) {
+  if (s.kind === "off") return html`suggestions are off — set <code>AI_SUGGEST=1</code> and <code>ANTHROPIC_API_KEY</code> in the deployment's env, then restart.`;
+  if (s.kind === "dead") return html`gave up on this capture: ${s.error}`;
+  if (s.kind === "retry") return html`retrying after ${fmtDate(s.at)} — last error: ${s.error}`;
+  return html`no suggestion yet.`;
+}
+
+function triagePane(memo: InboxNote, funnelId: string, scopes: string[], suggestion: Suggestion | null, sugState: SugState, values?: Record<string, string>, error?: string) {
   const f = funnelById(funnelId) ?? funnelById("memo")!;
   // The suggested TITLE arrives already in the box rather than waiting behind
   // "apply". Titling is the one thing every triage does, and the one field the
@@ -925,23 +1020,45 @@ function triagePane(memo: InboxNote, funnelId: string, scopes: string[], suggest
   const sugValues = suggestion && sf ? suggestedValues(memo, sf, suggestion) : null;
   // The required fields the suggestion has no answer for. "apply & file" posts
   // these values and NOTHING else, so each of these comes back as `missing
-  // required:` — every time, for the whole class: media's `kind` is a select the
-  // model isn't asked about, and resource's `activity` is empty whenever it
-  // returns no scope. A button that can only 400 is worse than no button, so it
-  // is replaced by the one thing the user needs to know: apply, then pick these.
-  // "apply" is unaffected — filling four fields of five is still worth a tap.
+  // required:` — every time, for the whole class. A button that can only 400 is
+  // worse than no button, so it is replaced by the one thing the user needs to
+  // know: apply, then pick these. "apply" is unaffected — filling four fields of
+  // five is still worth a tap.
+  //
+  // A suggested TODO is included by the same rule even though its scope field
+  // isn't `required` (the spec can't be — the phone posts through it too): the
+  // desk requires one, so a suggestion without a scope would file nowhere.
   const sugMissing = sf && sugValues
-    ? sf.fields.filter((fl) => fl.required && !sugValues[fl.key]?.trim()).map((fl) => fl.label)
+    ? [
+        ...sf.fields.filter((fl) => fl.required && !sugValues[fl.key]?.trim()).map((fl) => fl.label),
+        ...(sf.id === "todo" && !sugValues.containedBy?.trim() ? ["file into"] : []),
+      ]
     : [];
   const canFile = Boolean(sugValues && !sugMissing.length);
   const prose = f.fields.find((fl) => fl.type === "textarea");
+  // A checkbox carries its own label to the right of the box, so it does NOT get
+  // the field loop's one above it as well — two copies of the same words read as
+  // two controls.
   const fieldRow = (fl: Field) =>
-    html`<label>${fl.label} ${fl.required ? html`<span class="req">*</span>` : ""}</label>${control(fl, scopes, val(fl))}`;
+    fl.type === "checkbox"
+      ? control(fl, scopes, val(fl))
+      : html`<label>${fl.label} ${fl.required ? html`<span class="req">*</span>` : ""}</label>${control(fl, scopes, val(fl))}`;
   return html`
     <a class="desk-back" href="/review">← queue</a>
-    <div class="meta">from inbox · ${memo.createdISO ? fmtDate(memo.createdISO) : ""} · <code>${memo.name}</code>${memo.scopes.map((s) => html` <span class="tag">${s}</span>`)}</div>
+    <div class="meta">from inbox · ${memo.createdISO ? fmtDate(memo.createdISO) : ""} · <code>${memo.name}</code>${memo.containedBy.map((s) => html` <span class="tag">${s}</span>`)}</div>
     ${error ? html`<p class="flash err">${error}</p>` : ""}
     <form method="post" action="${act}" class="triage-form">
+      <!-- Changing the type re-renders the pane against the new funnel, which is
+           a GET the desk swaps in place (DESK_JS) so the queue beside it doesn't
+           move. The inline location.href is the no-JS fallback, and the only path
+           this had before; either way the answer comes from the server, because
+           the funnel decides which fields exist and the client has no idea. -->
+      <label>type</label>
+      <select name="funnel" class="type-pick" data-here="${here}"
+              onchange="location.href='${here}&funnel='+this.value">
+        ${FUNNELS.map((x) => html`<option value="${x.id}"${x.id === f.id ? raw(" selected") : ""}>${x.label}</option>`)}
+      </select>
+
       ${prose ? fieldRow(prose) : html`<p class="muted snippet">${memo.text}</p>`}
 
       <!-- The suggestion sits between the note and the fields it would pre-fill
@@ -968,13 +1085,9 @@ function triagePane(memo: InboxNote, funnelId: string, scopes: string[], suggest
                   : html`<span class="muted">then pick ${sugMissing.join(" + ")}</span>`}
               </div>
             </div>`
-          : html`<p class="muted sug-none">no suggestion.</p>`}
+          : html`<p class="muted sug-none">${sugWhy(sugState)}</p>`}
       </div>
 
-      <label>type</label>
-      <select name="funnel" onchange="location.href='${here}&funnel='+this.value">
-        ${FUNNELS.map((x) => html`<option value="${x.id}"${x.id === f.id ? raw(" selected") : ""}>${x.label}</option>`)}
-      </select>
       <div class="cap-fields">
         ${f.fields.filter((fl) => fl !== prose).map(fieldRow)}
       </div>
@@ -1074,31 +1187,36 @@ app.post("/review/triage/:name", async (c) => {
   const funnelId = String(body.funnel ?? "memo");
   const funnel = funnelById(funnelId);
   if (!funnel) return stuck(400, { flash: { ok: false, msg: `unknown funnel ${funnelId}` } });
-  const input: Record<string, string> = {};
-  for (const fl of funnel.fields) input[fl.key] = String(body[fl.key] ?? "").trim();
+  const input = readFields(funnel, body as Record<string, unknown>);
   const missing = funnel.fields.filter((fl) => fl.required && !input[fl.key]).map((fl) => fl.label);
   if (missing.length) {
     return stuck(400, { funnelId, values: input, error: `missing required: ${missing.join(", ")}` });
   }
 
-  // Filing a TASK is not "make a note" — a task is a line, and it is filed by
-  // living in its scope's note ([[Tags]]). So the changeset appends the atom to
-  // that note and drops the inbox memo, in one op. With no scope picked there's
-  // nothing to append to, so it falls through and files as its own note, which
-  // still leaves a real (if scopeless) atom rather than losing the capture.
-  const scopeKey = funnel.fields.find((fl) => fl.type === "scope")?.key;
-  const picked = scopeKey ? parseScopes(input[scopeKey]) : [];
-  // ONE atom, in ONE note. The first scope owns it and the rest ride along as
-  // links in the description, because a task is a line and a line appended to
-  // three hubs is three tasks: tick it in one and the other two stay open
-  // forever. The links still put the atom in every hub's backlinks, which is the
-  // thing having several scopes was for.
-  const target = picked[0] ?? "";
-  const alsoLinks = picked.slice(1).map((s) => `[[${s}]]`).join(" ");
-  if (funnel.id === "task" && target && noteExists(target)) {
+  // Filing a TODO is not "make a note" — a task is a line, and it is filed by
+  // living in its scope's note (see the vault's `_meta/Tags.md`). So the
+  // changeset appends the atom to that note and drops the inbox memo, in one op,
+  // and no note is written for the task itself.
+  //
+  // ONE atom, in ONE note: a line appended to three hubs is three tasks — tick it
+  // in one and the other two stay open forever — which is why the `file into`
+  // picker is `single` rather than the first-of-many the multi picker used to
+  // hand over. Both halves of that are now REQUIRED here: without a scope there
+  // is nothing to append to, and a scope with no note behind it is a name the
+  // filer cannot open. Neither can be true of a note we still hold in the queue,
+  // so both stop the submit and say so, rather than quietly filing the capture as
+  // an ordinary note somewhere the user wasn't looking.
+  if (funnel.id === "todo") {
+    const target = input.containedBy ?? "";
+    if (!target) {
+      return stuck(400, { funnelId, values: input, error: "pick the scope to file this atom into" });
+    }
+    if (!noteExists(target)) {
+      return stuck(400, { funnelId, values: input, error: `no note named “${target}” — a task is filed by living in one` });
+    }
     const raw = readNoteRaw(target);
     if (!raw) return stuck(409, { funnelId, values: input, flash: { ok: false, msg: `✗ could not read “${target}”` } });
-    const line = taskLine(alsoLinks ? { ...input, title: `${input.title} ${alsoLinks}` } : input);
+    const line = taskLine(input);
     // A task is one line, so any DETAIL the capture carried has nowhere to go on
     // the scope note. Rather than drop it with the memo, it becomes a memo note
     // of its own in the same op — the action files, the context keeps. Clear the
@@ -1115,20 +1233,24 @@ app.post("/review/triage/:name", async (c) => {
         path: keep.rel,
         content: compose({
           title: input.title,
-          frontmatter: { ...(memo.createdISO ? { created: memo.createdISO } : {}), tags: ["memo"] },
-          body: `${scopeLink(picked)}# ${input.title}\n\n${detail}`,
+          frontmatter: {
+            ...(memo.createdISO ? { created: memo.createdISO } : {}),
+            tags: ["memo"],
+            // The detail note hangs off the same hub the atom went to, so the
+            // context is one backlink away from the action.
+            ...containment({ containedBy: target }),
+          },
+          body: `# ${input.title}\n\n${detail}`,
         }),
       });
     }
     try {
       const res = await gitStore().commit({ ops }, {
-        message: `triage: task → ${picked.join(", ")}${keep ? ` (+ memo ${keep.name})` : ""} ← inbox/${memo.name}`,
+        message: `triage: todo → ${target}${keep ? ` (+ memo ${keep.name})` : ""} ← inbox/${memo.name}`,
       });
       invalidate();
       await dropSidecar(memo.name);
-      // The receipt names the hub the atom LIVES in and, separately, the ones it
-      // only links to — "filed to three places" would be a lie you'd act on.
-      return filed(`✓ filed atom → ${target}${alsoLinks ? ` (+ ${picked.length - 1} linked)` : ""}${keep ? `, detail kept as ${keep.name}` : ""} (op ${res.id.slice(0, 8)})`);
+      return filed(`✓ filed atom → ${target}${keep ? `, detail kept as ${keep.name}` : ""} (op ${res.id.slice(0, 8)})`);
     } catch (e) {
       return stuck(409, { funnelId, values: input, flash: { ok: false, msg: `✗ file failed: ${(e as Error).message}` } });
     }
@@ -1137,7 +1259,7 @@ app.post("/review/triage/:name", async (c) => {
   const note = funnel.build(input);
   if (memo.createdISO) note.frontmatter = { created: memo.createdISO, ...note.frontmatter }; // preserve capture time
   const content = compose(note);
-  const dest = uniqueDest(note.title || wholeTitle(memo) || "note");
+  const dest = uniqueDest(note.title || wholeTitle(memo) || "note", funnel.id === "scope");
   try {
     const res = await gitStore().commit(
       { ops: [{ op: "delete", path: inboxRel }, { op: "put", path: dest.rel, content }] },

@@ -84,6 +84,15 @@ input:focus,select:focus,textarea:focus { outline:none; border-color:var(--accen
   border:1px solid var(--accent); border-radius:4px; box-shadow:0 4px 14px rgba(0,0,0,.35); }
 .scope-menu li { padding:.3rem .45rem; border-radius:3px; cursor:pointer; font-size:.9rem; }
 .scope-menu li[aria-selected="true"] { background:var(--bg); color:var(--accent); }
+/* An inline checkbox: the box, then its own label to the right of it. Used by the
+   scope type's "capture destination" toggle, and shaped like the capture screen's
+   task toggle so the one affordance reads the same in both places. */
+.check { display:flex; align-items:center; gap:.45rem; margin:.7rem 0 0; }
+.check input { width:auto; margin:0; accent-color:var(--accent); }
+.check label { margin:0; color:var(--fg); font-size:.9rem; cursor:pointer; }
+/* The type dropdown now LEADS the pane — it decides what every control under it
+   is — so it reads as a heading rather than as one more field in the stack. */
+select.type-pick { margin-bottom:.9rem; color:var(--accent); }
 /* "this is a task" reveals due + priority. Pure CSS — every screen here works
    with scripting off (the one script this app ships only ENHANCES the scope
    field) — so the disclosure is the checkbox's own :checked state. */
@@ -123,6 +132,10 @@ a.tag:hover { border-color:var(--accent); color:var(--accent); }
 .q-title { display:block; overflow-wrap:anywhere; }
 .q-row.sel .q-title { color:var(--accent); }
 .desk-empty { margin-top:1.6rem; }
+/* The pane is being swapped in place (DESK_JS). Just enough to say "this is
+   about to be something else" — a spinner over a pane that is usually replaced
+   in a few dozen milliseconds is a flash of chrome, not feedback. */
+.desk-detail[aria-busy="true"] { opacity:.5; }
 /* The suggestion card. Deliberately quiet — a dashed border rather than the
    accent one an action gets, because this is a draft someone else wrote and the
    fields below it are still the source of truth. */
@@ -308,6 +321,12 @@ ul.notes li { padding:.2rem 0; border-bottom:1px solid var(--border); overflow-w
  *  contain a scope field, and the day it's wrong the picker silently stops being
  *  a picker. It is idempotent (`data-on`) for the same reason.
  *
+ *  It is also RE-RUNNABLE, and published as `window.bdScopePick(root)`: the desk
+ *  swaps its right pane in place (DESK_JS below), so scope fields arrive in the
+ *  document long after load and something has to upgrade them. Idempotence is
+ *  what makes that safe to call with no argument, over the whole document, at any
+ *  time.
+ *
  *  It never posts anything itself. The original input stays in the DOM, keeps its
  *  `name`, and the chips only ever write its `value` — so the server sees the
  *  same comma-separated string whether or not any of this ran, and `parseScopes`
@@ -316,23 +335,32 @@ const SCOPE_PICK_JS = String.raw`
 (function () {
   var esc = function (s) { return s.replace(/[&<>"]/g, function (c) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); };
-  Array.prototype.forEach.call(document.querySelectorAll("input.scope-in"), function (hidden) {
-    if (hidden.dataset.on) return;
-    hidden.dataset.on = "1";
-    try { enhance(hidden); } catch (e) {
-      // Whatever went wrong, the tier below still works — so put the field back
-      // the way it was rendered rather than leaving a half-built picker. This is
-      // the reason the field degrades at all: the enhancement is allowed to fail.
-      hidden.classList.remove("scope-in");
-      var w = hidden.closest(".scope-pick");
-      if (w && w.parentNode) { w.parentNode.insertBefore(hidden, w); w.remove(); }
-      if (window.console) console.error("scope picker disabled:", e);
-    }
-  });
+
+  function scan(root) {
+    Array.prototype.forEach.call((root || document).querySelectorAll("input.scope-in"), function (hidden) {
+      if (hidden.dataset.on) return;
+      hidden.dataset.on = "1";
+      try { enhance(hidden); } catch (e) {
+        // Whatever went wrong, the tier below still works — so put the field back
+        // the way it was rendered rather than leaving a half-built picker. This is
+        // the reason the field degrades at all: the enhancement is allowed to fail.
+        hidden.classList.remove("scope-in");
+        var w = hidden.closest(".scope-pick");
+        if (w && w.parentNode) { w.parentNode.insertBefore(hidden, w); w.remove(); }
+        if (window.console) console.error("scope picker disabled:", e);
+      }
+    });
+  }
 
   function enhance(hidden) {
     var all = (hidden.dataset.scopes || "").split("|").filter(Boolean);
+    // A single-value field holds ONE scope — the note a TODO's atom is appended
+    // to. The cap is read off the field rather than inferred, and it is enforced
+    // here as well as on the server: a picker that lets you add a second chip and
+    // then silently drops it is worse than one that cannot.
+    var single = hidden.dataset.single === "1";
     var picked = hidden.value.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+    if (single) picked = picked.slice(0, 1);
     var hits = [], cursor = -1;
 
     var wrap = document.createElement("div");
@@ -361,13 +389,18 @@ const SCOPE_PICK_JS = String.raw`
         box.insertBefore(chip, type);
       });
       type.placeholder = picked.length ? "" : (hidden.placeholder || "");
+      // A full single-value field has nothing left to type into — remove the
+      // chip to change it. Leaving the box open would offer an action that
+      // silently does nothing.
+      type.style.display = single && picked.length ? "none" : "";
     }
     function close() { menu.hidden = true; hits = []; cursor = -1; }
     function add(s) {
       // The same sanitising as parseScopes on the server, for the same reason:
       // these characters would break out of the [[…]] they end up inside.
       s = s.replace(/[[\]|#]/g, " ").replace(/\s+/g, " ").trim();
-      if (s && picked.indexOf(s) < 0) picked.push(s);
+      if (s && single) picked = [s];
+      else if (s && picked.indexOf(s) < 0) picked.push(s);
       type.value = ""; close(); sync();
     }
     function open() {
@@ -424,6 +457,141 @@ const SCOPE_PICK_JS = String.raw`
     // field and re-renders the form intact, so it carries this alone.
     hidden.required = false;
   }
+
+  // Published for DESK_JS, which swaps panes containing scope fields long after
+  // this ran. Set BEFORE the first scan so a throw in one field can't leave the
+  // desk with no way to upgrade the next one.
+  window.bdScopePick = scan;
+  scan(document);
+})();
+`;
+
+/** The desk's second enhancement: picking a queue row swaps the RIGHT pane only,
+ *  instead of navigating the whole page.
+ *
+ *  Selection has always ridden the URL (`?note=`), which is what made a two-pane
+ *  desk possible with no client state at all — but it also meant every pick was a
+ *  full document load, and the left rail was rebuilt from scratch each time. On a
+ *  queue long enough to scroll (which is every queue that needs triaging) that
+ *  threw away your place in the list on every single pick: you scrolled back down
+ *  to where you were, picked the next one, and lost it again.
+ *
+ *  So this keeps the model and changes only the delivery. The URL still decides
+ *  what is selected, the server still renders both panes, back/forward still work,
+ *  and a shared link still resolves — the response's `.desk-detail` is simply
+ *  lifted out and swapped in, leaving the queue's DOM (and therefore its scroll)
+ *  untouched. With scripting off every one of those links is an ordinary anchor
+ *  and the desk behaves exactly as it did before.
+ *
+ *  Anything that CHANGES the vault is left alone: filing and discarding are POSTs
+ *  that redirect, because a note that filed has left the queue and the rail has to
+ *  be rebuilt. This only intercepts reads. */
+const DESK_JS = String.raw`
+(function () {
+  var desk = document.querySelector(".desk");
+  if (!desk || !window.fetch || !window.DOMParser || !history.pushState) return;
+  var detail = desk.querySelector(".desk-detail");
+  var queue = desk.querySelector(".queue");
+  if (!detail) return;
+
+  var noteOf = function (url) {
+    try { return new URL(url, location.href).searchParams.get("note"); } catch (e) { return null; }
+  };
+
+  // The rail is not re-rendered, so the selected row is re-marked by hand. Rows
+  // are matched on the note name in their own href rather than on the string of
+  // the URL, so an equivalent-but-differently-encoded link still lands.
+  function select(url) {
+    var note = noteOf(url);
+    Array.prototype.forEach.call(desk.querySelectorAll("a.q-row"), function (a) {
+      a.classList.toggle("sel", !!note && noteOf(a.getAttribute("href")) === note);
+    });
+    desk.classList.toggle("picked", !!note);
+  }
+
+  // The receipt line lives above the desk, not in the pane, so it is swapped
+  // separately — otherwise a stale ?note= would answer with an empty pane and no
+  // reason given. Direct children of <main> only: a pane's own validation error
+  // is also a .flash, and it arrives with the pane.
+  function flash(doc) {
+    var now = document.querySelector("main > p.flash");
+    var next = doc.querySelector("main > p.flash");
+    if (now && next) now.replaceWith(next);
+    else if (now) now.remove();
+    else if (next) { var h = document.querySelector("main > h1"); if (h) h.insertAdjacentElement("afterend", next); }
+  }
+
+  // Re-attach behaviour to a freshly-swapped pane. The type dropdown ships with
+  // an inline onchange as its no-JS path; that attribute is REMOVED here rather
+  // than competing with the listener, since it would navigate away before this
+  // ever ran.
+  function wire(root) {
+    Array.prototype.forEach.call(root.querySelectorAll("select.type-pick"), function (sel) {
+      sel.removeAttribute("onchange");
+      sel.onchange = function () {
+        go(sel.dataset.here + "&funnel=" + encodeURIComponent(sel.value), true);
+      };
+    });
+    if (window.bdScopePick) window.bdScopePick(root);
+  }
+
+  // Last request wins: picking three rows quickly must not leave whichever
+  // response happened to be slowest on screen.
+  var seq = 0;
+  function go(url, push) {
+    var mine = ++seq;
+    detail.setAttribute("aria-busy", "true");
+    fetch(url, { headers: { "X-Requested-With": "fetch" }, credentials: "same-origin" })
+      .then(function (r) { return r.text(); })
+      .then(function (text) {
+        if (mine !== seq) return;
+        var doc = new DOMParser().parseFromString(text, "text/html");
+        var next = doc.querySelector(".desk-detail");
+        if (!next) throw new Error("no pane in response");
+        detail.innerHTML = next.innerHTML;
+        flash(doc);
+        if (doc.title) document.title = doc.title;
+        if (push) history.pushState({ desk: 1 }, "", url);
+        select(url);
+        wire(detail);
+        detail.removeAttribute("aria-busy");
+        // On a phone the two panes are one screen at a time (.desk.picked hides
+        // the queue), so the pane that just replaced the list has to start at its
+        // top. On a desktop both are on screen and scrolling anything is the very
+        // thing this exists to avoid — hence the test is "is the queue actually
+        // visible", not a width.
+        if (queue && !queue.offsetParent) window.scrollTo(0, 0);
+      })
+      .catch(function (e) {
+        if (window.console) console.error("desk swap failed, falling back:", e);
+        location.href = url;
+      });
+  }
+
+  document.addEventListener("click", function (e) {
+    // Modified clicks belong to the browser: new tab, download, context menu.
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var a = e.target.closest && e.target.closest("a.q-row, a.desk-back");
+    if (!a || !desk.contains(a)) return;
+    e.preventDefault();
+    go(a.getAttribute("href"), true);
+  });
+
+  // The suggestion card's "apply" is a GET form back to this same page, so it is
+  // a read like any other and swaps in place. Its sibling "apply & file" is a
+  // POST and is deliberately not matched here.
+  document.addEventListener("submit", function (e) {
+    var f = e.target;
+    if (!f || !desk.contains(f) || (f.method || "").toLowerCase() !== "get") return;
+    if ((f.getAttribute("action") || "").split("?")[0] !== "/review") return;
+    e.preventDefault();
+    var q = new URLSearchParams(new FormData(f)).toString();
+    go("/review" + (q ? "?" + q : ""), true);
+  });
+
+  window.addEventListener("popstate", function () { go(location.href, false); });
+
+  wire(detail);
 })();
 `;
 
@@ -462,6 +630,7 @@ export function layout(title: string, body: Html | string, active?: string): Htm
   </header>
   <main>${body}</main>
   <script>${raw(SCOPE_PICK_JS)}</script>
+  <script>${raw(DESK_JS)}</script>
 </body>
 </html>`;
 }

@@ -13,7 +13,7 @@
 import { todayISO } from "./tasks.js";
 import { icsOptionsFromEnv } from "./ics.js";
 import { aiSuggestConfig } from "./config.js";
-import type { GitStoreStatus } from "./git.js";
+import { reconcileIntervalMs, DEFAULT_RECONCILE_INTERVAL_MS, type GitStoreStatus } from "./git.js";
 
 export interface HealthPayload {
   ok: true;
@@ -25,6 +25,15 @@ export interface HealthPayload {
      *  surprising misconfiguration here, so it is reported explicitly. */
     tz: string | null;
     today: string;
+    /** How often the store reconciles with the remote, in ms — the ceiling on
+     *  how long an edit pushed from another machine takes to appear here.
+     *
+     *  Reported because it is otherwise unobservable from outside: the knob
+     *  falls back to the default on an unparseable value rather than disarming
+     *  the timer, so `GIT_PULL_INTERVAL_MS=10s` looks *exactly* like never
+     *  having set it — the box just quietly keeps polling every 5 minutes. `0`
+     *  means the timer is off and only POST /sync reconciles. */
+    reconcileIntervalMs: number;
     taskDefaultDurationMin: number;
     /** The suggestion worker: whether it is running, and on what. Both halves of
      *  "enabled" (AI_SUGGEST=1 **and** a key) collapse into one boolean, which is
@@ -54,6 +63,7 @@ export function healthPayload(sync: GitStoreStatus, env: NodeJS.ProcessEnv = pro
     config: {
       tz: env.TZ || null,
       today: todayISO(),
+      reconcileIntervalMs: reconcileIntervalMs(env.GIT_PULL_INTERVAL_MS, DEFAULT_RECONCILE_INTERVAL_MS),
       taskDefaultDurationMin: Number(env.TASK_DEFAULT_DURATION_MIN ?? 30) || 30,
       ai: { suggest: ai.enabled, model: ai.model },
       ics: {

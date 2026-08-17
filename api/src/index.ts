@@ -11,7 +11,7 @@ import { startSuggestWorker } from "./worker.js";
 import { seenRecently, contentHash } from "./dedup.js";
 import { randomUUID } from "node:crypto";
 import { submitProposal, listProposals, getProposal, setStatus, updateProposal, type Proposal, type ProposalStatus } from "./proposals.js";
-import { getScopes, getIngestableScopes, getNote, listNotes, backlinksFor, invalidate, noteExists, takenRootNames, readNoteRaw } from "./vault.js";
+import { getScopes, getIngestableScopes, getNote, listNotes, backlinksFor, invalidate, noteExists, takenRootNames, readNoteRaw, type VaultNote } from "./vault.js";
 import { listInbox, getInboxNote, firstLine, type InboxNote } from "./inbox.js";
 import { renderMarkdown, renderInline } from "./render.js";
 import { gitStore } from "./git.js";
@@ -287,12 +287,41 @@ app.post("/ingest", async (c) => {
 });
 
 // ── Vault viewer ────────────────────────────────────────────────────────────
+/** What a note is searched over: its name and its tags, lowercased. Both the
+ *  server filter and the client one read THIS string — the client gets it as a
+ *  `data-hay` attribute — so a query can never match on one tier and miss on the
+ *  other. Body text is deliberately not in it: this is a "find the note I'm
+ *  thinking of" box, and a substring match over 889 note bodies would return
+ *  everything that mentions the word rather than the note that is about it. */
+const searchHay = (n: VaultNote): string => `${n.name} ${n.tags.join(" ")}`.toLowerCase();
+
+/** EVERY term must appear, so terms narrow rather than widen — with 889 notes a
+ *  query is nearly always "the one about X, in Y", and an OR would answer with
+ *  more rows than you started with. */
+const matchesQuery = (hay: string, terms: string[]): boolean => terms.every((t) => hay.includes(t));
+
 app.get("/vault", (c) => {
+  const q = (c.req.query("q") ?? "").trim();
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  // EVERY note is rendered, always — and a non-match is marked `hidden` rather
+  // than dropped. That one decision is what lets both tiers be correct at once:
+  // the browser's own UA stylesheet honours `hidden` with no scripting, so a
+  // `?q=` link filters for a no-JS reader; and because the full list is in the
+  // DOM, the client filter can BROADEN a query, which it could not do if the
+  // server had already thrown the other rows away.
   const notes = listNotes();
+  const rows = notes.map((n) => ({ n, hay: searchHay(n), hit: !terms.length || matchesQuery(searchHay(n), terms) }));
+  const shown = rows.filter((r) => r.hit).length;
   return c.html(layout("vault", html`
-    <h1>vault <span class="muted">(${notes.length})</span></h1>
+    <h1>vault <span class="muted">(<span class="v-count">${shown}</span><span class="v-total">${shown === notes.length ? "" : ` of ${notes.length}`}</span>)</span></h1>
+    <form class="v-search" method="get" action="/vault" role="search">
+      <input type="search" name="q" value="${q}" class="v-q" aria-label="filter notes by name or tag"
+             placeholder="filter by name or tag…" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button class="btn" type="submit">filter</button>
+    </form>
+    <p class="muted v-empty"${shown ? raw(" hidden") : ""}>no note matches that filter.</p>
     <ul class="notes">
-      ${notes.map((n) => html`<li><a href="/vault/${encodeURIComponent(n.name)}">${n.name}</a> ${n.tags.slice(0, 3).map((t) => html`<span class="tag">${t}</span>`)}</li>`)}
+      ${rows.map(({ n, hay, hit }) => html`<li data-hay="${hay}"${hit ? "" : raw(" hidden")}><a href="/vault/${encodeURIComponent(n.name)}">${n.name}</a> ${n.tags.slice(0, 3).map((t) => html`<span class="tag">${t}</span>`)}</li>`)}
     </ul>`, "vault"));
 });
 

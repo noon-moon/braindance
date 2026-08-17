@@ -6,12 +6,12 @@ import type { HtmlEscapedString } from "hono/utils/html";
 const STYLE = `
 :root {
   --bg:#0b0e0f; --surface:#12161a; --border:#232a30; --fg:#d7dee3;
-  --muted:#7c8894; --accent:#5ef2b8; --danger:#f2685e;
+  --muted:#7c8894; --accent:#5ef2b8; --danger:#f2685e; --link:#8ab4ff;
   color-scheme: dark light;
 }
 @media (prefers-color-scheme: light) {
   :root { --bg:#faf8f8; --surface:#fff; --border:#e2e2e2; --fg:#22262a;
-          --muted:#6b7480; --accent:#0b8f63; --danger:#c0392b; }
+          --muted:#6b7480; --accent:#0b8f63; --danger:#c0392b; --link:#3352cc; }
 }
 * { box-sizing:border-box; min-width:0; }
 html { overflow-x:hidden; }
@@ -159,13 +159,46 @@ a.tag:hover { border-color:var(--accent); color:var(--accent); }
   .desk-back { display:inline-block; color:var(--muted); margin-bottom:.3rem; }
 }
 hr { border:none; border-top:1px solid var(--border); margin:1rem 0; }
+/* Links inside PROSE, and deliberately nowhere else. Everywhere else in this
+   app an <a> is a control — a nav tab, a queue row, a tag, a path chip — and
+   colouring those would light the whole chrome up in blue. Inside a note the
+   opposite was true: a [[wikilink]] sat at --fg, indistinguishable from the
+   sentence around it until you happened to mouse over it, which is not a thing
+   you do while reading.
+   Colour ALONE would fail on a monochrome display or for a colour-blind reader
+   (WCAG 1.4.1), so the underline carries the same information — faint enough at
+   40% not to fight a paragraph full of them, solid on hover. */
+.note-body a, .sug-why a, p.dataview-skipped a {
+  color:var(--link);
+  text-decoration:underline;
+  text-decoration-thickness:1px;
+  text-underline-offset:2px;
+  text-decoration-color:color-mix(in srgb, var(--link) 40%, transparent);
+}
+.note-body a:hover, .sug-why a:hover, p.dataview-skipped a:hover {
+  color:var(--accent); text-decoration-color:var(--accent);
+}
+/* A tag chip inside a note body is a chip, not prose — it keeps its own look. */
+.note-body a.tag { color:var(--muted); text-decoration:none; }
+.note-body a.tag:hover { color:var(--accent); }
 .note-body { overflow-wrap:break-word; word-break:break-word; }
 .note-body pre { background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:.6rem; max-width:100%; overflow-x:auto; }
 .note-body code { background:var(--surface); padding:.1em .3em; border-radius:3px; }
 .note-body pre code { background:none; padding:0; }
 .note-body img { max-width:100%; height:auto; }
 .note-body table { display:block; max-width:100%; overflow-x:auto; }
-.note-body a.wikilink.broken { color:var(--danger); border-bottom:1px dotted var(--danger); }
+/* A wikilink to a note that doesn't exist. Same underline as any other prose
+   link so it still reads as a link, but dashed and in --danger: the shape says
+   "link", the styling says "goes nowhere". (Was a border-bottom, which now
+   double-underlines against the prose-link rule above.) */
+.note-body a.wikilink.broken {
+  color:var(--danger);
+  text-decoration:underline dashed;
+  text-decoration-thickness:1px;
+  text-underline-offset:2px;
+  text-decoration-color:var(--danger);
+}
+.note-body a.wikilink.broken:hover { color:var(--danger); text-decoration-color:var(--danger); }
 .meta { color:var(--muted); font-size:.85rem; margin:.2rem 0 .8rem; }
 .tag { display:inline-block; border:1px solid var(--border); border-radius:3px; padding:0 .4em; margin-right:.3em; font-size:.8rem; color:var(--muted); }
 .flash { border:1px solid var(--accent); border-radius:4px; padding:.55rem .8rem; margin-bottom:.8rem; color:var(--accent); }
@@ -276,6 +309,17 @@ ul.tasks li.done .t-text { color:var(--muted); text-decoration:line-through; }
 .cal-undated { margin-top:1rem; font-size:.85rem; }
 ul.tasks li.projected .t-text { color:var(--muted); }
 ul.tasks .box.proj { opacity:.45; cursor:help; }
+/* The vault filter. Sticky because the list runs to hundreds of rows and a
+   filter you have to scroll back up to reach is one you stop using. */
+.v-search { display:flex; gap:.5rem; position:sticky; top:3.2rem; z-index:4;
+            background:var(--bg); padding:.4rem 0 .5rem; margin:0; }
+.v-search .v-q { flex:1; }
+.v-search .btn { flex:none; }
+.v-empty { margin:.6rem 0; }
+@media (max-width: 640px) {
+  /* The nav is a bottom tab bar on a phone, so nothing occupies the top edge. */
+  .v-search { top:0; }
+}
 ul.notes { list-style:none; padding:0; margin:.5rem 0; }
 ul.notes li { padding:.2rem 0; border-bottom:1px solid var(--border); overflow-wrap:break-word; }
 .bar { align-items:center; }
@@ -595,6 +639,62 @@ const DESK_JS = String.raw`
 })();
 `;
 
+/** The vault list's filter, upgraded from "submit and reload" to "filters as you
+ *  type". Like every script here it is an ENHANCEMENT: the form is a real GET to
+ *  `/vault?q=`, the server marks non-matching rows `hidden`, and with scripting
+ *  off that is already a working filter — so this only removes the round trip.
+ *
+ *  It reads the same `data-hay` string the server matched on and applies the
+ *  same every-term rule, because a filter that disagrees with its own URL is
+ *  worse than no filter: you would share a link that showed someone else a
+ *  different list. */
+const VAULT_FILTER_JS = String.raw`
+(function () {
+  var form = document.querySelector("form.v-search");
+  var list = document.querySelector("ul.notes");
+  if (!form || !list) return;
+  var input = form.querySelector("input.v-q");
+  var count = document.querySelector(".v-count");
+  var total = document.querySelector(".v-total");
+  var empty = document.querySelector(".v-empty");
+  if (!input) return;
+  var rows = Array.prototype.slice.call(list.querySelectorAll("li[data-hay]"));
+  if (!rows.length) return;
+
+  function apply(push) {
+    var q = input.value.trim();
+    var terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+    var n = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var hay = rows[i].getAttribute("data-hay") || "";
+      var hit = true;
+      for (var t = 0; t < terms.length; t++) {
+        if (hay.indexOf(terms[t]) < 0) { hit = false; break; }
+      }
+      rows[i].hidden = !hit;
+      if (hit) n++;
+    }
+    if (count) count.textContent = String(n);
+    if (total) total.textContent = n === rows.length ? "" : " of " + rows.length;
+    if (empty) empty.hidden = n !== 0;
+    // Keep the URL honest so the address bar is always shareable — replace
+    // rather than push, so a filtered browse doesn't bury the back button under
+    // one history entry per keystroke.
+    if (push && window.history && history.replaceState) {
+      history.replaceState(null, "", q ? "/vault?q=" + encodeURIComponent(q) : "/vault");
+    }
+  }
+
+  // The submit button keeps working (it just no longer reloads), so a phone
+  // keyboard's "go" key does the obvious thing.
+  form.addEventListener("submit", function (e) { e.preventDefault(); apply(true); input.blur(); });
+  input.addEventListener("input", function () { apply(true); });
+  // A type-ahead over 889 rows is instant, but the browser's own clear button
+  // (type=search) fires 'search', not 'input', in some engines.
+  input.addEventListener("search", function () { apply(true); });
+})();
+`;
+
 type Html = HtmlEscapedString | Promise<HtmlEscapedString>;
 
 // Inline MUI (Material Icons) SVGs — self-contained, no external font/CDN.
@@ -631,6 +731,7 @@ export function layout(title: string, body: Html | string, active?: string): Htm
   <main>${body}</main>
   <script>${raw(SCOPE_PICK_JS)}</script>
   <script>${raw(DESK_JS)}</script>
+  <script>${raw(VAULT_FILTER_JS)}</script>
 </body>
 </html>`;
 }

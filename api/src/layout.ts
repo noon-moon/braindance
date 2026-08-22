@@ -148,6 +148,29 @@ a.tag:hover { border-color:var(--accent); color:var(--accent); }
 .card.sug .actions { margin-top:.5rem; }
 .card.sug .actions form { display:none; } /* the real forms are siblings of the pane */
 .sug-none { margin:.7rem 0 .2rem; font-size:.85rem; }
+/* "apply" said nothing back. It re-renders the pane with the suggestion in the
+   fields, which for the common case — a memo whose title is pre-filled from the
+   suggestion already, and whose scope the model didn't answer — is a page that
+   comes back looking exactly as it left. A button you press and then have to go
+   hunting for the effect of reads as a broken button, and one that legitimately
+   changed nothing reads as a broken feature.
+   So the pane now says which fields moved, and the card says so when the answer
+   is none. The mark is a receipt, not a control: it is server-rendered from the
+   same ?apply=1 that filled the fields, so it survives with scripting off. */
+.sug-applied { margin:.45rem 0 0; font-size:.8rem; color:var(--accent); }
+.fld.applied > label { color:var(--accent); }
+.fld.applied input, .fld.applied select, .fld.applied textarea { border-color:var(--accent); }
+.fld.applied .scope-box { border-color:var(--accent); }
+.fld-mark { margin-left:.4rem; font-size:.75rem; color:var(--accent); }
+/* A one-shot wash so the eye lands on what changed. It replays on every apply
+   because the pane is re-rendered (or swapped) each time, and it is decoration
+   only — the border and the label carry the same fact without it. */
+@keyframes bd-applied {
+  from { background:color-mix(in srgb, var(--accent) 20%, transparent); }
+  to { background:transparent; }
+}
+.fld.applied { border-radius:4px; animation:bd-applied 1.8s ease-out 1; }
+@media (prefers-reduced-motion: reduce) { .fld.applied { animation:none; } }
 /* Desktop keeps both panes on screen, so there is nothing to go back TO. */
 .desk-back { display:none; }
 @media (max-width: 640px) {
@@ -320,6 +343,18 @@ ul.tasks .box.proj { opacity:.45; cursor:help; }
   /* The nav is a bottom tab bar on a phone, so nothing occupies the top edge. */
   .v-search { top:0; }
 }
+/* ── /today — the daily note as an editing surface ──────────────────────────
+   One tall box and one button. The note IS the screen, so the box gets the
+   screen: everything else here (the day rail, the path line) is one line of
+   muted text, and the chrome that a note viewer would carry — backlinks, tags,
+   a rendered body — belongs to /vault/<name>, which this links to. */
+.today-form { display:flex; flex-direction:column; }
+.today-nav { display:flex; gap:.9rem; align-items:baseline; margin:.1rem 0 .6rem; font-size:.85rem; }
+.today-nav a { color:var(--muted); }
+.today-nav a:hover { color:var(--accent); }
+.today-edit { min-height:55vh; line-height:1.55; }
+.today-path { font-size:.8rem; margin-top:.5rem; }
+.today-path code { overflow-wrap:anywhere; }
 ul.notes { list-style:none; padding:0; margin:.5rem 0; }
 ul.notes li { padding:.2rem 0; border-bottom:1px solid var(--border); overflow-wrap:break-word; }
 .bar { align-items:center; }
@@ -338,7 +373,9 @@ ul.notes li { padding:.2rem 0; border-bottom:1px solid var(--border); overflow-w
          padding:.35rem .2rem; padding-bottom:calc(.35rem + env(safe-area-inset-bottom, 0px)); }
   .bar .brand { display:none; }
   .bar nav { flex:1; justify-content:space-around; gap:0; }
-  .bar nav a { flex-direction:column; padding:.25rem .7rem 0;
+  /* Six tabs have to fit the narrowest phone, so the horizontal padding is the
+     one that gives — space-around still spreads them on anything wider. */
+  .bar nav a { flex-direction:column; padding:.25rem .35rem 0;
                border-bottom:none; border-top:3px solid transparent; }
   .bar nav a.nav-active { border-bottom-color:transparent; border-top-color:var(--accent); }
   .bar nav a .nav-ic { display:block; }
@@ -702,13 +739,15 @@ const svg = (paths: string) =>
   raw(`<svg class="ic" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">${paths}</svg>`);
 const ICON: Record<string, ReturnType<typeof svg>> = {
   inbox: svg('<path d="M19 3H4.99c-1.11 0-1.98.89-1.98 2L3 19c0 1.1.88 2 1.99 2H19c1.1 0 2-.9 2-2V5a2 2 0 0 0-2-2zm0 12h-4c0 1.66-1.35 3-3 3s-3-1.34-3-3H4.99V5H19v10z"/>'),
+  today: svg('<path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/>'),
   book: svg('<path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/>'),
   search: svg('<path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5A6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5S14 7.01 14 9.5S11.99 14 9.5 14z"/>'),
   clock: svg('<path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8s8 3.58 8 8s-3.58 8-8 8z"/><path d="M12.5 7H11v6l5.25 3.15l.75-1.23l-4.5-2.67z"/>'),
   checklist: svg('<path d="M22 7h-9v2h9V7zm0 8h-9v2h9v-2zM5.54 11L2 7.46l1.41-1.41l2.12 2.12l4.24-4.24l1.41 1.41L5.54 11zm0 8L2 15.46l1.41-1.41l2.12 2.12l4.24-4.24l1.41 1.41L5.54 19z"/>'),
 };
 
-/** `active` marks the current tab (capture | vault | todo | review | history). */
+/** `active` marks the current tab (capture | today | vault | todo | review |
+ *  history). */
 export function layout(title: string, body: Html | string, active?: string): Html {
   const nav = (id: string, href: string, icon: keyof typeof ICON) =>
     html`<a href="${href}" class="${active === id ? "nav-active" : ""}" title="${id}" aria-label="${id}"><span class="nav-ic">${ICON[icon]}</span><span class="nav-tx">${id}</span></a>`;
@@ -726,7 +765,7 @@ export function layout(title: string, body: Html | string, active?: string): Htm
 <body>
   <header class="bar">
     <a href="/" class="brand"><img src="/favicon.png" alt="braindance"></a>
-    <nav>${nav("capture", "/", "inbox")}${nav("vault", "/vault", "book")}${nav("todo", "/todo", "checklist")}${nav("review", "/review", "search")}${nav("history", "/history", "clock")}</nav>
+    <nav>${nav("capture", "/", "inbox")}${nav("today", "/today", "today")}${nav("vault", "/vault", "book")}${nav("todo", "/todo", "checklist")}${nav("review", "/review", "search")}${nav("history", "/history", "clock")}</nav>
   </header>
   <main>${body}</main>
   <script>${raw(SCOPE_PICK_JS)}</script>

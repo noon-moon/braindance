@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import { submitProposal, listProposals, getProposal, setStatus, updateProposal, type Proposal, type ProposalStatus } from "./proposals.js";
 import { getScopes, getIngestableScopes, getNote, listNotes, backlinksFor, invalidate, noteExists, takenRootNames, readNoteRaw, type VaultNote } from "./vault.js";
 import { listInbox, getInboxNote, firstLine, type InboxNote } from "./inbox.js";
+import { readDaily, readDailyByName, dailyStarter, stripFrontmatter, type DailyNote } from "./daily.js";
 import { renderMarkdown, renderInline } from "./render.js";
 import { gitStore } from "./git.js";
 import { buildICS, icsOptionsFromEnv } from "./ics.js";
@@ -331,6 +332,19 @@ app.get("/vault/:name", (c) => {
   try { name = decodeURIComponent(p); } catch { /* keep p */ }
   const note = getNote(name) ?? getNote(p);
   if (!note) {
+    // A daily note next. It is a real note, but it lives in the Daily Notes
+    // folder rather than the flat root, so the index never sees it — and the
+    // links that arrive here carrying one are ordinary: a `/todo` row for an atom
+    // in today's log, a `[[Daily-2026-08-22]]` wikilink, a `/history` path chip.
+    // Read-only, with a CTA into the surface that DOES edit it.
+    const day = readDailyByName(name) ?? readDailyByName(p);
+    if (day && day.text !== null) {
+      return c.html(layout(day.name, html`
+        <h1>${day.name}</h1>
+        <div class="meta"><span class="tag">daily</span> <code>${day.rel}</code></div>
+        ${day.iso ? html`<p><a class="btn" href="/today?date=${day.iso}">✎ edit</a></p>` : ""}
+        <article class="note-body">${raw(renderMarkdown(stripFrontmatter(day.text)))}</article>`, "today"));
+    }
     // Not a canonical root note — fall back to an untriaged inbox capture so
     // history/deep links resolve. Read-only, with a CTA into the triage desk.
     const inb = getInboxNote(name) ?? getInboxNote(p);
@@ -349,6 +363,141 @@ app.get("/vault/:name", (c) => {
     <div class="meta">${note.tags.map((t) => html`<span class="tag">${t}</span>`)}</div>
     <article class="note-body">${raw(renderMarkdown(note.body))}</article>
     ${backlinks.length ? html`<hr><h3>backlinks <span class="muted">(${backlinks.length})</span></h3><ul class="notes">${backlinks.map((b) => html`<li><a href="/vault/${encodeURIComponent(b)}">${b}</a></li>`)}</ul>` : ""}`, "vault"));
+});
+
+// ── /today — the daily note, as an editing surface ──────────────────────────
+//
+// The one screen here that edits a note DIRECTLY rather than filing one, because
+// a daily note is neither of the two things this app already had. It isn't a
+// capture (nothing triages it — it is already where it belongs) and it isn't a
+// filed note (nothing links to it by title; it is addressed by its date). It is
+// the day's running page, and what you want from a phone is to open it and type.
+//
+// WHICH file that is belongs to Obsidian's Daily Notes plugin, not to this app —
+// `daily.ts` reads the plugin's own settings out of the vault so both writers
+// land on the same path. See the note at the top of that file.
+//
+// It edits the RAW FILE, frontmatter and all. That is not laziness: the note has
+// two writers, and anything that re-serialised it would rewrite YAML the user
+// typed by hand on every save, as a diff nobody asked for. What is in the box is
+// what is on disk.
+//
+// The two writers are also why every save carries a hash of the text the page was
+// rendered from. A blind whole-file write from a tab left open since this morning
+// would silently drop everything Obsidian has written since — the one way this
+// screen could destroy work rather than merely fail. A mismatch does NOT discard
+// what you typed: it re-renders it, against the newer hash, so saving again is a
+// deliberate overwrite instead of an accident.
+
+/** A real calendar day, `YYYY-MM-DD`. The ROUND TRIP is the test, not the parse:
+ *  V8 rolls `2026-02-31` over to March 3 rather than rejecting it, so a parse
+ *  check alone would open a note for a day nobody asked for and label it with a
+ *  date that isn't the one in the URL. */
+const isDay = (s: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+};
+
+interface TodayView {
+  iso: string;
+  note: DailyNote;
+  /** What goes in the box: the file, the template for a day with no note yet,
+   *  or — after a refused save — exactly what was submitted. Nothing typed is
+   *  ever dropped on the way back, same rule as the triage desk. */
+  text: string;
+  /** Hash of the text ON DISK when this page rendered ("" when there is no file
+   *  yet), carried into the save as its precondition. */
+  base: string;
+  exists: boolean;
+  flash?: { ok: boolean; msg: string };
+}
+
+function renderToday(v: TodayView) {
+  const today = todayISO();
+  const prev = addDays(v.iso, -1);
+  const next = addDays(v.iso, 1);
+  return layout("today", html`
+    <h1>${dayLabel(v.iso, today)} <span class="muted">· ${v.note.name}</span></h1>
+    ${v.flash ? html`<p class="flash ${v.flash.ok ? "" : "err"}">${v.flash.msg}</p>` : ""}
+    <!-- A day-stamped note is a series, so the surface for one is a series too:
+         yesterday is where the thing you half-wrote last night is, and tomorrow
+         is where a note for tomorrow goes. ?date= is the same parameter the
+         deep links from /vault and /todo arrive on. -->
+    <nav class="today-nav">
+      <a href="/today?date=${prev}" rel="prev">‹ ${prev}</a>
+      ${v.iso === today ? html`<span class="muted">today</span>` : html`<a href="/today">today</a>`}
+      <a href="/today?date=${next}" rel="next">${next} ›</a>
+    </nav>
+    <form class="today-form" method="post" action="/today">
+      <input type="hidden" name="date" value="${v.iso}" />
+      <input type="hidden" name="base" value="${v.base}" />
+      <textarea class="today-edit" name="text" aria-label="${v.note.name}"
+                spellcheck="true" autocapitalize="sentences">${v.text}</textarea>
+      <div class="cap-actions">
+        <button class="btn" type="submit">${v.exists ? "save" : "create"}</button>
+      </div>
+    </form>
+    <p class="muted today-path">
+      ${v.exists
+        ? html`<code>${v.note.rel}</code> · <a href="/vault/${encodeURIComponent(v.note.name)}">read</a>`
+        : html`<code>${v.note.rel}</code> · not created yet — this is the template, saving writes it`}
+    </p>`, "today");
+}
+
+/** Resolve `?date=` (or a posted `date`) to the day being edited. An unparseable
+ *  value is today rather than an error: the tab's job is to open a note. */
+const dayParam = (raw: string | undefined): string => (raw && isDay(raw) ? raw : todayISO());
+
+app.get("/today", (c) => {
+  const iso = dayParam(c.req.query("date"));
+  const note = readDaily(iso);
+  const ok = c.req.query("ok");
+  const err = c.req.query("err");
+  return c.html(renderToday({
+    iso,
+    note,
+    text: note.text ?? dailyStarter(iso),
+    base: contentHash(note.text ?? ""),
+    exists: note.text !== null,
+    flash: ok !== undefined ? { ok: true, msg: ok } : err !== undefined ? { ok: false, msg: err } : undefined,
+  }));
+});
+
+/** A textarea submits CRLF per the HTML spec, and a vault full of `\r\n` is a
+ *  vault whose every line-level diff is noise. Normalised to LF, with exactly one
+ *  trailing newline, so a save is a no-op when nothing was typed. */
+const normaliseNote = (s: string): string => `${s.replace(/\r\n/g, "\n").replace(/\s*$/, "")}\n`;
+
+app.post("/today", async (c) => {
+  const b = await c.req.parseBody();
+  const iso = dayParam(String(b.date ?? ""));
+  const text = normaliseNote(String(b.text ?? ""));
+  const base = String(b.base ?? "");
+  const note = readDaily(iso);
+  const disk = note.text ?? "";
+  const bounce = (q: string) => c.redirect(`/today?date=${iso}&${q}`, 303);
+
+  // The precondition. Re-rendered rather than redirected, because the submitted
+  // text only exists in this request — bouncing would lose it.
+  if (contentHash(disk) !== base) {
+    return c.html(renderToday({
+      iso, note, text, base: contentHash(disk), exists: note.text !== null,
+      flash: { ok: false, msg: "✗ this note changed on disk since the page loaded — your text is below; saving again overwrites the newer version" },
+    }), 409);
+  }
+  if (text === disk) return bounce("ok=no+change");
+
+  try {
+    await gitStore().commit(
+      { ops: [{ op: "put", path: vaultRel(VAULT_SUBDIR, note.rel), content: text }] },
+      { message: `daily: ${note.text === null ? "create" : "edit"} ${note.name}` },
+    );
+    invalidate();
+    return bounce(`ok=${encodeURIComponent(`✓ saved ${note.name}`)}`);
+  } catch (e) {
+    return bounce(`err=${encodeURIComponent(`✗ save failed: ${(e as Error).message}`)}`);
+  }
 });
 
 // ── TODO: every #task atom in the vault, in Reminders-style date sections ────
@@ -712,6 +861,11 @@ interface ReviewView {
    *  rejection re-renders the desk in place rather than bouncing anywhere. */
   values?: Record<string, string>;
   error?: string;
+  /** True when `values` came from the suggestion card's "apply" rather than from
+   *  a rejected submit. The pane renders a receipt off this — which fields moved,
+   *  or that none did — so the button says what it did instead of leaving you to
+   *  spot it. */
+  applied?: boolean;
   /** The waiting suggestion for `selected`, already validated against the live
    *  vault (suggest.ts). Undefined when nothing selected; null when the worker is
    *  off, hasn't got to this note, or gave up on it — all of which render the
@@ -790,7 +944,7 @@ async function renderReview(v: ReviewView = {}) {
         <div class="desk-detail">
           ${v.selected
             ? triagePane(v.selected, v.funnelId ?? "memo", getScopes(), v.suggestion ?? null,
-                sugState ?? { kind: "pending" }, v.values, v.error)
+                sugState ?? { kind: "pending" }, v.values, v.error, v.applied ?? false)
             : html`<p class="muted desk-empty">${inbox.length
                 ? "pick a capture from the queue to triage it."
                 : "nothing waiting."}</p>`}
@@ -1024,7 +1178,7 @@ function sugWhy(s: SugState) {
   return html`no suggestion yet.`;
 }
 
-function triagePane(memo: InboxNote, funnelId: string, scopes: string[], suggestion: Suggestion | null, sugState: SugState, values?: Record<string, string>, error?: string) {
+function triagePane(memo: InboxNote, funnelId: string, scopes: string[], suggestion: Suggestion | null, sugState: SugState, values?: Record<string, string>, error?: string, applied = false) {
   const f = funnelById(funnelId) ?? funnelById("memo")!;
   // The suggested TITLE arrives already in the box rather than waiting behind
   // "apply". Titling is the one thing every triage does, and the one field the
@@ -1036,11 +1190,15 @@ function triagePane(memo: InboxNote, funnelId: string, scopes: string[], suggest
   //
   // A DEFAULT only. `values` — a re-render after a rejected submit, or after
   // "apply" — still wins, so this can never overwrite something you typed.
-  const val = (fl: Field) => {
-    if (values?.[fl.key] !== undefined) return values[fl.key];
-    if (fl.key === "title" && suggestion?.title.trim()) return suggestion.title;
-    return prefillFor(fl, memo);
-  };
+  const baseVal = (fl: Field) =>
+    fl.key === "title" && suggestion?.title.trim() ? suggestion.title : prefillFor(fl, memo);
+  const val = (fl: Field) => (values?.[fl.key] !== undefined ? values[fl.key] : baseVal(fl));
+  // What "apply" actually did, field by field — the value it put in the box
+  // against the one the box would be showing had you never pressed it. Computed
+  // HERE, from the same `val`/`baseVal` pair the fields render from, so the
+  // receipt cannot claim a change the form didn't make.
+  const didApply = (fl: Field) => applied && values?.[fl.key] !== undefined && values[fl.key] !== baseVal(fl);
+  const appliedCount = applied ? f.fields.filter(didApply).length : 0;
   const act = `/review/triage/${encodeURIComponent(memo.name)}`;
   const here = `/review?note=${encodeURIComponent(memo.name)}`;
   const sf = suggestion ? funnelById(suggestion.funnel) : undefined;
@@ -1068,10 +1226,14 @@ function triagePane(memo: InboxNote, funnelId: string, scopes: string[], suggest
   // A checkbox carries its own label to the right of the box, so it does NOT get
   // the field loop's one above it as well — two copies of the same words read as
   // two controls.
-  const fieldRow = (fl: Field) =>
-    fl.type === "checkbox"
-      ? control(fl, scopes, val(fl))
-      : html`<label>${fl.label} ${fl.required ? html`<span class="req">*</span>` : ""}</label>${control(fl, scopes, val(fl))}`;
+  const fieldRow = (fl: Field) => {
+    const mark = didApply(fl);
+    return html`<div class="fld${mark ? raw(" applied") : ""}">${
+      fl.type === "checkbox"
+        ? control(fl, scopes, val(fl))
+        : html`<label>${fl.label} ${fl.required ? html`<span class="req">*</span>` : ""}${mark ? html`<span class="fld-mark">applied</span>` : ""}</label>${control(fl, scopes, val(fl))}`
+    }</div>`;
+  };
   return html`
     <a class="desk-back" href="/review">← queue</a>
     <div class="meta">from inbox · ${memo.createdISO ? fmtDate(memo.createdISO) : ""} · <code>${memo.name}</code>${memo.containedBy.map((s) => html` <span class="tag">${s}</span>`)}</div>
@@ -1108,11 +1270,21 @@ function triagePane(memo: InboxNote, funnelId: string, scopes: string[], suggest
                 : ""}
               ${suggestion.rationale ? html`<p class="muted sug-why">${suggestion.rationale}</p>` : ""}
               <div class="actions">
-                <button class="btn" type="submit" form="suggest-apply">↧ apply</button>
+                <button class="btn" type="submit" form="suggest-apply">${applied ? "↧ re-apply" : "↧ apply"}</button>
                 ${canFile
                   ? html`<button class="btn" type="submit" form="suggest-file">↧ apply &amp; file</button>`
                   : html`<span class="muted">then pick ${sugMissing.join(" + ")}</span>`}
               </div>
+              <!-- The receipt. "nothing to change" is the case this exists for:
+                   the suggested title is already in the box by default, so a
+                   memo whose scope the model didn't answer applies to a form
+                   that was already showing it — and silence there is
+                   indistinguishable from a dead button. -->
+              ${applied
+                ? html`<div class="sug-applied">✓ applied ${appliedCount
+                    ? html`— ${appliedCount} field${appliedCount === 1 ? "" : "s"} below`
+                    : html`— nothing to change, the fields already read this way`}</div>`
+                : ""}
             </div>`
           : html`<p class="muted sug-none">${sugWhy(sugState)}</p>`}
       </div>
@@ -1330,6 +1502,7 @@ app.get("/review", async (c) => {
     suggestion,
     funnelId: applied?.funnelId ?? c.req.query("funnel"),
     values: applied?.values,
+    applied: Boolean(applied),
     flash,
   }));
 });

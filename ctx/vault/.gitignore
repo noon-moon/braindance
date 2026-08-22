@@ -26,6 +26,13 @@
 !inbox/
 !inbox/**
 
+# Daily notes — Obsidian's core Daily Notes plugin creates them here (see
+# .obsidian/daily-notes.json), and the api's /today tab writes the same files.
+# Track the FOLDER only: unlike an inbox capture, a daily note is permanent
+# personal content and belongs to a vault, never to this template.
+!daily/
+!daily/.gitkeep
+
 # Obsidian per-machine state (not portable between installs)
 .obsidian/workspace.json
 .obsidian/workspace-mobile.json

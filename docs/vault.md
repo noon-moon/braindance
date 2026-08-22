@@ -40,7 +40,23 @@ Templates for new notes live in the vault's `_templates/`. The template ships ne
 
 ## Daily notes
 
-Daily notes live in the vault's `daily/` directory, named `YYYY-MM-DD`, created via Obsidian's core Daily Notes plugin. **Convert relative dates to absolute** (`2026-08-01`, not "next month") — every roll-up and back-link depends on real dates.
+Daily notes are the day's running page — created by Obsidian's core **Daily Notes** plugin, and edited from a phone through the api's [`/today` tab](serving.md). **Convert relative dates to absolute** (`2026-08-01`, not "next month") — every roll-up and back-link depends on real dates.
+
+**Where they live and what they're called is the plugin's decision, not braindance's.** Its settings live in the vault at `.obsidian/daily-notes.json`:
+
+```json
+{
+  "folder": "daily/",
+  "format": "[Daily-]YYYY-MM-DD",
+  "template": "_templates/daily"
+}
+```
+
+`api/src/daily.ts` reads that same file, so the app names, files and templates a daily note exactly as Obsidian would. That agreement is the whole point: a daily note has two writers (Obsidian at the desk, the api on a phone), and a hard-coded convention would hold only until somebody changed a setting — after which the Today tab would quietly start a *second* note for a day that already had one, in a directory you are also typing into. Nothing fails loudly when that happens. Reading the plugin's own config makes it structural instead, and makes any instance's choice work: notes at the vault root, or in `daily/`, plain `YYYY-MM-DD` or prefixed.
+
+Anything the config doesn't say falls back to **Obsidian's** defaults (the vault root, `YYYY-MM-DD`, no template), so a vault that has never opened the plugin's settings still resolves to the file the plugin would create. The `format` is a moment.js pattern, of which the app implements the date/time subset a daily note can use — `YYYY YY`, `MMMM MMM MM M`, `DDDD DDD DD Do D`, `dddd ddd dd d`, `HH H hh h`, `mm m`, `ss s`, `A a` — plus `[literal]` escapes. A format carrying anything else is logged once at startup, because a silent disagreement here is the split-note failure above.
+
+Notes in `daily/` are **not** in the flat root index: `/vault` doesn't list them and `getNote()` doesn't resolve them, by design — a daily note is addressed by its date, not looked up by title. `tasks.ts` does scan the directory, so a `#task` atom written into today's log shows on `/todo` as unfiled, and `/vault/<name>` resolves a daily note as a read-only view with an edit CTA back into `/today`.
 
 ## Keeping the desk copy current — `ctx/tools/sys/vault-pull.sh`
 

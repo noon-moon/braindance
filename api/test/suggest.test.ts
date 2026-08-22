@@ -32,8 +32,11 @@ process.env.VAULT_PATH = VAULT;
 for (const name of ["Home", "Braindance"]) {
   writeFileSync(join(VAULT, `${name}.md`), `---\ntags: [scope, ingestable]\n---\n\n# ${name}\n`);
 }
+// An ordinary note that is NOT a scope. A proposed hub has to be refused against
+// this too: it is a name already on disk, so minting it would truncate a note.
+writeFileSync(join(VAULT, "Readme.md"), "---\ntags: [memo]\n---\n\n# Readme\n");
 
-const { validate, noteBody, neutraliseFences, readSidecar, writeSidecar, dropSidecar, pruneSidecars, suggestionFor } =
+const { validate: validateRaw, isHubName, noteBody, neutraliseFences, readSidecar, writeSidecar, dropSidecar, pruneSidecars, suggestionFor } =
   await import("../src/suggest.js");
 const { PRIORITY_SIGNIFIER } = await import("../src/funnels.js");
 import type { Suggestion } from "../src/suggest.js";
@@ -60,6 +63,18 @@ const rejects = async (fn: () => Promise<unknown>): Promise<boolean> => {
 // The live ingestable list these tests validate against.
 const SCOPES = ["Home", "Braindance"];
 
+/** Every root name already on disk in the scratch vault, lowercased — what the
+ *  real `takenRootNames()` hands validate() in production. A proposed hub is
+ *  checked for NON-membership here, so this list is what makes "it cannot
+ *  propose a name that would overwrite a note" testable. */
+const TAKEN = new Set(["home", "braindance", "readme"]);
+
+/** The existing tests all predate the taken-names argument and none of them is
+ *  about it, so they get the vault's real one by default and the new-scope tests
+ *  pass their own. */
+const validate = (raw: unknown, scopes: string[], taken: Set<string> = TAKEN) =>
+  validateRaw(raw, scopes, taken);
+
 /** A well-formed model answer — each test bends exactly one field of it, so a
  *  failure names the field that broke rather than the whole object. */
 const ok = (over: Record<string, unknown> = {}) => ({
@@ -70,6 +85,7 @@ const ok = (over: Record<string, unknown> = {}) => ({
   due: "2026-08-12",
   priority: "high",
   rationale: "Reads as a next action with a date.",
+  newScope: null,
   ...over,
 });
 
@@ -150,6 +166,61 @@ console.log("test: validate — strings and tags are bounded");
   check("non-strings drop out", !tags.some((t) => t === "7"));
   check("the list is capped", tags.length <= 6);
   check("a non-array tags field yields no tags", validate(ok({ tags: "tools" }), SCOPES)!.tags.length === 0);
+}
+
+console.log("test: validate — a PROPOSED scope is checked by NON-membership");
+{
+  const propose = (name: string, over: Record<string, unknown> = {}) =>
+    validate(ok({ scope: null, newScope: { name, why: "A standing area." }, ...over }), SCOPES);
+
+  check("a genuinely new name survives as a proposal",
+    propose("Woodworking")!.newScope?.name === "Woodworking");
+  check("…carrying the case the person has to accept",
+    propose("Woodworking")!.newScope?.why === "A standing area.");
+  check("…and it does NOT become a scope — the two fields stay distinct",
+    propose("Woodworking")!.scope === null);
+
+  // The recoveries, each a thing a model plausibly does.
+  check("a name that IS a live scope is promoted, not discarded",
+    propose("Home")!.scope === "Home" && propose("Home")!.newScope === null);
+  check("…case-insensitively, since it is matching a human-typed hub name",
+    propose("home")!.scope === "Home");
+  check("a name already taken by a NON-scope note is dropped whole",
+    propose("Readme")!.newScope === null);
+  check("…and the rest of the suggestion still survives",
+    propose("Readme")!.title === "Order a soldering iron");
+  check("a live scope beats a proposal — the prompt's rule, enforced",
+    validate(ok({ scope: "Braindance", newScope: { name: "Woodworking", why: "x" } }), SCOPES)!.newScope === null);
+
+  // The overwrite guard. This is the one that matters: `takenRootNames()` is
+  // case-insensitive and read off the DISK precisely because a proposal accepted
+  // at the desk turns into a filename.
+  check("a proposal that would overwrite a note is refused",
+    validate(ok({ scope: null, newScope: { name: "Notes", why: "x" } }), SCOPES, new Set(["notes"]))!.newScope === null);
+  check("…whatever case it arrives in",
+    validate(ok({ scope: null, newScope: { name: "NOTES", why: "x" } }), SCOPES, new Set(["notes"]))!.newScope === null);
+
+  // Shape. Rejected rather than sanitised, so the name on the card is exactly
+  // the name of the note that gets created.
+  for (const bad of ["[[Woodworking]]", "Home/DIY", "Home\\DIY", "a|b", "#tag", "", "   "]) {
+    check(`a name a hub filename cannot hold is refused: ${JSON.stringify(bad)}`,
+      propose(bad)!.newScope === null);
+  }
+  // Whitespace is the one thing normalised rather than refused, by `str()` and
+  // before this ever sees it. That is safe precisely because the CARD reads the
+  // same normalised value the filer writes, so the two cannot disagree about
+  // which note is being created.
+  check("surrounding whitespace is trimmed, not a rejection",
+    propose("  Woodworking  ")!.newScope?.name === "Woodworking");
+  check("a name is capped at a filename's worth, and the cap holds",
+    propose("W".repeat(80))!.newScope?.name.length === 60);
+  check("real hub punctuation is allowed", isHubName("Bass Practice") && isHubName("R&D") && isHubName("Mum's House"));
+  check("the wikilink and path alphabets are not", !isHubName("a[b") && !isHubName("a]b") && !isHubName("a/b") && !isHubName("a#b"));
+  check("a non-object proposal is not a proposal",
+    validate(ok({ scope: null, newScope: "Woodworking" }), SCOPES)!.newScope === null);
+  check("null is the ordinary answer", validate(ok({ scope: null, newScope: null }), SCOPES)!.newScope === null);
+  check("a proposal with no case still proposes — the name is the load-bearing part",
+    validate(ok({ scope: null, newScope: { name: "Woodworking", why: "" } }), SCOPES)!.newScope?.why === "");
 }
 
 console.log("test: noteBody — what actually leaves the box");

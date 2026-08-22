@@ -37,7 +37,7 @@ import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SUGGESTIONS_DIR, aiSuggestConfig, stateDirConflict } from "./config.js";
 import { FUNNELS, PRIORITY_SIGNIFIER, funnelById } from "./funnels.js";
-import { getIngestableScopesStrict, getNote } from "./vault.js";
+import { getIngestableScopesStrict, getNote, takenRootNames } from "./vault.js";
 import { firstLine, isSafeNoteName, type InboxNote } from "./inbox.js";
 
 /** One suggestion, AFTER validation — every field here has already been checked
@@ -49,6 +49,28 @@ export interface Suggestion {
   funnel: string;
   /** A live ingestable scope name, or null — never anything else. */
   scope: string | null;
+  /** A hub the model thinks SHOULD exist and doesn't, or null.
+   *
+   *  Kept in its own field rather than folded into `scope`, and that separation
+   *  is the whole containment story for this feature: `scope` means "a name from
+   *  the live list", full stop, and validate() proves it by membership. A field
+   *  that were sometimes-live and sometimes-invented would turn the one check
+   *  that makes "the model cannot invent a scope" true into a check that means
+   *  nothing. So the model gets a second, clearly-labelled door, and everything
+   *  that comes through it is treated as a PROPOSAL a person has to accept.
+   *
+   *  Never set at the same time as `scope`: filing into a hub that exists always
+   *  beats minting one, so validate() drops this when both arrive.
+   *
+   *  NOTHING CONSUMES THIS YET, and that is deliberate rather than a loose end.
+   *  It is the model half of "a usable vault schema without compliance at write
+   *  time": the classifier can now say *no hub covers this, and one should* —
+   *  checked, bounded, and unable to name a note it would overwrite. What acts
+   *  on it is the filer, and the filer is being rebuilt (see the refactor
+   *  handoff in the vault's `_ephemeral/`). Landing the checked-and-tested half
+   *  first means the rebuild inherits a proven door rather than reopening this
+   *  question inside a larger change. */
+  newScope: NewScope | null;
   tags: string[];
   /** `YYYY-MM-DD`, or null. */
   due: string | null;
@@ -63,6 +85,17 @@ export interface Suggestion {
 export interface ScopeBlurb {
   name: string;
   blurb: string;
+}
+
+/** A hub that doesn't exist yet, as proposed. `name` has been checked against
+ *  the shape a hub filename can hold AND against every name already taken on
+ *  disk, so accepting it can never overwrite a note. */
+export interface NewScope {
+  name: string;
+  /** One line on why this deserves to be a hub — the case the person is being
+   *  asked to accept, which is a different claim from `rationale` (why the note
+   *  was classified this way) and is why it isn't folded into it. */
+  why: string;
 }
 
 /** The sidecar file for one inbox note. Three states, one file, so triage
@@ -142,6 +175,21 @@ const SUGGESTION_SCHEMA = {
       anyOf: [{ type: "string" }, { type: "null" }],
       description: "Exactly one scope name from the provided list, or null if none clearly fits.",
     },
+    newScope: {
+      anyOf: [
+        {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "The hub's name, as it would be titled. 1-4 words, no punctuation." },
+            why: { type: "string", description: "One sentence making the case that this deserves to be a standing hub." },
+          },
+          required: ["name", "why"],
+          additionalProperties: false,
+        },
+        { type: "null" },
+      ],
+      description: "Almost always null. A hub that does not exist yet, proposed ONLY when no listed scope plausibly contains this note AND the note is about a standing area of this person's life rather than a one-off thought.",
+    },
     tags: {
       type: "array",
       items: { type: "string" },
@@ -160,7 +208,7 @@ const SUGGESTION_SCHEMA = {
       description: "One sentence, for the person deciding whether to accept this.",
     },
   },
-  required: ["title", "funnel", "scope", "tags", "due", "priority", "rationale"],
+  required: ["title", "funnel", "scope", "newScope", "tags", "due", "priority", "rationale"],
   additionalProperties: false,
 } as const;
 
@@ -260,6 +308,13 @@ function systemPrompt(scopes: ScopeBlurb[], today: string): string {
     "Rules:",
     "- title: name the thing the note is about. Never state a fact the note doesn't.",
     "- scope: a name from the list above and nothing else. Prefer null over a loose fit.",
+    "- newScope: almost always null. Propose a hub ONLY when BOTH are true: no scope above",
+    "  plausibly contains this note, AND the note is about a STANDING AREA of this person's life",
+    "  — something they will keep having thoughts about — rather than a single thought that",
+    "  happens to fit nowhere. A hub is a commitment: it goes in their vault's table of contents",
+    "  and they maintain it. One unfiled note is not evidence of an area; it is one note. If you",
+    "  set scope, set newScope to null — filing into a hub that exists always beats minting one.",
+    "  Name it the way the list above is named: a short noun phrase, title-cased, no punctuation.",
     `- due: only a date the note states or plainly implies. Today is ${today}.`,
     "- priority: only when the note says how urgent this is.",
     "- rationale: one sentence on why, written for the person deciding whether to accept it.",
@@ -322,7 +377,7 @@ export async function suggestFor(noteText: string, scopes: ScopeBlurb[]): Promis
 
   const text = res.content.find((b) => b.type === "text")?.text ?? "";
   const parsed: unknown = JSON.parse(text); // throws on a non-JSON body — a failure, handled as one
-  const suggestion = validate(parsed, scopes.map((s) => s.name));
+  const suggestion = validate(parsed, scopes.map((s) => s.name), takenRootNames());
   if (!suggestion) throw new Error("model output failed validation");
   return suggestion;
 }
@@ -381,7 +436,7 @@ const str = (v: unknown, max: number): string =>
  *  fields that don't check out. The split is deliberate — a bad scope still
  *  leaves a useful title, but a title or funnel we can't trust leaves nothing
  *  worth showing. */
-export function validate(raw: unknown, liveScopes: string[]): Suggestion | null {
+export function validate(raw: unknown, liveScopes: string[], takenNames: Set<string>): Suggestion | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
 
@@ -397,7 +452,34 @@ export function validate(raw: unknown, liveScopes: string[]): Suggestion | null 
   // Membership in the LIVE list, not string-shape validation: this is what makes
   // "the model cannot invent a scope" true rather than aspirational.
   const wanted = str(r.scope, 200);
-  const scope = wanted && liveScopes.includes(wanted) ? wanted : null;
+  let scope = wanted && liveScopes.includes(wanted) ? wanted : null;
+
+  // A PROPOSED hub, which is a different kind of claim and gets a different kind
+  // of check: `scope` is validated by membership, this one by NON-membership.
+  //
+  // Three recoveries, in order, because each is a thing a model plausibly does:
+  //  - it named a hub that already exists in the `newScope` field. That's the
+  //    right answer in the wrong box, so it is promoted to `scope` rather than
+  //    thrown away — a suggestion is not worth losing over which key it used.
+  //  - it named something already on disk that ISN'T a scope (`Books.md`, a memo).
+  //    Creating it would OVERWRITE that note, so the proposal is dropped whole.
+  //    This is why the test is every taken root name and not just the scope list.
+  //  - it proposed a new hub AND picked a live scope. The rule is prefer what
+  //    exists, so the rule is enforced here rather than only asked for in the
+  //    prompt.
+  let newScope: NewScope | null = null;
+  const proposed = r.newScope;
+  if (proposed && typeof proposed === "object") {
+    const pn = str((proposed as Record<string, unknown>).name, 60);
+    const why = str((proposed as Record<string, unknown>).why, 300);
+    const live = liveScopes.find((sc) => sc.toLowerCase() === pn.toLowerCase());
+    if (live) {
+      scope = scope ?? live;
+    } else if (isHubName(pn) && !takenNames.has(pn.toLowerCase())) {
+      newScope = { name: pn, why };
+    }
+  }
+  if (scope) newScope = null;
 
   const due = validDate(str(r.due, 20));
   // `PRIORITIES.includes`, not `pri in PRIORITY_SIGNIFIER`: `in` walks the
@@ -411,8 +493,24 @@ export function validate(raw: unknown, liveScopes: string[]): Suggestion | null 
     ? [...new Set(r.tags.map((t) => str(t, 32).toLowerCase().replace(/^#/, "")).filter(Boolean))].slice(0, 6)
     : [];
 
-  return { title, funnel: funnel.id, scope, tags, due, priority, rationale: str(r.rationale, 300) };
+  return { title, funnel: funnel.id, scope, newScope, tags, due, priority, rationale: str(r.rationale, 300) };
 }
+
+/** Can this string be a hub's name — which is to say, its FILENAME and the inside
+ *  of every `[[wikilink]]` pointing at it?
+ *
+ *  REJECTS rather than sanitises, deliberately. Everywhere else a name is cleaned
+ *  up on the way through, but here the name on the card has to be the name of the
+ *  note that gets created, character for character, or the person accepted one
+ *  thing and got another. A model that returns `[[Woodworking]]` or `Home/DIY` is
+ *  returning junk for this field, and dropping one junk proposal costs nothing.
+ *
+ *  Letters, digits, spaces and the punctuation real hub names carry (`&`, `-`,
+ *  `'`, `.`) — and nothing from the wikilink or path alphabet. */
+const HUB_NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} '&.-]*$/u;
+
+export const isHubName = (s: string): boolean =>
+  s.length > 0 && s.length <= 60 && HUB_NAME_RE.test(s) && s.trim() === s;
 
 /** `YYYY-MM-DD` that is also a real day — the shape check alone would pass
  *  `2026-02-31`, which every downstream date reader would then quietly mangle. */
@@ -578,9 +676,17 @@ export async function pruneSidecars(keep: Set<string>): Promise<void> {
  *  Re-validated against the STRICT list, the same one the suggestion was made
  *  from — the picker's fallback would re-admit a scope that lost its tag between
  *  the call and the render, which is precisely the staleness this second pass
- *  exists to catch. */
+ *  exists to catch.
+ *
+ *  It is also what keeps a PROPOSED hub honest over time. A sidecar can sit in
+ *  the queue for days, and `newScope` is a claim about what the vault does NOT
+ *  contain — the one kind of claim that a later commit can falsify. Re-running
+ *  the non-membership check on every render means a hub you created in the
+ *  meantime shows up as an ordinary scope suggestion, and a name since taken by
+ *  some other note stops being offered at all, without anything having to notice
+ *  the sidecar went stale. */
 export async function suggestionFor(name: string): Promise<Suggestion | null> {
   const sc = await readSidecar(name);
   if (sc?.state !== "ok") return null;
-  return validate(sc.suggestion, getIngestableScopesStrict());
+  return validate(sc.suggestion, getIngestableScopesStrict(), takenRootNames());
 }

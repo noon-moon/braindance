@@ -218,7 +218,11 @@ export function renderFailure(captureRel: string, f: Failure): string {
     `${K.capture}: "[[${link}]]"`,
     `${K.attempts}: ${f.attempts}`,
     `${K.noteAttempts}: ${f.noteAttempts}`,
-    `${K.nextAt}: ${f.nextAt}`,
+    // QUOTED. Unquoted, YAML parses an ISO timestamp into a Date, which comes
+    // back out of `String()` as "Fri Aug 23 2026 22:55:00 GMT+0000 (…)" — so
+    // every slice of it lands somewhere else and the retry time renders as
+    // "2026". A timestamp this code both writes and reads should stay a string.
+    `${K.nextAt}: "${f.nextAt}"`,
     `${K.error}: ${scalar(f.error)}`,
     "---",
     "",
@@ -251,7 +255,12 @@ export function parseFailure(text: string): Failure | null {
   return {
     attempts: num(K.attempts),
     noteAttempts: num(K.noteAttempts),
-    nextAt: String(data[K.nextAt] ?? new Date(0).toISOString()),
+    // Tolerant of both spellings: notes written before the quoting fix carry a
+    // Date, and a queue item must not become unreadable because the format
+    // improved underneath it.
+    nextAt: data[K.nextAt] instanceof Date
+      ? (data[K.nextAt] as Date).toISOString()
+      : String(data[K.nextAt] ?? new Date(0).toISOString()),
     dead: state === "dead",
     error: String(data[K.error] ?? ""),
   };

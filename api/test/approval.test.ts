@@ -269,4 +269,22 @@ console.log("test: failure, backoff, and giving up");
       .match(/^## Your call/gm) ?? []).length === 0);
 }
 
+
+console.log("test: a retry time survives YAML");
+{
+  const f = nextFailure(null, "boom", true, false, Date.parse("2026-08-23T22:45:00Z"));
+  const note = renderFailure("x.md", f);
+  // Unquoted, YAML turns an ISO timestamp into a Date and every slice of the
+  // round-tripped string lands somewhere else — the retry time rendered as
+  // "2026" instead of "22:55".
+  check("the timestamp is quoted, so it stays a string", /^bd_next: ".*"$/m.test(note));
+  check("it round-trips unchanged", parseFailure(note)!.nextAt === f.nextAt);
+  check("…and still slices to a clock time", parseFailure(note)!.nextAt.slice(11, 16) === f.nextAt.slice(11, 16));
+  check("a note written before the fix still reads", (() => {
+    const legacy = note.replace(/^bd_next: "(.*)"$/m, "bd_next: $1");
+    const p = parseFailure(legacy);
+    return p !== null && Math.abs(Date.parse(p.nextAt) - Date.parse(f.nextAt)) < 1000;
+  })());
+}
+
 console.log(`\n${passed} checks passed`);

@@ -206,7 +206,7 @@ async function pass(dry: boolean, limit: number): Promise<void> {
 /** Everything ARMED and not yet proposed. The queue is the marker, not a folder:
  *  a capture can be written anywhere Obsidian happens to put it, and nothing is
  *  ever picked up by accident. */
-function pending(): string[] {
+function pending(): { due: string[]; held: number } {
   const now = Date.now();
   const held = new Set<string>();
   try {
@@ -220,7 +220,8 @@ function pending(): string[] {
       if (!fail || !isDue(fail, now)) held.add(key);
     }
   } catch { /* no queue yet */ }
-  return findCaptures(VAULT).filter((rel) => !held.has(keyOf(rel)));
+  const armed = findCaptures(VAULT);
+  return { due: armed.filter((rel) => !held.has(keyOf(rel))), held: armed.filter((rel) => held.has(keyOf(rel))).length };
 }
 
 /** How many captures one run may classify. A ceiling rather than a rate: the
@@ -259,15 +260,21 @@ if (cmd === "propose" && rest[0]) { announceVault(); await propose(rest[0]); }
 else if (cmd === "propose") {
   announceVault();
   const limit = limitOf(flags);
-  const todo = pending();
-  if (!todo.length) console.log("nothing is armed — no #capture waiting");
+  const { due: todo, held } = pending();
+  // "nothing is armed" was a lie whenever something WAS armed and simply held by
+  // its own backoff — which is the state a failed capture spends most of its
+  // time in, and the state you are most likely to be staring at.
+  if (!todo.length) {
+    console.log(held ? `nothing due — ${held} armed but held (failed, or awaiting an answer)` : "nothing is armed — no #capture waiting");
+  }
   for (const rel of todo.slice(0, limit)) await propose(rel);
   if (todo.length > limit) console.log(`\n${todo.length - limit} more waiting — capped at ${limit} this pass`);
   if (todo.length) console.log(`\n${report()}`);
 } else if (cmd === "find") {
   announceVault();
-  const todo = pending();
-  console.log(todo.length ? todo.join("\n") : "nothing is armed — no #capture waiting");
+  const { due, held } = pending();
+  console.log(due.length ? due.join("\n") : "nothing due");
+  if (held) console.log(`(${held} armed but held)`);
 } else if (cmd === "pass") { announceVault(); await pass(flags.has("dry"), limitOf(flags)); }
 else {
   console.error("usage: cli.ts find | propose [<capture-path>] [--limit N] | pass [--dry] [--limit N]");

@@ -67,6 +67,22 @@ function localISO(): string {
  *  keeps the typed name. Collision-checked against the DIRECTORY, case-
  *  insensitively — the only test that can answer "would writing this truncate a
  *  note that already exists". */
+/** Delete, tolerating a file that is already gone.
+ *
+ *  `unlinkSync` throwing here is worse than it sounds: by the time the capture
+ *  is removed the FILED NOTE HAS ALREADY BEEN WRITTEN, so a throw ends the pass
+ *  half-done — a new note created, its capture still in the queue, and every
+ *  answer behind it unprocessed. There is always a window (the vault has other
+ *  writers and obsidian-git is one of them), and "the file I wanted gone is
+ *  gone" is not a failure whichever way it happened. */
+function remove(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
+}
+
 function uniqueDest(title: string, asTyped: boolean): string {
   const base = asTyped ? noteName(title) : slug(title);
   const taken = takenRootNames();
@@ -137,6 +153,20 @@ async function pass(dry: boolean, limit: number): Promise<void> {
     if (alreadyAsked(text, reply)) { console.log(`wait ${key} — already asked about this answer`); continue; }
     console.log(`\n── ${key}\n   reply: ${JSON.stringify(reply)}`);
 
+    // THE CAPTURE MUST STILL EXIST, and this is checked BEFORE the model call
+    // rather than after it. An orphaned proposal — capture filed by hand,
+    // renamed, or moved in Obsidian — has an armed answer that never changes, so
+    // `alreadyAsked` never fires and the intent call was being made on it every
+    // single pass. Once a minute. Forever. For a note that cannot be filed.
+    //
+    // The proposal goes with it: it describes a note that no longer exists, and
+    // leaving it would orphan the queue permanently.
+    if (!existsSync(abs(parsed.captureRel))) {
+      console.log(`gone ${key} — capture ${parsed.captureRel} no longer exists, dropping the proposal`);
+      if (!dry) remove(abs(rel));
+      continue;
+    }
+
     done += 1;
     const scopes = getIngestableScopesStrict();
     // The vault's day, not UTC's — "friday" has to be resolved against the day
@@ -165,11 +195,9 @@ async function pass(dry: boolean, limit: number): Promise<void> {
     }
     if (act.kind === "reclassify") { console.log("   left for another pass"); continue; }
 
-    if (!existsSync(abs(parsed.captureRel))) { console.log(`   capture missing — skipped`); continue; }
-
     if (act.kind === "discard") {
       console.log(`   discard ${parsed.captureRel} + ${rel}`);
-      if (!dry) { unlinkSync(abs(parsed.captureRel)); unlinkSync(abs(rel)); }
+      if (!dry) { remove(abs(parsed.captureRel)); remove(abs(rel)); }
       continue;
     }
 
@@ -196,8 +224,8 @@ async function pass(dry: boolean, limit: number): Promise<void> {
     if (p.newScope) writeFileSync(abs(`${noteName(p.newScope.name)}.md`), mintHub(p.newScope.name, p.newScope.why));
     mkdirSync(abs(dest.slice(0, dest.lastIndexOf("/"))), { recursive: true });
     writeFileSync(abs(dest), content);
-    unlinkSync(abs(parsed.captureRel));
-    unlinkSync(abs(rel));
+    remove(abs(parsed.captureRel));
+    remove(abs(rel));
     invalidate();
   }
   if (done) console.log(`\n${report()}`);

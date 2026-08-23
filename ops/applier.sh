@@ -165,13 +165,40 @@ git rebase -q "origin/$BRANCH" >>"$LOG" 2>&1 || fail "git rebase"
 
 cd "$API" || fail "api directory"
 
+# FIND NODE. systemd hands a unit a near-empty PATH — no shell profile, no
+# nvm, none of what `which node` reports in your login shell. So a script that
+# worked by hand failed under the timer with "node: command not found", which is
+# the same failure as the env file and the vault path: behaviour that depended on
+# who invoked it.
+#
+# Searched rather than configured, because the alternative is an
+# `Environment=PATH=` line in the unit that is right on exactly one machine and
+# silently wrong after the next node upgrade.
+find_node() {
+  [ -n "${BD_NODE:-}" ] && { echo "$BD_NODE"; return; }
+  command -v node 2>/dev/null && return
+  for c in /usr/local/bin/node /usr/bin/node /opt/homebrew/bin/node /snap/bin/node; do
+    [ -x "$c" ] && { echo "$c"; return; }
+  done
+  # nvm keeps versions side by side; take the highest that is actually there.
+  local nvm
+  nvm="$(ls -d "${NVM_DIR:-$HOME/.nvm}"/versions/node/*/bin/node 2>/dev/null | sort -V | tail -1)"
+  [ -n "$nvm" ] && [ -x "$nvm" ] && { echo "$nvm"; return; }
+  return 1
+}
+
+NODE="$(find_node)" || fail "no node — looked on PATH, in /usr/local/bin, /usr/bin, /opt/homebrew/bin, /snap/bin and ${NVM_DIR:-$HOME/.nvm}/versions/node. Set BD_NODE in $ENV_FILE."
+# npx and anything the tool shells out to needs it on PATH too, not just this
+# one invocation.
+export PATH="$(dirname "$NODE"):$PATH"
+
 # COMPILED OUTPUT IF THERE IS ANY. At a one-minute cadence, re-transpiling the
 # whole module graph on every run is pure waste — `npm ci && npm run build` once
 # at deploy time and every pass is a plain `node`. tsx stays as the fallback
 # because it is what a checkout has before anyone has built it, and a loop that
 # refuses to run until someone remembers a build step is a loop that is off.
 if [ -f dist/cli.js ]; then
-  RUN=(node dist/cli.js)
+  RUN=("$NODE" dist/cli.js)
 else
   echo "note: no dist/ — falling back to tsx (run 'npm ci && npm run build')" >>"$LOG"
   RUN=(npx --yes tsx src/cli.ts)

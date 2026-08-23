@@ -18,7 +18,13 @@
 # always means "broken right now" rather than "was broken once".
 set -uo pipefail
 
-VAULT="${VAULT_PATH:-/srv/vault}"
+# EXPORTED, not just used locally. The tool resolves its own vault from
+# VAULT_PATH and falls back to REPO_PATH/VAULT_SUBDIR — so a script that knew
+# where the vault was and kept it to itself pointed a live run at a stale
+# checkout, created a `_triage/` in it, and filed a failure note there. One
+# source of truth for "which vault", and it is this line.
+export VAULT_PATH="${VAULT_PATH:-/srv/vault}"
+VAULT="$VAULT_PATH"
 API="${BD_API:-/srv/braindance/api}"
 LIMIT="${BD_LIMIT:-10}"
 NOTE="$VAULT/_triage/BRAINDANCE PASS FAILING.md"

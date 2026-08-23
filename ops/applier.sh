@@ -187,10 +187,52 @@ commit_if_dirty() {
 # applier's own writes, the leftovers of a pass that died between writing and
 # committing, and the occasional deliberate `rm` — all of which are real changes
 # that belong in history rather than hidden in a stash that can fail to pop.
+# A rebase conflict confined to `_triage/` has exactly one right answer:
+# delete. Everything in that directory is MACHINERY, and all of it is
+# regenerable — a proposal comes back from its capture on the next pass, and an
+# alarm note is written fresh by whatever fails next. So losing one costs
+# nothing, while stopping the loop over one costs everything behind it.
+#
+# The rule is deliberately about the DIRECTORY rather than about which side
+# deleted what. Nothing under `_triage/` is prose a person wrote, so there is no
+# version of this that discards someone's words. The instant a conflicted path
+# is anywhere else, this refuses and a human decides.
+#
+# Written because a modify/delete on a triage note stopped a rebase at 11pm and
+# was resolved by hand with `rebase --skip` — which drops the WHOLE commit, so a
+# note the loop had correctly filed went with it. The lever that looked right
+# was the one that lost work.
+rebase_onto() {
+  git rebase -q "$1" >>"$LOG" 2>&1 && return 0
+  local unmerged
+  unmerged="$(git diff --name-only --diff-filter=U 2>/dev/null)"
+  if [ -z "$unmerged" ]; then
+    git rebase --abort >/dev/null 2>&1
+    return 1
+  fi
+  while IFS= read -r f; do
+    case "$f" in
+      _triage/*) ;;
+      *) echo "conflict outside _triage/: $f" >>"$LOG"
+         git rebase --abort >/dev/null 2>&1
+         return 1 ;;
+    esac
+  done <<EOF
+$unmerged
+EOF
+  echo "resolving triage-only conflict by deletion: $unmerged" >>"$LOG"
+  # `git rm` handles both halves of a modify/delete, and --continue needs no
+  # message because the commit being replayed already has one.
+  echo "$unmerged" | while IFS= read -r f; do git rm -q --ignore-unmatch -- "$f" >>"$LOG" 2>&1; done
+  GIT_EDITOR=true git rebase --continue >>"$LOG" 2>&1 && return 0
+  git rebase --abort >/dev/null 2>&1
+  return 1
+}
+
 commit_if_dirty "braindance: local changes on $(hostname)"
 
 git fetch -q origin "$BRANCH" >>"$LOG" 2>&1 || fail "git fetch"
-git rebase -q "origin/$BRANCH" >>"$LOG" 2>&1 || fail "git rebase"
+rebase_onto "origin/$BRANCH" || fail "git rebase"
 
 cd "$API" || fail "api directory"
 
@@ -267,7 +309,7 @@ if [ -n "$(git rev-list "origin/$BRANCH..HEAD" 2>/dev/null)" ]; then
     git fetch -q origin "$BRANCH" >>"$LOG" 2>&1 || fail "git fetch (push retry)"
     # A conflict here is a real divergence and stops properly — that is a
     # decision for a person, never for a timer.
-    git rebase -q "origin/$BRANCH" >>"$LOG" 2>&1 || fail "git rebase (push retry)"
+    rebase_onto "origin/$BRANCH" || fail "git rebase (push retry)"
   done
   [ -n "$pushed" ] || fail "git push"
 fi

@@ -71,6 +71,35 @@ fi
 
 cd "$VAULT" || { echo "no vault at $VAULT"; exit 1; }
 
+# CAN THIS USER ACTUALLY WRITE HERE? Checked first, and reported on stderr
+# rather than through the usual failure note — because the failure note is a
+# file in the vault, and a run that cannot write to the vault cannot write that
+# either. Reporting a problem through the thing the problem breaks produced
+# eight lines of git output and one "Permission denied" buried in the middle.
+#
+# The specific shape: `_triage/` owned by root while the vault around it was
+# owned by the unit's user, after something ran once as root. Every pass then
+# failed deep inside a rebase.
+for d in "$VAULT" "$VAULT/_triage"; do
+  [ -e "$d" ] || continue
+  if [ ! -w "$d" ]; then
+    me="$(id -un)"
+    owner="$(stat -c %U "$d" 2>/dev/null || stat -f %Su "$d" 2>/dev/null)"
+    mode="$(stat -c %a "$d" 2>/dev/null || stat -f %Lp "$d" 2>/dev/null)"
+    echo "cannot write to $d" >&2
+    echo "  running as: $me   owner: ${owner:-?}   mode: ${mode:-?}" >&2
+    # Say which of the two it is rather than assuming — a directory can be
+    # yours and still unwritable, and being told to chown something you already
+    # own sends you looking in the wrong place.
+    if [ "$owner" != "$me" ]; then
+      echo "  fix: sudo chown -R $me $VAULT" >&2
+    else
+      echo "  fix: chmod u+w $d" >&2
+    fi
+    exit 1
+  fi
+done
+
 # How long it has been broken, carried across runs so the note can say.
 prev_failures=0
 prev_since=""

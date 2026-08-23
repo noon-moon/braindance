@@ -10,9 +10,8 @@
 // vault, so running it twice does nothing twice.
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import matter from "gray-matter";
 import { compose, containment, funnelById, taskLine, appendTaskLine, type BuiltNote } from "./funnels.js";
-import type { Proposal } from "./approval.js";
+import { hasTag, stripTag, type Proposal } from "./approval.js";
 import type { Revision } from "./intent.js";
 
 /** Apply the reply's diff to what was proposed. Absent keys mean "as proposed" —
@@ -61,19 +60,9 @@ export function fileNote(p: Proposal, captureBody: string): BuiltNote & { conten
 /** Remove the marker that put this note in the queue.
  *
  *  A capture's body is copied VERBATIM into the note it becomes, so an inline
- *  `#capture` would ride along — and a filed note carrying the tag is a note
- *  that gets picked up, proposed and filed again, every pass, forever. In
- *  frontmatter the tag is harmless (the filer rebuilds frontmatter from the
- *  funnel), but it costs nothing to handle both and a great deal to handle
- *  neither.
- *
- *  Matched with the same boundary the vault's own `#task` filter uses, so
- *  `#capture-ideas` and `#captured` survive being tags in their own right. */
-export const stripCaptureTag = (body: string): string =>
-  // The SPACE BEFORE the tag goes with it, not the one after. Dropping the
-  // trailing space instead would join a mid-sentence removal to the next word
-  // across a line break; keeping both leaves a double space where the tag was.
-  body.replace(/(^|[ \t])#capture(?![\w/-])/gmu, "").replace(/[ \t]+$/gm, "").trim();
+ *  `#capture` would ride along — and a filed note carrying the tag is one that
+ *  gets proposed and filed again, every pass, forever. */
+export const stripCaptureTag = (body: string): string => stripTag(body, CAPTURE_TAG);
 
 /** A brand-new hub, written the way the `scope` funnel writes one — the same
  *  build(), so a hub minted by the applier is byte-for-byte the shape of one
@@ -101,15 +90,7 @@ export const CAPTURE_TAG = "capture";
 /** Does this note ask to be triaged? Frontmatter tag or inline — both are
  *  ordinary Obsidian tags and a person reaching for one on a phone should not
  *  have to know which this reads. */
-export function isCapture(text: string): boolean {
-  let data: Record<string, unknown> = {};
-  try {
-    data = (matter(text).data ?? {}) as Record<string, unknown>;
-  } catch { /* unparseable frontmatter — fall through to the body */ }
-  const tags = Array.isArray(data.tags) ? data.tags.map(String) : typeof data.tags === "string" ? [data.tags] : [];
-  if (tags.some((t) => t.replace(/^#/, "").toLowerCase() === CAPTURE_TAG)) return true;
-  return new RegExp(`(^|\\s)#${CAPTURE_TAG}(?![\\w/-])`, "u").test(text);
-}
+export const isCapture = (text: string): boolean => hasTag(text, CAPTURE_TAG);
 
 /** Every capture waiting, vault-relative.
  *

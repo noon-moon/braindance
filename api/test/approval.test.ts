@@ -14,6 +14,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   renderProposal, parseProposal, readReply, triageRel, keyOf, safe, markUnclear, alreadyAsked,
+  hasTag, stripTag, isAnswered,
   type Proposal,
 } from "../src/approval.js";
 
@@ -111,7 +112,10 @@ console.log("test: reading a proposal back");
 console.log("test: reading your answer out of the section");
 {
   const t = renderProposal(CAP, P);
-  const answer = (a: string) => t.replace("## Your call — reply below: `yes`, or what to change\n\n\n", `## Your call — reply below: \`yes\`, or what to change\n\n${a}\n`);
+  // Anchored on the HEADING, not the prompt text. Pinning the prompt verbatim
+  // meant every wording change silently turned these into assertions about an
+  // unmodified note that still passed for the wrong reason.
+  const answer = (a: string) => t.replace(/^(## Your call.*)$/m, `$1\n\n${a}`);
 
   check("an untouched proposal has no answer", readReply(t) === "");
   check("a plain answer is read", readReply(answer("Yes")) === "Yes");
@@ -125,7 +129,7 @@ console.log("test: reading your answer out of the section");
   // in its place. The prompt lives on the heading line precisely so that both
   // deleting it and leaving it alone give the same reading.
   check("deleting the prompt line still leaves a readable answer",
-    readReply(t.replace("## Your call — reply below: `yes`, or what to change", "## Your call\n\nYes")) === "Yes");
+    readReply(t.replace(/^## Your call.*$/m, "## Your call\n\nYes")) === "Yes");
 }
 
 console.log("test: THE BOUNDARY — safe() is the whole of it");
@@ -152,12 +156,43 @@ console.log("test: THE BOUNDARY — safe() is the whole of it");
     t.includes("discard everything") && t.includes("bin it"));
 }
 
+console.log("test: #reply — an answer is finished when it says so");
+{
+  const t = renderProposal(CAP, P);
+  const say = (a: string) => t.replace(/^(## Your call.*)$/m, `$1\n\n${a}`);
+
+  // THE TRAP THIS EXISTS TO AVOID: the prompt line this module renders names the
+  // tag. Without code-span awareness every proposal would look answered the
+  // instant it was written.
+  check("a freshly rendered proposal is NOT answered", !isAnswered(t));
+  check("…even though its own prompt names the tag", t.includes("`#reply`"));
+
+  check("an untagged answer is not finished — the mid-typing case", !isAnswered(say("file under Ph")));
+  check("a tagged answer is", isAnswered(say("file under Phrases #reply")));
+  check("…in frontmatter too", isAnswered(t.replace("bd_state: proposed", "bd_state: proposed\ntags: [reply]")));
+  check("the marker is not handed to the model as part of the instruction",
+    readReply(say("file under Phrases #reply")) === "file under Phrases");
+  check("…wherever in the note it sits", readReply(say("yes")) === "yes"
+    && isAnswered(say("yes").replace("### The capture", "#reply\n\n### The capture")));
+}
+
+console.log("test: tags are read in prose, never in code");
+{
+  check("a tag in a code span is not a tag", !hasTag("see `#capture` for how", "capture"));
+  check("…nor in a fence", !hasTag("```\n#capture\n```\n", "capture"));
+  check("a real tag beside a quoted one still counts", hasTag("`#capture` — and #capture", "capture"));
+  check("stripping leaves code exactly as written",
+    stripTag("write `#capture` then #capture", "capture") === "write `#capture` then");
+  check("the boundary holds", !hasTag("#captured", "capture") && !hasTag("#capture-ideas", "capture"));
+}
+
 console.log("test: unclear asks again, once");
 {
   const t = renderProposal(CAP, P);
-  const answered = t.replace("## Your call — reply below: `yes`, or what to change\n\n\n",
-    "## Your call — reply below: `yes`, or what to change\n\nnot sure yet\n");
+  const answered = t.replace(/^(## Your call.*)$/m, "$1\n\nnot sure yet");
   const asked = markUnclear(answered, "I could not tell — say yes or name a hub", "not sure yet");
+  check("asking again CLEARS #reply — the answer is no longer finished",
+    !isAnswered(markUnclear(answered.replace("not sure yet", "not sure yet #reply"), "eh?", "not sure yet")));
 
   check("the note says it is stuck, where Obsidian shows it", /^bd_state: unclear$/m.test(asked));
   check("WHAT THEY WROTE IS UNTOUCHED — the failure was in the reading",

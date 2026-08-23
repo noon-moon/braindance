@@ -17,7 +17,7 @@ import { reviseProposal, fileNote, mintHub, stripCaptureTag, findCaptures } from
 import { renderTask, taskConfig } from "./tasknotes.js";
 import {
   parseProposal, readReply, renderProposal, triageRel, keyOf, TRIAGE_DIR,
-  markUnclear, alreadyAsked, type Proposal,
+  markUnclear, alreadyAsked, isAnswered, type Proposal,
 } from "./approval.js";
 
 const VAULT = process.env.VAULT_PATH ?? join(REPO_PATH, VAULT_SUBDIR);
@@ -84,6 +84,10 @@ async function pass(dry: boolean): Promise<void> {
     const text = readFileSync(abs(rel), "utf8");
     const reply = readReply(text);
     if (!reply) { console.log(`wait ${key} — no answer yet`); continue; }
+    // An answer is finished when it says so. Without this, obsidian-git commits
+    // a half-typed one within a few minutes and it gets judged as if it were
+    // the whole thought.
+    if (!isAnswered(text)) { console.log(`wait ${key} — answered but not tagged #reply`); continue; }
     // An answer already judged unreadable costs nothing to skip and a model call
     // to re-read. On a timer that difference is the whole running cost.
     if (alreadyAsked(text, reply)) { console.log(`wait ${key} — already asked about this answer`); continue; }

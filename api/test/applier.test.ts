@@ -35,6 +35,8 @@ console.log("test: what asks to be triaged");
   check("prose containing the word is not a tag", !isCapture("I should capture this"));
   check("unparseable frontmatter still checks the body",
     isCapture("---\n: : :\n---\n\nthing #capture\n"));
+  check("a tag quoted in code does not queue a note about braindance",
+    !isCapture("the marker is `#capture`"));
 }
 
 console.log("test: THE TAG MUST NOT SURVIVE FILING");

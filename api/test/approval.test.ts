@@ -14,7 +14,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   renderProposal, parseProposal, readReply, triageRel, keyOf, safe, markUnclear, alreadyAsked,
-  hasTag, stripTag, isAnswered,
+  hasMarker, stripMarker, isAnswered,
   type Proposal,
 } from "../src/approval.js";
 
@@ -156,7 +156,7 @@ console.log("test: THE BOUNDARY — safe() is the whole of it");
     t.includes("discard everything") && t.includes("bin it"));
 }
 
-console.log("test: #reply — an answer is finished when it says so");
+console.log("test: ##reply — an answer is finished when it says so");
 {
   const t = renderProposal(CAP, P);
   const say = (a: string) => t.replace(/^(## Your call.*)$/m, `$1\n\n${a}`);
@@ -165,25 +165,30 @@ console.log("test: #reply — an answer is finished when it says so");
   // tag. Without code-span awareness every proposal would look answered the
   // instant it was written.
   check("a freshly rendered proposal is NOT answered", !isAnswered(t));
-  check("…even though its own prompt names the tag", t.includes("`#reply`"));
+  check("…even though its own prompt names the marker", t.includes("`##reply`"));
 
   check("an untagged answer is not finished — the mid-typing case", !isAnswered(say("file under Ph")));
-  check("a tagged answer is", isAnswered(say("file under Phrases #reply")));
-  check("…in frontmatter too", isAnswered(t.replace("bd_state: proposed", "bd_state: proposed\ntags: [reply]")));
+  check("a marked answer is", isAnswered(say("file under Phrases ##reply")));
+  // Frontmatter is NOT a way in: a `tags:` entry would be a real Obsidian tag,
+  // which is the pollution the double hash exists to avoid.
+  check("a frontmatter tag is NOT the marker",
+    !isAnswered(t.replace("bd_state: proposed", "bd_state: proposed\ntags: [reply]")));
+  check("a single hash is not the marker either", !isAnswered(say("yes #reply")));
+  check("a third hash is not it", !isAnswered(say("yes ###reply")));
   check("the marker is not handed to the model as part of the instruction",
-    readReply(say("file under Phrases #reply")) === "file under Phrases");
+    readReply(say("file under Phrases ##reply")) === "file under Phrases");
   check("…wherever in the note it sits", readReply(say("yes")) === "yes"
-    && isAnswered(say("yes").replace("### The capture", "#reply\n\n### The capture")));
+    && isAnswered(say("yes").replace("### The capture", "##reply\n\n### The capture")));
 }
 
-console.log("test: tags are read in prose, never in code");
+console.log("test: markers are read in prose, never in code");
 {
-  check("a tag in a code span is not a tag", !hasTag("see `#capture` for how", "capture"));
-  check("…nor in a fence", !hasTag("```\n#capture\n```\n", "capture"));
-  check("a real tag beside a quoted one still counts", hasTag("`#capture` — and #capture", "capture"));
+  check("a marker in a code span is not a marker", !hasMarker("see `##capture` for how", "capture"));
+  check("…nor in a fence", !hasMarker("```\n##capture\n```\n", "capture"));
+  check("a real one beside a quoted one still counts", hasMarker("`##capture` — and ##capture", "capture"));
   check("stripping leaves code exactly as written",
-    stripTag("write `#capture` then #capture", "capture") === "write `#capture` then");
-  check("the boundary holds", !hasTag("#captured", "capture") && !hasTag("#capture-ideas", "capture"));
+    stripMarker("write `##capture` then ##capture", "capture") === "write `##capture` then");
+  check("the boundary holds", !hasMarker("##captured", "capture") && !hasMarker("##capture-ideas", "capture"));
 }
 
 console.log("test: unclear asks again, once");
@@ -191,8 +196,8 @@ console.log("test: unclear asks again, once");
   const t = renderProposal(CAP, P);
   const answered = t.replace(/^(## Your call.*)$/m, "$1\n\nnot sure yet");
   const asked = markUnclear(answered, "I could not tell — say yes or name a hub", "not sure yet");
-  check("asking again CLEARS #reply — the answer is no longer finished",
-    !isAnswered(markUnclear(answered.replace("not sure yet", "not sure yet #reply"), "eh?", "not sure yet")));
+  check("asking again CLEARS the marker — the answer is no longer finished",
+    !isAnswered(markUnclear(answered.replace("not sure yet", "not sure yet ##reply"), "eh?", "not sure yet")));
 
   check("the note says it is stuck, where Obsidian shows it", /^bd_state: unclear$/m.test(asked));
   check("WHAT THEY WROTE IS UNTOUCHED — the failure was in the reading",

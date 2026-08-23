@@ -13,7 +13,7 @@ import { funnelById } from "./funnels.js";
 import { getIngestableScopesStrict, takenRootNames, invalidate } from "./vault.js";
 import { slug, noteName } from "./notes.js";
 import { intentOf, validateAction } from "./intent.js";
-import { reviseProposal, fileNote, mintHub, stripCaptureTag, findCaptures } from "./applier.js";
+import { reviseProposal, fileNote, mintHub, stripCaptureMarker, findCaptures } from "./applier.js";
 import { renderTask, taskConfig } from "./tasknotes.js";
 import {
   parseProposal, readReply, renderProposal, triageRel, keyOf, TRIAGE_DIR,
@@ -87,7 +87,7 @@ async function pass(dry: boolean): Promise<void> {
     // An answer is finished when it says so. Without this, obsidian-git commits
     // a half-typed one within a few minutes and it gets judged as if it were
     // the whole thought.
-    if (!isAnswered(text)) { console.log(`wait ${key} — answered but not tagged #reply`); continue; }
+    if (!isAnswered(text)) { console.log(`wait ${key} — answered but not marked ##reply`); continue; }
     // An answer already judged unreadable costs nothing to skip and a model call
     // to re-read. On a timer that difference is the whole running cost.
     if (alreadyAsked(text, reply)) { console.log(`wait ${key} — already asked about this answer`); continue; }
@@ -130,7 +130,7 @@ async function pass(dry: boolean): Promise<void> {
       : uniqueDest(p.title, p.kind === "scope");
     const content = isTask
       ? renderTask({ title: p.title, scopes: filedUnder, due: p.due, priority: p.priority,
-                     body: stripCaptureTag(body), createdISO: now })
+                     body: stripCaptureMarker(body), createdISO: now })
       : fileNote(p, body).content;
 
     console.log(`   file  → ${dest}`);
@@ -145,7 +145,7 @@ async function pass(dry: boolean): Promise<void> {
   }
 }
 
-/** Everything tagged and not yet proposed. The queue is the TAG, not a folder:
+/** Everything marked and not yet proposed. The queue is the MARKER, not a folder:
  *  a capture can be written anywhere Obsidian happens to put it, and nothing is
  *  ever picked up by accident. */
 function pending(): string[] {
@@ -162,11 +162,11 @@ const [cmd, ...rest] = process.argv.slice(2);
 if (cmd === "propose" && rest[0]) await propose(rest[0]);
 else if (cmd === "propose") {
   const todo = pending();
-  if (!todo.length) console.log("nothing tagged #capture is waiting");
+  if (!todo.length) console.log("nothing marked ##capture is waiting");
   for (const rel of todo) await propose(rel);
 } else if (cmd === "find") {
   const todo = pending();
-  console.log(todo.length ? todo.join("\n") : "nothing tagged #capture is waiting");
+  console.log(todo.length ? todo.join("\n") : "nothing marked ##capture is waiting");
 } else if (cmd === "pass") await pass(rest.includes("--dry"));
 else {
   console.error("usage: cli.ts find | propose [<capture-path>] | pass [--dry]");

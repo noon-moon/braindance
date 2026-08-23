@@ -52,14 +52,21 @@ export const TRIAGE_DIR = "_triage";
  *  and typed in their place, which is exactly the right instinct and exactly
  *  what a parser must not have to guess about.) */
 const REPLY_HEADING = "## Your call";
-const REPLY_PROMPT = `${REPLY_HEADING} — reply below, then tag it \`#reply\` when you are done`;
+const REPLY_PROMPT = `${REPLY_HEADING} — reply below, then write \`##reply\` when you are done`;
 
-/** The tag that says an answer is FINISHED — the mirror of `#capture`, and for
- *  the same reason. obsidian-git commits every few minutes, so without it a
+/** The marker that says an answer is FINISHED — the mirror of `##capture`, and
+ *  for the same reason. obsidian-git commits every few minutes, so without it a
  *  half-typed "file under Ph" syncs, gets judged unreadable, and leaves a mess
- *  the person has to clean up for the crime of saving. Tagging is the last act,
- *  so nothing is ever read mid-thought. */
-export const REPLY_TAG = "reply";
+ *  the person has to clean up for the crime of saving. Writing the marker is the
+ *  last act, so nothing is ever read mid-thought.
+ *
+ *  DOUBLE hash, and not a tag at all. `#reply` and `#capture` would be real
+ *  Obsidian tags: in the tag pane, in search, in the graph, and in the
+ *  autocomplete of every note the user ever writes — a permanent addition to
+ *  their vocabulary in exchange for a signal that means nothing outside this
+ *  loop. `##reply` is inert to Obsidian and means something only here, which is
+ *  exactly the right footprint for a piece of machinery. */
+export const REPLY_MARKER = "reply";
 
 /** Run `fn` over the prose of a note, leaving CODE alone.
  *
@@ -75,34 +82,37 @@ function overProse(text: string, fn: (s: string) => string): string {
     .join("");
 }
 
-/** Does this note carry `#name` as a real tag — in frontmatter or in prose, but
- *  never inside code? The boundary is the vault's own: `#capture-ideas` and
- *  `#captured` are tags in their own right and are not this one. */
-export function hasTag(text: string, name: string): boolean {
-  let data: Record<string, unknown> = {};
-  try {
-    data = (matter(text).data ?? {}) as Record<string, unknown>;
-  } catch { /* unparseable frontmatter — the body still counts */ }
-  const raw = data.tags;
-  const tags = Array.isArray(raw) ? raw.map(String) : typeof raw === "string" ? [raw] : [];
-  if (tags.some((t) => t.replace(/^#/, "").toLowerCase() === name.toLowerCase())) return true;
-  const re = new RegExp(`(^|[^\\w/#-])#${name}(?![\\w/-])`, "u");
+/** Does this note carry `##name` in its prose?
+ *
+ *  Prose only, never code — this file writes `##reply` into every proposal it
+ *  renders (the prompt says to), so without that exclusion every proposal would
+ *  look answered the instant it existed. It is also just correct: a note ABOUT
+ *  braindance quoting the marker is not a capture.
+ *
+ *  Frontmatter is deliberately NOT consulted. A `tags:` entry would be a real
+ *  Obsidian tag, which is the pollution the double hash exists to avoid; letting
+ *  it in through the back door would give the vocabulary back one note at a time.
+ *
+ *  `###name` does not match — a third hash means something else, and guessing
+ *  which is not this function's business. */
+export function hasMarker(text: string, name: string): boolean {
+  const re = new RegExp(`(^|[^\\w/#-])##${name}(?![\\w/-])`, "u");
   let found = false;
-  overProse(matter(text).content ?? text, (part) => { if (re.test(part)) found = true; return part; });
+  overProse(text, (part) => { if (re.test(part)) found = true; return part; });
   return found;
 }
 
-/** Remove `#name` from prose, taking the space BEFORE it rather than after —
+/** Remove `##name` from prose, taking the space BEFORE it rather than after —
  *  dropping the trailing one joins a mid-sentence removal to the next word
  *  across a line break. Code spans are left exactly as written. */
-export const stripTag = (text: string, name: string): string =>
+export const stripMarker = (text: string, name: string): string =>
   overProse(text, (part) =>
-    part.replace(new RegExp(`(^|[ \\t])#${name}(?![\\w/-])`, "gmu"), ""))
+    part.replace(new RegExp(`(^|[ \\t])##${name}(?![\\w/-])`, "gmu"), ""))
     .replace(/[ \t]+$/gm, "")
     .trim();
 
 /** Is the answer finished? */
-export const isAnswered = (text: string): boolean => hasTag(text, REPLY_TAG);
+export const isAnswered = (text: string): boolean => hasMarker(text, REPLY_MARKER);
 
 /** A short fingerprint of an answer that has already been judged. Not for
  *  security — for THRIFT. Without it a reply the model cannot read costs a model
@@ -306,7 +316,7 @@ export function readReply(text: string): string {
     if (/^\s*---\s*$/.test(l) || /^\s*#{1,6}\s/.test(l)) break;
     out.push(l.replace(/^\s*>\s?/, ""));
   }
-  return stripTag(out.join("\n"), REPLY_TAG);
+  return stripMarker(out.join("\n"), REPLY_MARKER);
 }
 
 /** Ask again, in the note, without touching what the person wrote.
@@ -329,12 +339,12 @@ export function markUnclear(text: string, question: string, reply: string): stri
     : out.replace(/^bd_state:.*$/m, (m) => `${m}\n${K.asked}: ${fp}`);
   out = out.replace(
     new RegExp(`^${REPLY_HEADING.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*$`, "m"),
-    `${REPLY_HEADING} — ${safe(question)} · re-tag \`#reply\` when you have`,
+    `${REPLY_HEADING} — ${safe(question)} · write \`##reply\` again when you have`,
   );
-  // The tag means "finished". Asking again makes that untrue, so it goes —
+  // The marker means "finished". Asking again makes that untrue, so it goes —
   // otherwise the next keystroke of a corrected answer is read mid-edit, which
-  // is the whole thing the tag exists to prevent.
-  return stripTag(out, REPLY_TAG);
+  // is the whole thing the marker exists to prevent.
+  return stripMarker(out, REPLY_MARKER);
 }
 
 /** Has this answer already been judged unreadable? Cheap, local, no model call. */

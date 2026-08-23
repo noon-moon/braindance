@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isCapture, findCaptures, stripCaptureTag } from "../src/applier.js";
+import { isCapture, findCaptures, stripCaptureMarker } from "../src/applier.js";
 
 let passed = 0;
 const check = (label: string, cond: boolean) => {
@@ -21,37 +21,39 @@ const check = (label: string, cond: boolean) => {
 
 console.log("test: what asks to be triaged");
 {
-  check("an inline tag", isCapture("some thought\n\n#capture\n"));
-  check("…mid-sentence too", isCapture("a thought #capture and more"));
-  check("a frontmatter tag", isCapture("---\ntags:\n  - capture\n---\n\nthing\n"));
-  check("…written with the hash", isCapture("---\ntags: ['#capture']\n---\n"));
-  check("…as a lone string", isCapture("---\ntags: capture\n---\n"));
+  check("an inline tag", isCapture("some thought\n\n##capture\n"));
+  check("…mid-sentence too", isCapture("a thought ##capture and more"));
+  // Frontmatter is deliberately not a way in — a `tags:` entry is a real
+  // Obsidian tag, which is the vocabulary pollution the double hash avoids.
+  check("a frontmatter tag is NOT a capture", !isCapture("---\ntags:\n  - capture\n---\n\nthing\n"));
+  check("a single hash is not the marker", !isCapture("thing #capture"));
+  check("a third hash is not the marker", !isCapture("thing ###capture"));
 
   check("an untagged note is invisible — the half-written case", !isCapture("a thought I have not finished"));
   // The tag boundary. These are tags in their own right and must stay out.
-  check("#captured is not #capture", !isCapture("thing #captured"));
-  check("#capture-ideas is not #capture", !isCapture("thing #capture-ideas"));
-  check("#capture/sub is not #capture", !isCapture("thing #capture/sub"));
+  check("###captured is not ##capture", !isCapture("thing ###captured"));
+  check("###capture-ideas is not ##capture", !isCapture("thing ###capture-ideas"));
+  check("##capture/sub is not ##capture", !isCapture("thing ##capture/sub"));
   check("prose containing the word is not a tag", !isCapture("I should capture this"));
-  check("unparseable frontmatter still checks the body",
-    isCapture("---\n: : :\n---\n\nthing #capture\n"));
+  check("unparseable frontmatter is irrelevant — the body decides",
+    isCapture("---\n: : :\n---\n\nthing ##capture\n"));
   check("a tag quoted in code does not queue a note about braindance",
-    !isCapture("the marker is `#capture`"));
+    !isCapture("the marker is `##capture`"));
 }
 
-console.log("test: THE TAG MUST NOT SURVIVE FILING");
+console.log("test: THE MARKER MUST NOT SURVIVE FILING");
 {
   // A capture's body is copied verbatim into the note it becomes. A filed note
   // carrying the tag is one that gets proposed and filed again, every pass,
   // forever.
-  check("the tag is removed", !isCapture(stripCaptureTag("a thought\n\n#capture\n")));
+  check("the marker is removed", !isCapture(stripCaptureMarker("a thought\n\n##capture\n")));
   check("…mid-sentence, without eating the words either side",
-    stripCaptureTag("a thought #capture and more") === "a thought and more");
+    stripCaptureMarker("a thought ##capture and more") === "a thought and more");
   check("…leaving no trailing whitespace behind",
-    stripCaptureTag("a thought #capture\nmore") === "a thought\nmore");
-  check("neighbouring tags survive — they are the note's own",
-    stripCaptureTag("thing #capture #rust") === "thing #rust");
-  check("#captured is left alone", stripCaptureTag("thing #captured") === "thing #captured");
+    stripCaptureMarker("a thought ##capture\nmore") === "a thought\nmore");
+  check("the note's own real tags survive",
+    stripCaptureMarker("thing ##capture #rust") === "thing #rust");
+  check("###captured is left alone", stripCaptureMarker("thing ###captured") === "thing ###captured");
 }
 
 console.log("test: finding them in a vault");
@@ -62,13 +64,13 @@ console.log("test: finding them in a vault");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(V, rel), body);
   };
-  w("tagged.md", "a thought #capture");
+  w("tagged.md", "a thought ##capture");
   w("plain.md", "an ordinary note");
-  w("daily/Daily-2026-08-23.md", "log #capture");
-  w("_ephemeral/scratch.md", "scratch #capture");
-  w("_triage/x.triage.md", "#capture");
-  w(".obsidian/x.md", "#capture");
-  w("notes.txt", "#capture");
+  w("daily/Daily-2026-08-23.md", "log ##capture");
+  w("_ephemeral/scratch.md", "scratch ##capture");
+  w("_triage/x.triage.md", "##capture");
+  w(".obsidian/x.md", "##capture");
+  w("notes.txt", "##capture");
 
   const found = findCaptures(V);
   check("a tagged note at the root is found", found.includes("tagged.md"));

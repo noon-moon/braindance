@@ -11,7 +11,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { compose, containment, funnelById, taskLine, appendTaskLine, type BuiltNote } from "./funnels.js";
-import { hasTag, stripTag, type Proposal } from "./approval.js";
+import { hasMarker, stripMarker, type Proposal } from "./approval.js";
 import type { Revision } from "./intent.js";
 
 /** Apply the reply's diff to what was proposed. Absent keys mean "as proposed" —
@@ -49,7 +49,7 @@ export function fileNote(p: Proposal, captureBody: string): BuiltNote & { conten
   const scope = [...(p.newScope ? [p.newScope.name] : []), ...p.scopes].join(", ");
   const built = funnel.build({
     title: p.title,
-    body: stripCaptureTag(captureBody),
+    body: stripCaptureMarker(captureBody),
     containedBy: scope,
     due: p.due ?? "",
     priority: p.priority ?? "",
@@ -59,10 +59,10 @@ export function fileNote(p: Proposal, captureBody: string): BuiltNote & { conten
 
 /** Remove the marker that put this note in the queue.
  *
- *  A capture's body is copied VERBATIM into the note it becomes, so an inline
- *  `#capture` would ride along — and a filed note carrying the tag is one that
- *  gets proposed and filed again, every pass, forever. */
-export const stripCaptureTag = (body: string): string => stripTag(body, CAPTURE_TAG);
+ *  A capture's body is copied VERBATIM into the note it becomes, so the marker
+ *  would ride along — and a filed note carrying it is one that gets proposed and
+ *  filed again, every pass, forever. */
+export const stripCaptureMarker = (body: string): string => stripMarker(body, CAPTURE_MARKER);
 
 /** A brand-new hub, written the way the `scope` funnel writes one — the same
  *  build(), so a hub minted by the applier is byte-for-byte the shape of one
@@ -80,17 +80,18 @@ export const taskAtom = (p: Proposal): string =>
 
 export { appendTaskLine, containment };
 
-/** The tag that puts a note in the queue. Nothing else does — not a folder, not
- *  an age, not the absence of frontmatter. That was chosen over every automatic
- *  marker for one reason: **nothing may be picked up by accident.** A note you
- *  are halfway through writing carries no tag and is therefore invisible, which
- *  is the same thing a quiescence window buys without any clock to get wrong. */
-export const CAPTURE_TAG = "capture";
+/** The marker that puts a note in the queue. Nothing else does — not a folder,
+ *  not an age, not the absence of frontmatter. That was chosen over every
+ *  automatic marker for one reason: **nothing may be picked up by accident.** A
+ *  note you are halfway through writing carries no marker and is therefore
+ *  invisible, which is what a quiescence window buys without any clock to get
+ *  wrong. Double hash so it is inert to Obsidian — see REPLY_MARKER. */
+export const CAPTURE_MARKER = "capture";
 
 /** Does this note ask to be triaged? Frontmatter tag or inline — both are
  *  ordinary Obsidian tags and a person reaching for one on a phone should not
  *  have to know which this reads. */
-export const isCapture = (text: string): boolean => hasTag(text, CAPTURE_TAG);
+export const isCapture = (text: string): boolean => hasMarker(text, CAPTURE_MARKER);
 
 /** Every capture waiting, vault-relative.
  *

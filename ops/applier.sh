@@ -141,6 +141,25 @@ NOTEEOF
 # script that has to run on a checkout it did not create.
 BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null)" || fail "detached HEAD"
 [ -n "$BRANCH" ] || fail "detached HEAD"
+
+commit_if_dirty() {
+  [ -n "$(git status --porcelain)" ] || return 0
+  git add -A >>"$LOG" 2>&1 && git commit -qm "$1" >>"$LOG" 2>&1
+}
+
+# COMMIT BEFORE PULLING. A rebase refuses to run against a dirty tree, so
+# anything left lying around stopped the pass dead — including a failure note
+# deleted by hand, which is the documented way to retry a stuck capture, and
+# which is a tracked file. The instruction and the script disagreed.
+#
+# Committing rather than stashing, and the distinction matters: `vault-pull.sh`
+# refuses to commit for the desk because a desk always carries half-written
+# drafts. THIS box has no typist. The only things that appear here are the
+# applier's own writes, the leftovers of a pass that died between writing and
+# committing, and the occasional deliberate `rm` — all of which are real changes
+# that belong in history rather than hidden in a stash that can fail to pop.
+commit_if_dirty "braindance: local changes on $(hostname)"
+
 git fetch -q origin "$BRANCH" >>"$LOG" 2>&1 || fail "git fetch"
 git rebase -q "origin/$BRANCH" >>"$LOG" 2>&1 || fail "git rebase"
 
@@ -166,9 +185,13 @@ cd "$VAULT" || fail "vault directory"
 # "the loop is working" are the same fact.
 [ -f "$NOTE" ] && rm -f "$NOTE"
 
-if [ -n "$(git status --porcelain)" ]; then
-  git add -A >>"$LOG" 2>&1 || fail "git add"
-  git commit -qm "braindance: applier pass" >>"$LOG" 2>&1 || fail "git commit"
+commit_if_dirty "braindance: applier pass" || fail "git commit"
+
+# Push on being AHEAD, not on having just committed: a pass that files nothing
+# still has to send the commit made before the rebase, and one that failed to
+# push last time has to catch up. "Is there anything origin lacks" is the
+# question that covers both.
+if [ -n "$(git rev-list "origin/$BRANCH..HEAD" 2>/dev/null)" ]; then
   git push -q origin "$BRANCH" >>"$LOG" 2>&1 || fail "git push"
 fi
 cat "$LOG"

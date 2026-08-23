@@ -13,9 +13,8 @@ import { funnelById } from "./funnels.js";
 import { getIngestableScopesStrict, takenRootNames, invalidate } from "./vault.js";
 import { slug, noteName } from "./notes.js";
 import { intentOf, validateAction } from "./intent.js";
-import { reviseProposal, fileNote, mintHub } from "./applier.js";
+import { reviseProposal, fileNote, mintHub, stripCaptureTag, findCaptures } from "./applier.js";
 import { renderTask, taskConfig } from "./tasknotes.js";
-import { receipt } from "./approval.js";
 import {
   parseProposal, readReply, renderProposal, triageRel, keyOf, TRIAGE_DIR,
   markUnclear, alreadyAsked, type Proposal,
@@ -126,11 +125,9 @@ async function pass(dry: boolean): Promise<void> {
       ? `${taskConfig().folder}/${noteName(p.title)}.md`
       : uniqueDest(p.title, p.kind === "scope");
     const content = isTask
-      ? renderTask(
-          { title: p.title, scopes: filedUnder, due: p.due, priority: p.priority, body, createdISO: now },
-          receipt(p, now, act.note),
-        )
-      : fileNote(p, body, now, act.note).content;
+      ? renderTask({ title: p.title, scopes: filedUnder, due: p.due, priority: p.priority,
+                     body: stripCaptureTag(body), createdISO: now })
+      : fileNote(p, body).content;
 
     console.log(`   file  → ${dest}`);
     if (p.newScope) console.log(`   mint  → ${noteName(p.newScope.name)}.md`);
@@ -144,10 +141,30 @@ async function pass(dry: boolean): Promise<void> {
   }
 }
 
+/** Everything tagged and not yet proposed. The queue is the TAG, not a folder:
+ *  a capture can be written anywhere Obsidian happens to put it, and nothing is
+ *  ever picked up by accident. */
+function pending(): string[] {
+  const proposed = new Set<string>();
+  try {
+    for (const f of readdirSync(abs(TRIAGE_DIR))) {
+      if (f.endsWith(".triage.md")) proposed.add(f.replace(/\.triage\.md$/, ""));
+    }
+  } catch { /* no queue yet */ }
+  return findCaptures(VAULT).filter((rel) => !proposed.has(keyOf(rel)));
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 if (cmd === "propose" && rest[0]) await propose(rest[0]);
-else if (cmd === "pass") await pass(rest.includes("--dry"));
+else if (cmd === "propose") {
+  const todo = pending();
+  if (!todo.length) console.log("nothing tagged #capture is waiting");
+  for (const rel of todo) await propose(rel);
+} else if (cmd === "find") {
+  const todo = pending();
+  console.log(todo.length ? todo.join("\n") : "nothing tagged #capture is waiting");
+} else if (cmd === "pass") await pass(rest.includes("--dry"));
 else {
-  console.error("usage: cli.ts propose <capture-path> | cli.ts pass [--dry]");
+  console.error("usage: cli.ts find | propose [<capture-path>] | pass [--dry]");
   process.exit(1);
 }

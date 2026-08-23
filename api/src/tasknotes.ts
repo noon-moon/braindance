@@ -112,7 +112,7 @@ export interface TaskInput {
 }
 
 /** Render a task note the way TaskNotes writes one. */
-export function renderTask(t: TaskInput, footer?: string): string {
+export function renderTask(t: TaskInput): string {
   const c = taskConfig();
   const fm: string[] = ["---", `status: ${c.status}`];
   if (!c.titleInFilename) fm.push(`title: ${JSON.stringify(t.title)}`);
@@ -126,6 +126,6 @@ export function renderTask(t: TaskInput, footer?: string): string {
   // — a note that differs from the plugin's own output invites a diff every
   // time the plugin touches it.
   fm.push(`${c.createdKey}: ${t.createdISO}`, "tags:", `  - ${c.tag}`, "---", "", "");
-  const body = [t.body?.trim() ?? "", footer ?? ""].filter(Boolean).join("\n\n");
+  const body = t.body?.trim() ?? "";
   return `${fm.join("\n")}${body ? `${body}\n` : ""}`;
 }

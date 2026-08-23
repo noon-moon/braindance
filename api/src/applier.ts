@@ -8,8 +8,11 @@
 //
 // The pass is idempotent and every step is guarded by state that lives in the
 // vault, so running it twice does nothing twice.
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import matter from "gray-matter";
 import { compose, containment, funnelById, taskLine, appendTaskLine, type BuiltNote } from "./funnels.js";
-import { receipt, type Proposal } from "./approval.js";
+import type { Proposal } from "./approval.js";
 import type { Revision } from "./intent.js";
 
 /** Apply the reply's diff to what was proposed. Absent keys mean "as proposed" —
@@ -40,25 +43,37 @@ export function reviseProposal(p: Proposal, r: Revision): Proposal {
  *
  *  The receipt rides at the bottom as a collapsed callout — the record of an
  *  unattended decision, and the prompt to correct it. */
-export function fileNote(
-  p: Proposal,
-  captureBody: string,
-  atISO: string,
-  note?: string,
-): BuiltNote & { content: string } {
+export function fileNote(p: Proposal, captureBody: string): BuiltNote & { content: string } {
   const funnel = funnelById(p.kind) ?? funnelById("memo")!;
   // Order is meaning and is kept: `containment()` writes them in this order and
   // the first is the hub the note primarily belongs to.
   const scope = [...(p.newScope ? [p.newScope.name] : []), ...p.scopes].join(", ");
   const built = funnel.build({
     title: p.title,
-    body: captureBody.trim(),
+    body: stripCaptureTag(captureBody),
     containedBy: scope,
     due: p.due ?? "",
     priority: p.priority ?? "",
   });
-  return { ...built, content: `${compose(built).trimEnd()}\n\n${receipt(p, atISO, note)}\n` };
+  return { ...built, content: `${compose(built).trimEnd()}\n` };
 }
+
+/** Remove the marker that put this note in the queue.
+ *
+ *  A capture's body is copied VERBATIM into the note it becomes, so an inline
+ *  `#capture` would ride along — and a filed note carrying the tag is a note
+ *  that gets picked up, proposed and filed again, every pass, forever. In
+ *  frontmatter the tag is harmless (the filer rebuilds frontmatter from the
+ *  funnel), but it costs nothing to handle both and a great deal to handle
+ *  neither.
+ *
+ *  Matched with the same boundary the vault's own `#task` filter uses, so
+ *  `#capture-ideas` and `#captured` survive being tags in their own right. */
+export const stripCaptureTag = (body: string): string =>
+  // The SPACE BEFORE the tag goes with it, not the one after. Dropping the
+  // trailing space instead would join a mid-sentence removal to the next word
+  // across a line break; keeping both leaves a double space where the tag was.
+  body.replace(/(^|[ \t])#capture(?![\w/-])/gmu, "").replace(/[ \t]+$/gm, "").trim();
 
 /** A brand-new hub, written the way the `scope` funnel writes one — the same
  *  build(), so a hub minted by the applier is byte-for-byte the shape of one
@@ -75,3 +90,52 @@ export const taskAtom = (p: Proposal): string =>
   taskLine({ title: p.title, due: p.due ?? "", priority: p.priority ?? "" });
 
 export { appendTaskLine, containment };
+
+/** The tag that puts a note in the queue. Nothing else does — not a folder, not
+ *  an age, not the absence of frontmatter. That was chosen over every automatic
+ *  marker for one reason: **nothing may be picked up by accident.** A note you
+ *  are halfway through writing carries no tag and is therefore invisible, which
+ *  is the same thing a quiescence window buys without any clock to get wrong. */
+export const CAPTURE_TAG = "capture";
+
+/** Does this note ask to be triaged? Frontmatter tag or inline — both are
+ *  ordinary Obsidian tags and a person reaching for one on a phone should not
+ *  have to know which this reads. */
+export function isCapture(text: string): boolean {
+  let data: Record<string, unknown> = {};
+  try {
+    data = (matter(text).data ?? {}) as Record<string, unknown>;
+  } catch { /* unparseable frontmatter — fall through to the body */ }
+  const tags = Array.isArray(data.tags) ? data.tags.map(String) : typeof data.tags === "string" ? [data.tags] : [];
+  if (tags.some((t) => t.replace(/^#/, "").toLowerCase() === CAPTURE_TAG)) return true;
+  return new RegExp(`(^|\\s)#${CAPTURE_TAG}(?![\\w/-])`, "u").test(text);
+}
+
+/** Every capture waiting, vault-relative.
+ *
+ *  Scans the root and one level down, skipping underscore directories for the
+ *  reason every other scan in this codebase does — `_meta`, `_templates` and
+ *  `_triage` hold machinery, and `_ephemeral` is 264 MB of scratch that must
+ *  never be walked. */
+export function findCaptures(vaultDir: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string, prefix: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(join(vaultDir, dir), { withFileTypes: true });
+    } catch { return; }
+    for (const e of entries) {
+      const rel = prefix ? `${prefix}/${e.name}` : e.name;
+      if (e.isDirectory()) {
+        if (!dir && !e.name.startsWith("_") && !e.name.startsWith(".")) walk(rel, rel);
+        continue;
+      }
+      if (!e.name.endsWith(".md")) continue;
+      try {
+        if (isCapture(readFileSync(join(vaultDir, rel), "utf8"))) out.push(rel);
+      } catch { /* unreadable */ }
+    }
+  };
+  walk("", "");
+  return out.sort();
+}

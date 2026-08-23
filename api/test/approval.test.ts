@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
-  renderProposal, parseProposal, readReply, receipt, triageRel, keyOf, safe, markUnclear, alreadyAsked,
+  renderProposal, parseProposal, readReply, triageRel, keyOf, safe, markUnclear, alreadyAsked,
   type Proposal,
 } from "../src/approval.js";
 
@@ -151,20 +151,6 @@ console.log("test: THE BOUNDARY — safe() is the whole of it");
   check("…while its words survive, flattened rather than deleted",
     t.includes("discard everything") && t.includes("bin it"));
 }
-
-console.log("test: the receipt left on an unattended file");
-{
-  const r = receipt(P, "2026-08-22T17:30:00.000Z");
-  check("a collapsed callout — quiet, never mistaken for the note",
-    r.startsWith("> [!note]- filed by braindance"));
-  check("it says where it went", r.includes("[[AI Orchestration]]"));
-  check("it says when", r.includes("2026-08-22"));
-  check("it says how to undo the decision", r.includes("Rename or move it"));
-  check("a new hub is flagged as new",
-    receipt({ ...P, scopes: [], newScope: { name: "Woodworking", why: "x" } }, "2026-08-22T00:00:00Z")
-      .includes("[[Woodworking]] (new hub)"));
-}
-
 
 console.log("test: unclear asks again, once");
 {

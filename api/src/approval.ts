@@ -288,24 +288,3 @@ export const alreadyAsked = (text: string, reply: string): boolean => {
   const m = text.match(/^bd_asked:\s*(\S+)\s*$/m);
   return Boolean(m && m[1] === replyFingerprint(reply));
 };
-
-/** The receipt left on a note the agent filed WITHOUT asking — the low-salience
- *  footer, and the only mark it leaves on a note you keep.
- *
- *  A collapsed callout: quiet, impossible to mistake for the note's own content,
- *  at the bottom where it stays out of the way of what you wrote. It is the
- *  audit trail and the prompt to fix a wrong call; git history is the real undo. */
-export function receipt(p: Proposal, atISO: string, note?: string): string {
-  const where = p.newScope
-    ? `[[${safe(p.newScope.name)}]] (new hub)`
-    : p.scopes.length
-      ? p.scopes.map((x) => `[[${safe(x)}]]`).join(" + ")
-      : "the vault root";
-  return [
-    "> [!note]- filed by braindance",
-    `> ${atISO.slice(0, 10)} · as a ${safe(p.kind)} under ${where}`,
-    note ? `> ${safe(note)}` : "",
-    p.rationale ? `> ${safe(p.rationale)}` : "",
-    "> Wrong? Rename or move it like any note — this footer is just the record.",
-  ].filter(Boolean).join("\n");
-}

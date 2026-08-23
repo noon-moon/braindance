@@ -33,6 +33,7 @@
 // The API key is read from the environment by the SDK and nowhere else in this
 // process. It is never stored, logged, or reported (see /health).
 import Anthropic from "@anthropic-ai/sdk";
+import { record, type Usage } from "./usage.js";
 import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SUGGESTIONS_DIR, aiSuggestConfig, stateDirConflict } from "./config.js";
@@ -369,6 +370,8 @@ export async function suggestFor(noteText: string, scopes: ScopeBlurb[]): Promis
       format: { type: "json_schema", schema: SUGGESTION_SCHEMA as unknown as Record<string, unknown> },
     },
   }));
+
+  record("classify", res.usage as Usage | undefined);
 
   // BEFORE `content` is touched. A refused response can have an empty content
   // array, and reading content[0] would throw an error that reads like a bug.

@@ -17,8 +17,11 @@ import { reviseProposal, fileNote, mintHub, findCaptures } from "./applier.js";
 import { renderTask, taskConfig } from "./tasknotes.js";
 import {
   parseProposal, readReply, renderProposal, triageRel, keyOf, TRIAGE_DIR,
-  markUnclear, alreadyAsked, isAnswered, stripMarker, type Proposal,
+  markUnclear, alreadyAsked, isAnswered, stripMarker,
+  parseFailure, renderFailure, nextFailure, isDue, MAX_ATTEMPTS, type Proposal,
 } from "./approval.js";
+import { TransientError, RefusalError } from "./suggest.js";
+import { report, reset } from "./usage.js";
 
 const VAULT = process.env.VAULT_PATH ?? join(REPO_PATH, VAULT_SUBDIR);
 const abs = (rel: string): string => join(VAULT, rel);
@@ -58,16 +61,34 @@ function uniqueDest(title: string, asTyped: boolean): string {
   return `${name}.md`;
 }
 
+/** Classify one capture, or record why it could not be.
+ *
+ *  Every failure is caught HERE rather than at the top of the run. One capture
+ *  the classifier chokes on used to take the whole pass down with it — silently,
+ *  and for every other capture waiting behind it. */
 async function propose(captureRel: string): Promise<void> {
-  const text = readFileSync(abs(captureRel), "utf8");
-  const p = asProposal(await suggestFor(text, scopeCatalogue()));
+  const key = keyOf(captureRel);
+  const out = triageRel(key);
   mkdirSync(abs(TRIAGE_DIR), { recursive: true });
-  const out = triageRel(keyOf(captureRel));
-  writeFileSync(abs(out), renderProposal(captureRel, p));
-  console.log(`proposed → ${out}`);
+  try {
+    const text = readFileSync(abs(captureRel), "utf8");
+    const p = asProposal(await suggestFor(text, scopeCatalogue()));
+    writeFileSync(abs(out), renderProposal(captureRel, p));
+    console.log(`proposed → ${out}`);
+  } catch (e) {
+    const err = e as Error;
+    const prior = existsSync(abs(out)) ? parseFailure(readFileSync(abs(out), "utf8")) : null;
+    const f = nextFailure(prior, err.message, err instanceof TransientError, err instanceof RefusalError, Date.now());
+    writeFileSync(abs(out), renderFailure(captureRel, f));
+    console.warn(
+      `failed ${key} (attempt ${f.attempts}` +
+      `${err instanceof TransientError ? ", service" : `, note ${f.noteAttempts}/${MAX_ATTEMPTS}`}` +
+      `${f.dead ? ", giving up" : `, next ${f.nextAt.slice(11, 16)}`}): ${err.message}`,
+    );
+  }
 }
 
-async function pass(dry: boolean): Promise<void> {
+async function pass(dry: boolean, limit: number): Promise<void> {
   let dir: string[];
   try {
     dir = readdirSync(abs(TRIAGE_DIR));
@@ -75,13 +96,19 @@ async function pass(dry: boolean): Promise<void> {
     console.log("nothing waiting"); return;
   }
   const now = localISO();
+  reset();
+  let done = 0;
   for (const f of dir.filter((n) => n.endsWith(".triage.md"))) {
+    if (done >= limit) { console.log(`\ncapped at ${limit} this pass — rerun for the rest`); break; }
     const rel = `${TRIAGE_DIR}/${f}`;
     const key = f.replace(/\.triage\.md$/, "");
-    const parsed = parseProposal(readFileSync(abs(rel), "utf8"), key);
+    const raw = readFileSync(abs(rel), "utf8");
+    const fail = parseFailure(raw);
+    if (fail) { console.log(`skip ${key} — ${fail.dead ? "given up" : `failed, retry after ${fail.nextAt.slice(11, 16)}`}`); continue; }
+    const parsed = parseProposal(raw, key);
     if (!parsed) { console.log(`skip ${key} — not a proposal`); continue; }
 
-    const text = readFileSync(abs(rel), "utf8");
+    const text = raw;
     const reply = readReply(text);
     if (!reply) { console.log(`wait ${key} — no answer yet`); continue; }
     // An answer is finished when it says so. Without this, obsidian-git commits
@@ -93,12 +120,25 @@ async function pass(dry: boolean): Promise<void> {
     if (alreadyAsked(text, reply)) { console.log(`wait ${key} — already asked about this answer`); continue; }
     console.log(`\n── ${key}\n   reply: ${JSON.stringify(reply)}`);
 
+    done += 1;
     const scopes = getIngestableScopesStrict();
     // The vault's day, not UTC's — "friday" has to be resolved against the day
     // the person is living in, and UTC is already tomorrow for half of every
     // evening in the Americas. Same trap as the receipt stamp.
-    const act = validateAction(
-      await intentOf(reply, parsed.proposal, scopes, now.slice(0, 10)), scopes, takenRootNames());
+    //
+    // Caught per item: a reply the model cannot be asked about must not take
+    // down the answers queued behind it. Nothing is written on failure — the
+    // proposal and the capture stay exactly as they are, and the next pass
+    // tries again, which is right because the person's answer is unchanged and
+    // the failure was ours.
+    let act;
+    try {
+      act = validateAction(
+        await intentOf(reply, parsed.proposal, scopes, now.slice(0, 10)), scopes, takenRootNames());
+    } catch (e) {
+      console.warn(`   ✗ could not read the answer: ${(e as Error).message}`);
+      continue;
+    }
     console.log(`   action: ${act.kind}${act.note ? ` — ${act.note}` : ""}`);
     if (act.kind === "unclear") {
       const q = act.note || "I could not tell what you meant";
@@ -143,32 +183,54 @@ async function pass(dry: boolean): Promise<void> {
     unlinkSync(abs(rel));
     invalidate();
   }
+  if (done) console.log(`\n${report()}`);
 }
 
 /** Everything ARMED and not yet proposed. The queue is the marker, not a folder:
  *  a capture can be written anywhere Obsidian happens to put it, and nothing is
  *  ever picked up by accident. */
 function pending(): string[] {
-  const proposed = new Set<string>();
+  const now = Date.now();
+  const held = new Set<string>();
   try {
     for (const f of readdirSync(abs(TRIAGE_DIR))) {
-      if (f.endsWith(".triage.md")) proposed.add(f.replace(/\.triage\.md$/, ""));
+      if (!f.endsWith(".triage.md")) continue;
+      const key = f.replace(/\.triage\.md$/, "");
+      const fail = parseFailure(readFileSync(abs(`${TRIAGE_DIR}/${f}`), "utf8"));
+      // A proposal holds its capture (it is waiting on a person). A FAILURE
+      // holds it only until the backoff expires, and a dead one holds it for
+      // good — that is the difference between patient and stuck.
+      if (!fail || !isDue(fail, now)) held.add(key);
     }
   } catch { /* no queue yet */ }
-  return findCaptures(VAULT).filter((rel) => !proposed.has(keyOf(rel)));
+  return findCaptures(VAULT).filter((rel) => !held.has(keyOf(rel)));
 }
+
+/** How many captures one run may classify. A ceiling rather than a rate: the
+ *  worst case is what matters, and the worst case is something arming a hundred
+ *  notes at once. Whatever it skips is NAMED — a silent truncation reads as
+ *  "handled everything". */
+const DEFAULT_LIMIT = 10;
+const limitFrom = (args: string[]): number => {
+  const i = args.indexOf("--limit");
+  const n = i === -1 ? NaN : Number(args[i + 1]);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_LIMIT;
+};
 
 const [cmd, ...rest] = process.argv.slice(2);
 if (cmd === "propose" && rest[0]) await propose(rest[0]);
 else if (cmd === "propose") {
+  const limit = limitFrom(rest);
   const todo = pending();
   if (!todo.length) console.log("nothing is armed — no #capture waiting");
-  for (const rel of todo) await propose(rel);
+  for (const rel of todo.slice(0, limit)) await propose(rel);
+  if (todo.length > limit) console.log(`\n${todo.length - limit} more waiting — capped at ${limit} this pass`);
+  if (todo.length) console.log(`\n${report()}`);
 } else if (cmd === "find") {
   const todo = pending();
   console.log(todo.length ? todo.join("\n") : "nothing is armed — no #capture waiting");
-} else if (cmd === "pass") await pass(rest.includes("--dry"));
+} else if (cmd === "pass") await pass(rest.includes("--dry"), limitFrom(rest));
 else {
-  console.error("usage: cli.ts find | propose [<capture-path>] | pass [--dry]");
+  console.error("usage: cli.ts find | propose [<capture-path>] [--limit N] | pass [--dry] [--limit N]");
   process.exit(1);
 }

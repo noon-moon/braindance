@@ -1,3 +1,4 @@
+import { record, type Usage } from "./usage.js";
 // Your reply → an action. The second model call, and the one with authority.
 //
 // `suggest.ts` classifies a capture: its input is untrusted and its output is a
@@ -143,6 +144,7 @@ export async function intentOf(
       format: { type: "json_schema", schema: ACTION_SCHEMA as unknown as Record<string, unknown> },
     },
   }));
+  record("intent", res.usage as Usage | undefined);
   if (res.stop_reason === "refusal") throw new RefusalError(res.stop_details?.category ?? null);
   if (res.stop_reason === "max_tokens") throw new Error("response truncated at max_tokens");
   const block = res.content.find((c) => c.type === "text");

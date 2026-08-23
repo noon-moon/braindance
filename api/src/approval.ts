@@ -159,7 +159,103 @@ const K = {
   due: "bd_due",
   priority: "bd_priority",
   asked: "bd_asked",
+  attempts: "bd_attempts",
+  noteAttempts: "bd_note_attempts",
+  nextAt: "bd_next",
+  error: "bd_error",
 } as const;
+
+/** Four lives, and the reason is in `worker.ts`: a note that always fails must
+ *  stop being asked about, or it is a standing bill with no symptom. Same number
+ *  the suggestion sidecar used, because it is the same judgement. */
+export const MAX_ATTEMPTS = 4;
+const MAX_BACKOFF_MS = 60 * 60 * 1000;
+
+export interface Failure {
+  attempts: number;
+  /** The subset that were a verdict on THIS NOTE. Only these kill it. */
+  noteAttempts: number;
+  nextAt: string;
+  dead: boolean;
+  error: string;
+}
+
+/** Turn a failure into the note that decides whether this capture is ever
+ *  classified again — the sidecar's retry/dead discipline, moved into the vault
+ *  so a stuck capture is visible in Obsidian rather than in a log nobody reads.
+ *
+ *  `transient` is the whole judgement. A 5xx, a rate limit, a key the deployment
+ *  got wrong: none of those is evidence about the note, so they move the backoff
+ *  and never the counter that kills it. Conflating the two is what turned a
+ *  fifteen-minute outage into a permanently dead queue once already. */
+export function nextFailure(prior: Failure | null, message: string, transient: boolean, fatal: boolean, nowMs: number): Failure {
+  const attempts = (prior?.attempts ?? 0) + 1;
+  const noteAttempts = (prior?.noteAttempts ?? 0) + (transient ? 0 : 1);
+  // Exponential on TOTAL attempts, so an outage backs off to the hourly ceiling
+  // and sits there rather than hammering — patient rather than dead.
+  const backoff = Math.min(60_000 * 2 ** attempts, MAX_BACKOFF_MS);
+  return {
+    attempts,
+    noteAttempts,
+    nextAt: new Date(nowMs + backoff).toISOString(),
+    dead: fatal || noteAttempts >= MAX_ATTEMPTS,
+    error: safe(message).slice(0, 300),
+  };
+}
+
+/** Is this capture due for another go? */
+export const isDue = (f: Failure, nowMs: number): boolean =>
+  !f.dead && Date.parse(f.nextAt) <= nowMs;
+
+/** The note a failed capture leaves behind. Deliberately the same filename a
+ *  proposal would have used: one capture has one triage note whatever became of
+ *  it, so nothing has to reconcile two. */
+export function renderFailure(captureRel: string, f: Failure): string {
+  const link = captureRel.replace(/\.md$/, "");
+  return [
+    "---",
+    `${K.state}: ${f.dead ? "dead" : "failed"}`,
+    `${K.capture}: "[[${link}]]"`,
+    `${K.attempts}: ${f.attempts}`,
+    `${K.noteAttempts}: ${f.noteAttempts}`,
+    `${K.nextAt}: ${f.nextAt}`,
+    `${K.error}: ${scalar(f.error)}`,
+    "---",
+    "",
+    `# Could not classify — ${keyOf(captureRel)}`,
+    "",
+    `\`${f.error}\``,
+    "",
+    f.dead
+      ? `Given up after ${f.noteAttempts} attempts on the note itself. It will not be tried again — delete this note to let it try once more.`
+      : `Attempt ${f.attempts}. Next try after ${f.nextAt.slice(0, 16).replace("T", " ")}.`,
+    "",
+    "The capture is untouched and still where you left it:",
+    "",
+    `![[${link}]]`,
+    "",
+  ].join("\n");
+}
+
+/** Read a failure note back, or null if this isn't one. */
+export function parseFailure(text: string): Failure | null {
+  let data: Record<string, unknown>;
+  try {
+    data = (matter(text).data ?? {}) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const state = typeof data[K.state] === "string" ? (data[K.state] as string) : "";
+  if (state !== "failed" && state !== "dead") return null;
+  const num = (k: string): number => (typeof data[k] === "number" ? (data[k] as number) : 0);
+  return {
+    attempts: num(K.attempts),
+    noteAttempts: num(K.noteAttempts),
+    nextAt: String(data[K.nextAt] ?? new Date(0).toISOString()),
+    dead: state === "dead",
+    error: String(data[K.error] ?? ""),
+  };
+}
 
 /** A capture's KEY — its basename, which names the triage note beside it. Not a
  *  timestamp: a capture is whatever Obsidian wrote, wherever "default location

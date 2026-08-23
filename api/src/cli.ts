@@ -17,7 +17,8 @@ import { reviseProposal, fileNote, mintHub } from "./applier.js";
 import { renderTask, taskConfig } from "./tasknotes.js";
 import { receipt } from "./approval.js";
 import {
-  parseProposal, readReply, renderProposal, triageRel, keyOf, TRIAGE_DIR, type Proposal,
+  parseProposal, readReply, renderProposal, triageRel, keyOf, TRIAGE_DIR,
+  markUnclear, alreadyAsked, type Proposal,
 } from "./approval.js";
 
 const VAULT = process.env.VAULT_PATH ?? join(REPO_PATH, VAULT_SUBDIR);
@@ -81,8 +82,12 @@ async function pass(dry: boolean): Promise<void> {
     const parsed = parseProposal(readFileSync(abs(rel), "utf8"), key);
     if (!parsed) { console.log(`skip ${key} — not a proposal`); continue; }
 
-    const reply = readReply(readFileSync(abs(rel), "utf8"));
+    const text = readFileSync(abs(rel), "utf8");
+    const reply = readReply(text);
     if (!reply) { console.log(`wait ${key} — no answer yet`); continue; }
+    // An answer already judged unreadable costs nothing to skip and a model call
+    // to re-read. On a timer that difference is the whole running cost.
+    if (alreadyAsked(text, reply)) { console.log(`wait ${key} — already asked about this answer`); continue; }
     console.log(`\n── ${key}\n   reply: ${JSON.stringify(reply)}`);
 
     const scopes = getIngestableScopesStrict();
@@ -92,7 +97,13 @@ async function pass(dry: boolean): Promise<void> {
     const act = validateAction(
       await intentOf(reply, parsed.proposal, scopes, now.slice(0, 10)), scopes, takenRootNames());
     console.log(`   action: ${act.kind}${act.note ? ` — ${act.note}` : ""}`);
-    if (act.kind === "unclear" || act.kind === "reclassify") { console.log("   left for another pass"); continue; }
+    if (act.kind === "unclear") {
+      const q = act.note || "I could not tell what you meant";
+      console.log(`   ask again: ${q}`);
+      if (!dry) writeFileSync(abs(rel), markUnclear(text, `${q} — say \`yes\`, \`discard\`, or name a hub`, reply));
+      continue;
+    }
+    if (act.kind === "reclassify") { console.log("   left for another pass"); continue; }
 
     if (!existsSync(abs(parsed.captureRel))) { console.log(`   capture missing — skipped`); continue; }
 

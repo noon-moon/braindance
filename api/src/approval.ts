@@ -54,6 +54,16 @@ export const TRIAGE_DIR = "_triage";
 const REPLY_HEADING = "## Your call";
 const REPLY_PROMPT = `${REPLY_HEADING} — reply below: \`yes\`, or what to change`;
 
+/** A short fingerprint of an answer that has already been judged. Not for
+ *  security — for THRIFT. Without it a reply the model cannot read costs a model
+ *  call on every pass, forever, and on a timer that is a bill with no symptom.
+ *  The same discipline the suggestion sidecar's retry/dead states exist for. */
+export const replyFingerprint = (reply: string): string => {
+  let h = 0;
+  for (let i = 0; i < reply.length; i++) h = (Math.imul(31, h) + reply.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+};
+
 /** THE BOUNDARY. Every model-derived string that reaches the note BODY passes
  *  through here, and the guarantee is exactly one thing:
  *
@@ -78,6 +88,7 @@ const K = {
   tags: "bd_tags",
   due: "bd_due",
   priority: "bd_priority",
+  asked: "bd_asked",
 } as const;
 
 /** A capture's KEY — its basename, which names the triage note beside it. Not a
@@ -247,6 +258,36 @@ export function readReply(text: string): string {
   }
   return out.join("\n").trim();
 }
+
+/** Ask again, in the note, without touching what the person wrote.
+ *
+ *  Three things happen and each is load-bearing:
+ *
+ *   - The QUESTION goes on the heading line, where the prompt already lives, so
+ *     the section below it stays entirely theirs. Their answer is left exactly
+ *     as typed — it is what they meant, and the failure was in reading it.
+ *   - `bd_state` becomes `unclear`, which is visible in Obsidian's properties
+ *     panel: the note says it is stuck rather than sitting silently in a queue.
+ *   - `bd_asked` records WHICH answer was already judged. The next pass compares
+ *     it and spends nothing re-reading an unchanged one — without this, "not
+ *     sure yet" costs a model call every tick until someone notices. */
+export function markUnclear(text: string, question: string, reply: string): string {
+  const fp = replyFingerprint(reply);
+  let out = text.replace(/^bd_state:.*$/m, `${K.state}: unclear`);
+  out = /^bd_asked:/m.test(out)
+    ? out.replace(/^bd_asked:.*$/m, `${K.asked}: ${fp}`)
+    : out.replace(/^bd_state:.*$/m, (m) => `${m}\n${K.asked}: ${fp}`);
+  return out.replace(
+    new RegExp(`^${REPLY_HEADING.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*$`, "m"),
+    `${REPLY_HEADING} — ${safe(question)}`,
+  );
+}
+
+/** Has this answer already been judged unreadable? Cheap, local, no model call. */
+export const alreadyAsked = (text: string, reply: string): boolean => {
+  const m = text.match(/^bd_asked:\s*(\S+)\s*$/m);
+  return Boolean(m && m[1] === replyFingerprint(reply));
+};
 
 /** The receipt left on a note the agent filed WITHOUT asking — the low-salience
  *  footer, and the only mark it leaves on a note you keep.

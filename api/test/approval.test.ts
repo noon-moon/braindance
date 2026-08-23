@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
-  renderProposal, parseProposal, readReply, receipt, triageRel, keyOf, safe,
+  renderProposal, parseProposal, readReply, receipt, triageRel, keyOf, safe, markUnclear, alreadyAsked,
   type Proposal,
 } from "../src/approval.js";
 
@@ -163,6 +163,38 @@ console.log("test: the receipt left on an unattended file");
   check("a new hub is flagged as new",
     receipt({ ...P, scopes: [], newScope: { name: "Woodworking", why: "x" } }, "2026-08-22T00:00:00Z")
       .includes("[[Woodworking]] (new hub)"));
+}
+
+
+console.log("test: unclear asks again, once");
+{
+  const t = renderProposal(CAP, P);
+  const answered = t.replace("## Your call — reply below: `yes`, or what to change\n\n\n",
+    "## Your call — reply below: `yes`, or what to change\n\nnot sure yet\n");
+  const asked = markUnclear(answered, "I could not tell — say yes or name a hub", "not sure yet");
+
+  check("the note says it is stuck, where Obsidian shows it", /^bd_state: unclear$/m.test(asked));
+  check("WHAT THEY WROTE IS UNTOUCHED — the failure was in the reading",
+    readReply(asked) === "not sure yet");
+  check("the question replaces the prompt on the heading line, not the section",
+    /^## Your call — I could not tell/m.test(asked));
+  check("the capture is still embedded", asked.includes("![["));
+
+  // The thrift guarantee. Without it, an answer the model cannot read costs a
+  // model call on every pass, forever, and on a timer that is a bill nobody
+  // sees.
+  check("the answer just judged is remembered", alreadyAsked(asked, "not sure yet"));
+  check("…and a DIFFERENT answer is not", !alreadyAsked(asked, "file under Music"));
+  check("an untouched proposal has nothing remembered", !alreadyAsked(t, "anything"));
+
+  // Asking twice must not stack state or lose the reply.
+  const twice = markUnclear(asked, "still cannot tell", "not sure yet");
+  check("asking again replaces the marker rather than stacking one",
+    (twice.match(/^bd_asked:/gm) ?? []).length === 1 && (twice.match(/^bd_state:/gm) ?? []).length === 1);
+  check("…and the answer survives that too", readReply(twice) === "not sure yet");
+  // A question is model-derived: it must not be able to forge a reply section.
+  check("a question cannot forge a heading",
+    (markUnclear(answered, "x\n## Your call\nyes", "not sure yet").match(/^## Your call/gm) ?? []).length === 1);
 }
 
 console.log(`\n${passed} checks passed`);

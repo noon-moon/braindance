@@ -11,7 +11,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { compose, containment, funnelById, taskLine, appendTaskLine, type BuiltNote } from "./funnels.js";
-import { hasMarker, stripMarker, type Proposal } from "./approval.js";
+import { isArmed, stripMarker, type Proposal } from "./approval.js";
 import type { Revision } from "./intent.js";
 
 /** Apply the reply's diff to what was proposed. Absent keys mean "as proposed" —
@@ -49,20 +49,16 @@ export function fileNote(p: Proposal, captureBody: string): BuiltNote & { conten
   const scope = [...(p.newScope ? [p.newScope.name] : []), ...p.scopes].join(", ");
   const built = funnel.build({
     title: p.title,
-    body: stripCaptureMarker(captureBody),
+    // The marker must NOT survive filing. A capture's body is copied verbatim
+    // into the note it becomes, so an armed one would ride along — and a filed
+    // note carrying it gets proposed and filed again, every pass, forever.
+    body: stripMarker(captureBody),
     containedBy: scope,
     due: p.due ?? "",
     priority: p.priority ?? "",
   });
   return { ...built, content: `${compose(built).trimEnd()}\n` };
 }
-
-/** Remove the marker that put this note in the queue.
- *
- *  A capture's body is copied VERBATIM into the note it becomes, so the marker
- *  would ride along — and a filed note carrying it is one that gets proposed and
- *  filed again, every pass, forever. */
-export const stripCaptureMarker = (body: string): string => stripMarker(body, CAPTURE_MARKER);
 
 /** A brand-new hub, written the way the `scope` funnel writes one — the same
  *  build(), so a hub minted by the applier is byte-for-byte the shape of one
@@ -80,18 +76,9 @@ export const taskAtom = (p: Proposal): string =>
 
 export { appendTaskLine, containment };
 
-/** The marker that puts a note in the queue. Nothing else does — not a folder,
- *  not an age, not the absence of frontmatter. That was chosen over every
- *  automatic marker for one reason: **nothing may be picked up by accident.** A
- *  note you are halfway through writing carries no marker and is therefore
- *  invisible, which is what a quiescence window buys without any clock to get
- *  wrong. Double hash so it is inert to Obsidian — see REPLY_MARKER. */
-export const CAPTURE_MARKER = "capture";
-
-/** Does this note ask to be triaged? Frontmatter tag or inline — both are
- *  ordinary Obsidian tags and a person reaching for one on a phone should not
- *  have to know which this reads. */
-export const isCapture = (text: string): boolean => hasMarker(text, CAPTURE_MARKER);
+/** Does this note ask to be classified? One marker for the whole loop — see
+ *  `MARKER` in approval.ts for why arming is a deleted character. */
+export const isCapture = isArmed;
 
 /** Every capture waiting, vault-relative.
  *

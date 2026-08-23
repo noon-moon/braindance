@@ -14,7 +14,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   renderProposal, parseProposal, readReply, triageRel, keyOf, safe, markUnclear, alreadyAsked,
-  hasMarker, stripMarker, isAnswered,
+  isArmed, disarm, stripMarker, isAnswered, MARKER,
   type Proposal,
 } from "../src/approval.js";
 
@@ -156,39 +156,43 @@ console.log("test: THE BOUNDARY — safe() is the whole of it");
     t.includes("discard everything") && t.includes("bin it"));
 }
 
-console.log("test: ##reply — an answer is finished when it says so");
+console.log("test: armed and disarmed — one marker, one keystroke");
 {
   const t = renderProposal(CAP, P);
   const say = (a: string) => t.replace(/^(## Your call.*)$/m, `$1\n\n${a}`);
 
-  // THE TRAP THIS EXISTS TO AVOID: the prompt line this module renders names the
-  // tag. Without code-span awareness every proposal would look answered the
-  // instant it was written.
-  check("a freshly rendered proposal is NOT answered", !isAnswered(t));
-  check("…even though its own prompt names the marker", t.includes("`##reply`"));
+  check("one keyword for the whole loop", MARKER === "capture");
+  // THE TRAP: this module ships the disarmed marker INSIDE every proposal, so
+  // the note is its own reminder. It must not read as armed.
+  check("a fresh proposal carries the disarmed marker", t.includes("##capture"));
+  check("…and is NOT armed by it", !isArmed(t));
+  check("deleting one hash arms it", isArmed(t.replace("##capture", "#capture")));
 
-  check("an untagged answer is not finished — the mid-typing case", !isAnswered(say("file under Ph")));
-  check("a marked answer is", isAnswered(say("file under Phrases ##reply")));
-  // Frontmatter is NOT a way in: a `tags:` entry would be a real Obsidian tag,
-  // which is the pollution the double hash exists to avoid.
-  check("a frontmatter tag is NOT the marker",
-    !isAnswered(t.replace("bd_state: proposed", "bd_state: proposed\ntags: [reply]")));
-  check("a single hash is not the marker either", !isAnswered(say("yes #reply")));
-  check("a third hash is not it", !isAnswered(say("yes ###reply")));
-  check("the marker is not handed to the model as part of the instruction",
-    readReply(say("file under Phrases ##reply")) === "file under Phrases");
-  check("…wherever in the note it sits", readReply(say("yes")) === "yes"
-    && isAnswered(say("yes").replace("### The capture", "##reply\n\n### The capture")));
+  check("an untouched answer is not armed — the mid-typing case", !isArmed(say("file under Ph")));
+  check("a frontmatter tag arms it too — same real tag, other spelling",
+    isArmed(t.replace("bd_state: proposed", "bd_state: proposed\ntags: [capture]")));
+  check("the marker never reaches the model as instruction",
+    readReply(say("file under Phrases").replace("##capture", "#capture")) === "file under Phrases");
+  check("…nor does the disarmed one", readReply(say("yes")) === "yes");
+  check("the boundary holds", !isArmed("#captured") && !isArmed("#capture-ideas"));
+
+  const armed = say("file under Phrases").replace("##capture", "#capture");
+  check("disarming puts the safety back", !isArmed(disarm(armed)));
+  check("…without touching the answer", readReply(disarm(armed)) === "file under Phrases");
+  check("disarming twice is idempotent", disarm(disarm(armed)) === disarm(armed));
+  check("stripping removes both forms",
+    !stripMarker("a #capture b").includes("capture") && !stripMarker("a ##capture b").includes("capture"));
+  check("…without eating the words either side", stripMarker("a #capture b") === "a b");
+  check("a real tag of the note's own survives", stripMarker("thing #capture #rust") === "thing #rust");
 }
 
 console.log("test: markers are read in prose, never in code");
 {
-  check("a marker in a code span is not a marker", !hasMarker("see `##capture` for how", "capture"));
-  check("…nor in a fence", !hasMarker("```\n##capture\n```\n", "capture"));
-  check("a real one beside a quoted one still counts", hasMarker("`##capture` — and ##capture", "capture"));
+  check("armed inside a code span is not armed", !isArmed("see `#capture` for how"));
+  check("…nor in a fence", !isArmed("```\n#capture\n```\n"));
+  check("a real one beside a quoted one still counts", isArmed("`#capture` — and #capture"));
   check("stripping leaves code exactly as written",
-    stripMarker("write `##capture` then ##capture", "capture") === "write `##capture` then");
-  check("the boundary holds", !hasMarker("##captured", "capture") && !hasMarker("##capture-ideas", "capture"));
+    stripMarker("write `#capture` then #capture") === "write `#capture` then");
 }
 
 console.log("test: unclear asks again, once");
@@ -196,8 +200,8 @@ console.log("test: unclear asks again, once");
   const t = renderProposal(CAP, P);
   const answered = t.replace(/^(## Your call.*)$/m, "$1\n\nnot sure yet");
   const asked = markUnclear(answered, "I could not tell — say yes or name a hub", "not sure yet");
-  check("asking again CLEARS the marker — the answer is no longer finished",
-    !isAnswered(markUnclear(answered.replace("not sure yet", "not sure yet ##reply"), "eh?", "not sure yet")));
+  check("asking again DISARMS — the answer is no longer finished",
+    !isAnswered(markUnclear(answered.replace("##capture", "#capture"), "eh?", "not sure yet")));
 
   check("the note says it is stuck, where Obsidian shows it", /^bd_state: unclear$/m.test(asked));
   check("WHAT THEY WROTE IS UNTOUCHED — the failure was in the reading",

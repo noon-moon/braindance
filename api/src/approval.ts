@@ -52,29 +52,34 @@ export const TRIAGE_DIR = "_triage";
  *  and typed in their place, which is exactly the right instinct and exactly
  *  what a parser must not have to guess about.) */
 const REPLY_HEADING = "## Your call";
-const REPLY_PROMPT = `${REPLY_HEADING} — reply below, then write \`##reply\` when you are done`;
+const REPLY_PROMPT = `${REPLY_HEADING} — reply below, then delete one \`#\` from the marker below`;
 
-/** The marker that says an answer is FINISHED — the mirror of `##capture`, and
- *  for the same reason. obsidian-git commits every few minutes, so without it a
- *  half-typed "file under Ph" syncs, gets judged unreadable, and leaves a mess
- *  the person has to clean up for the crime of saving. Writing the marker is the
- *  last act, so nothing is ever read mid-thought.
+/** ONE keyword for the whole loop, and it means **proceed**. Which step that is
+ *  depends on the file it appears in: on a capture it means "classify this", on
+ *  a proposal it means "act on my answer". There is no second word to remember
+ *  and no wrong one to use.
  *
- *  DOUBLE hash, and not a tag at all. `#reply` and `#capture` would be real
- *  Obsidian tags: in the tag pane, in search, in the graph, and in the
- *  autocomplete of every note the user ever writes — a permanent addition to
- *  their vocabulary in exchange for a signal that means nothing outside this
- *  loop. `##reply` is inert to Obsidian and means something only here, which is
- *  exactly the right footprint for a piece of machinery. */
-export const REPLY_MARKER = "reply";
+ *  ── ARMED AND DISARMED ──────────────────────────────────────────────────────
+ *
+ *      ##capture   inert. Obsidian does not read it as a tag, and neither do we.
+ *       #capture   armed. A real Obsidian tag, and the signal to act.
+ *
+ *  Arming is DELETING ONE CHARACTER, which is the whole reason for the pair. A
+ *  template can stamp the disarmed form into every new note without queueing
+ *  anything, the note carries a visible reminder of what to do with it, and
+ *  finishing a thought costs one keystroke on a phone rather than typing a word.
+ *  Nothing is ever picked up mid-writing, because a note you are three words
+ *  into still has two hashes.
+ *
+ *  Armed, it is a real tag on purpose: Obsidian's own search and tag pane then
+ *  show you everything waiting, with no view to build. */
+export const MARKER = "capture";
 
 /** Run `fn` over the prose of a note, leaving CODE alone.
  *
- *  Both markers are ordinary words with a hash in front, and this file writes
- *  one of them into every proposal it renders — the prompt line says to tag it
- *  `#reply`, in backticks. Without this, that line would make every proposal
- *  look answered the moment it was written. It is also simply correct: a note
- *  ABOUT braindance, quoting `#capture` in a code span, is not a capture. */
+ *  This file writes the marker into every proposal it renders, and documentation
+ *  in this vault quotes it. A note ABOUT braindance is not a capture, and a
+ *  proposal is not answered the instant it is written. */
 function overProse(text: string, fn: (s: string) => string): string {
   return text
     .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
@@ -82,37 +87,42 @@ function overProse(text: string, fn: (s: string) => string): string {
     .join("");
 }
 
-/** Does this note carry `##name` in its prose?
- *
- *  Prose only, never code — this file writes `##reply` into every proposal it
- *  renders (the prompt says to), so without that exclusion every proposal would
- *  look answered the instant it existed. It is also just correct: a note ABOUT
- *  braindance quoting the marker is not a capture.
- *
- *  Frontmatter is deliberately NOT consulted. A `tags:` entry would be a real
- *  Obsidian tag, which is the pollution the double hash exists to avoid; letting
- *  it in through the back door would give the vocabulary back one note at a time.
- *
- *  `###name` does not match — a third hash means something else, and guessing
- *  which is not this function's business. */
-export function hasMarker(text: string, name: string): boolean {
-  const re = new RegExp(`(^|[^\\w/#-])##${name}(?![\\w/-])`, "u");
+/** Armed? `#capture` in prose (never preceded by another hash — that is the
+ *  disarmed form) or as a frontmatter tag, which is the same real tag by another
+ *  spelling. Never inside code. */
+export function isArmed(text: string): boolean {
+  let data: Record<string, unknown> = {};
+  try {
+    data = (matter(text).data ?? {}) as Record<string, unknown>;
+  } catch { /* unparseable frontmatter — the body still decides */ }
+  const raw = data.tags;
+  const tags = Array.isArray(raw) ? raw.map(String) : typeof raw === "string" ? [raw] : [];
+  if (tags.some((t) => t.replace(/^#+/, "").toLowerCase() === MARKER)) return true;
+  const re = new RegExp(`(^|[^\\w/#-])#${MARKER}(?![\\w/-])`, "u");
   let found = false;
-  overProse(text, (part) => { if (re.test(part)) found = true; return part; });
+  overProse(matter(text).content ?? text, (part) => { if (re.test(part)) found = true; return part; });
   return found;
 }
 
-/** Remove `##name` from prose, taking the space BEFORE it rather than after —
- *  dropping the trailing one joins a mid-sentence removal to the next word
- *  across a line break. Code spans are left exactly as written. */
-export const stripMarker = (text: string, name: string): string =>
+/** Put the safety back on: `#capture` → `##capture`, in prose only.
+ *
+ *  Used when the loop hands a note back to the person. Re-arming is then the
+ *  same one keystroke it always was, and — the point — the next keystroke of a
+ *  half-rewritten answer is not read as a finished one. */
+export const disarm = (text: string): string =>
   overProse(text, (part) =>
-    part.replace(new RegExp(`(^|[ \\t])##${name}(?![\\w/-])`, "gmu"), ""))
+    part.replace(new RegExp(`(^|[^\\w/#-])#${MARKER}(?![\\w/-])`, "gu"), `$1##${MARKER}`));
+
+/** Remove the marker entirely, armed or disarmed, taking the space BEFORE it
+ *  rather than after — dropping the trailing one joins a mid-sentence removal to
+ *  the next word across a line break. Code spans are left exactly as written. */
+export const stripMarker = (text: string): string =>
+  overProse(text, (part) =>
+    part.replace(new RegExp(`(^|[ \\t])#{1,2}${MARKER}(?![\\w/-])`, "gmu"), ""))
     .replace(/[ \t]+$/gm, "")
     .trim();
 
-/** Is the answer finished? */
-export const isAnswered = (text: string): boolean => hasMarker(text, REPLY_MARKER);
+export const isAnswered = isArmed;
 
 /** A short fingerprint of an answer that has already been judged. Not for
  *  security — for THRIFT. Without it a reply the model cannot read costs a model
@@ -231,6 +241,7 @@ export function renderProposal(captureRel: string, p: Proposal): string {
     REPLY_PROMPT,
     "",
     "",
+    `##${MARKER}`,
     "---",
     "",
     "### The capture",
@@ -316,7 +327,7 @@ export function readReply(text: string): string {
     if (/^\s*---\s*$/.test(l) || /^\s*#{1,6}\s/.test(l)) break;
     out.push(l.replace(/^\s*>\s?/, ""));
   }
-  return stripMarker(out.join("\n"), REPLY_MARKER);
+  return stripMarker(out.join("\n"));
 }
 
 /** Ask again, in the note, without touching what the person wrote.
@@ -339,12 +350,12 @@ export function markUnclear(text: string, question: string, reply: string): stri
     : out.replace(/^bd_state:.*$/m, (m) => `${m}\n${K.asked}: ${fp}`);
   out = out.replace(
     new RegExp(`^${REPLY_HEADING.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*$`, "m"),
-    `${REPLY_HEADING} — ${safe(question)} · write \`##reply\` again when you have`,
+    `${REPLY_HEADING} — ${safe(question)} · re-arm the marker when you have`,
   );
-  // The marker means "finished". Asking again makes that untrue, so it goes —
-  // otherwise the next keystroke of a corrected answer is read mid-edit, which
-  // is the whole thing the marker exists to prevent.
-  return stripMarker(out, REPLY_MARKER);
+  // The marker means "finished". Asking again makes that untrue, so the safety
+  // goes back on — otherwise the next keystroke of a corrected answer is read
+  // mid-edit, which is the whole thing the marker exists to prevent.
+  return disarm(out);
 }
 
 /** Has this answer already been judged unreadable? Cheap, local, no model call. */

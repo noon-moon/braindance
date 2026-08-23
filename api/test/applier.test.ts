@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isCapture, findCaptures, stripCaptureMarker } from "../src/applier.js";
+import { isCapture, findCaptures } from "../src/applier.js";
 
 let passed = 0;
 const check = (label: string, cond: boolean) => {
@@ -21,39 +21,21 @@ const check = (label: string, cond: boolean) => {
 
 console.log("test: what asks to be triaged");
 {
-  check("an inline tag", isCapture("some thought\n\n##capture\n"));
-  check("…mid-sentence too", isCapture("a thought ##capture and more"));
-  // Frontmatter is deliberately not a way in — a `tags:` entry is a real
-  // Obsidian tag, which is the vocabulary pollution the double hash avoids.
-  check("a frontmatter tag is NOT a capture", !isCapture("---\ntags:\n  - capture\n---\n\nthing\n"));
-  check("a single hash is not the marker", !isCapture("thing #capture"));
-  check("a third hash is not the marker", !isCapture("thing ###capture"));
+  check("an armed marker on its own line", isCapture("some thought\n\n#capture\n"));
+  check("…mid-sentence too", isCapture("a thought #capture and more"));
+  // Armed, it IS a real Obsidian tag, so frontmatter is the same signal in
+  // another spelling and must count. (Only the INLINE form can be disarmed —
+  // frontmatter strips hashes — which is why a template uses the inline one.)
+  check("a frontmatter tag counts", isCapture("---\ntags:\n  - capture\n---\n\nthing\n"));
 
-  check("an untagged note is invisible — the half-written case", !isCapture("a thought I have not finished"));
-  // The tag boundary. These are tags in their own right and must stay out.
-  check("###captured is not ##capture", !isCapture("thing ###captured"));
-  check("###capture-ideas is not ##capture", !isCapture("thing ###capture-ideas"));
-  check("##capture/sub is not ##capture", !isCapture("thing ##capture/sub"));
-  check("prose containing the word is not a tag", !isCapture("I should capture this"));
-  check("unparseable frontmatter is irrelevant — the body decides",
-    isCapture("---\n: : :\n---\n\nthing ##capture\n"));
-  check("a tag quoted in code does not queue a note about braindance",
-    !isCapture("the marker is `##capture`"));
-}
-
-console.log("test: THE MARKER MUST NOT SURVIVE FILING");
-{
-  // A capture's body is copied verbatim into the note it becomes. A filed note
-  // carrying the tag is one that gets proposed and filed again, every pass,
-  // forever.
-  check("the marker is removed", !isCapture(stripCaptureMarker("a thought\n\n##capture\n")));
-  check("…mid-sentence, without eating the words either side",
-    stripCaptureMarker("a thought ##capture and more") === "a thought and more");
-  check("…leaving no trailing whitespace behind",
-    stripCaptureMarker("a thought ##capture\nmore") === "a thought\nmore");
-  check("the note's own real tags survive",
-    stripCaptureMarker("thing ##capture #rust") === "thing #rust");
-  check("###captured is left alone", stripCaptureMarker("thing ###captured") === "thing ###captured");
+  // The whole point of the pair: a template can stamp the disarmed form into
+  // every new note without queueing a single one.
+  check("the DISARMED form is invisible", !isCapture("a thought I have not finished\n\n##capture\n"));
+  check("an unmarked note is invisible", !isCapture("a thought I have not finished"));
+  check("the boundary holds", !isCapture("thing #captured") && !isCapture("thing #capture-ideas"));
+  check("prose containing the word is not a marker", !isCapture("I should capture this"));
+  check("a marker quoted in code does not queue a note about braindance",
+    !isCapture("the marker is `#capture`"));
 }
 
 console.log("test: finding them in a vault");
@@ -64,18 +46,20 @@ console.log("test: finding them in a vault");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(V, rel), body);
   };
-  w("tagged.md", "a thought ##capture");
+  w("armed.md", "a thought #capture");
   w("plain.md", "an ordinary note");
-  w("daily/Daily-2026-08-23.md", "log ##capture");
-  w("_ephemeral/scratch.md", "scratch ##capture");
-  w("_triage/x.triage.md", "##capture");
-  w(".obsidian/x.md", "##capture");
-  w("notes.txt", "##capture");
+  w("disarmed.md", "half a thought\n\n##capture\n");
+  w("daily/Daily-2026-08-23.md", "log #capture");
+  w("_ephemeral/scratch.md", "scratch #capture");
+  w("_triage/x.triage.md", "#capture");
+  w(".obsidian/x.md", "#capture");
+  w("notes.txt", "#capture");
 
   const found = findCaptures(V);
-  check("a tagged note at the root is found", found.includes("tagged.md"));
+  check("an armed note at the root is found", found.includes("armed.md"));
   check("…and one a level down", found.includes("daily/Daily-2026-08-23.md"));
-  check("an untagged note is not", !found.includes("plain.md"));
+  check("an unmarked note is not", !found.includes("plain.md"));
+  check("a DISARMED note is not — the template case", !found.includes("disarmed.md"));
   // _ephemeral is 264 MB of scratch in the real vault; walking it is not an
   // option, and its contents are non-canonical by definition.
   check("underscore directories are never walked",

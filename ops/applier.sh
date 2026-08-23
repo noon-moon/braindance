@@ -218,7 +218,28 @@ commit_if_dirty "braindance: applier pass" || fail "git commit"
 # still has to send the commit made before the rebase, and one that failed to
 # push last time has to catch up. "Is there anything origin lacks" is the
 # question that covers both.
+# RETRY A LOSING PUSH RATHER THAN REPORTING IT.
+#
+# There are three writers on this branch — this box and obsidian-git on the desk
+# and the phone — and a pass holds its position for as long as two model calls
+# take. Anything pushed in that window makes this push non-fast-forward. That is
+# not a failure: the work is committed locally and correct, and the only thing
+# behind is the sync.
+#
+# So re-fetch, rebase on top of what arrived, and try again. It is the same
+# pull-rebase-retry the api's push queue used, for the same reason. Reporting it
+# instead was measurably wrong: the first live collision wrote an alarm note into
+# the vault for a pass that had just filed a note perfectly.
 if [ -n "$(git rev-list "origin/$BRANCH..HEAD" 2>/dev/null)" ]; then
-  git push -q origin "$BRANCH" >>"$LOG" 2>&1 || fail "git push"
+  pushed=""
+  for attempt in 1 2 3; do
+    if git push -q origin "$BRANCH" >>"$LOG" 2>&1; then pushed=1; break; fi
+    echo "push $attempt lost a race; rebasing and retrying" >>"$LOG"
+    git fetch -q origin "$BRANCH" >>"$LOG" 2>&1 || fail "git fetch (push retry)"
+    # A conflict here is a real divergence and stops properly — that is a
+    # decision for a person, never for a timer.
+    git rebase -q "origin/$BRANCH" >>"$LOG" 2>&1 || fail "git rebase (push retry)"
+  done
+  [ -n "$pushed" ] || fail "git push"
 fi
 cat "$LOG"

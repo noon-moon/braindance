@@ -57,8 +57,16 @@ const K = {
   at: "bd_at",
 } as const;
 
-export const triageRel = (stamp: string): string => `${TRIAGE_DIR}/${stamp}.triage.md`;
-export const replyRel = (stamp: string): string => `${TRIAGE_DIR}/${stamp}.reply.md`;
+/** A capture's KEY — its basename, which is what names the pair of triage notes
+ *  beside it. Not a timestamp: a capture is whatever Obsidian wrote, wherever
+ *  the "default location for new notes" happens to point, and it may well be
+ *  called `Building Effective Agents`. Deriving the key from the file rather
+ *  than from a stamp is what lets this work on a vault that captures by hand. */
+export const keyOf = (captureRel: string): string =>
+  captureRel.slice(captureRel.lastIndexOf("/") + 1).replace(/\.md$/, "");
+
+export const triageRel = (key: string): string => `${TRIAGE_DIR}/${key}.triage.md`;
+export const replyRel = (key: string): string => `${TRIAGE_DIR}/${key}.reply.md`;
 
 /** What the agent proposes doing with a capture. */
 export interface Proposal {
@@ -88,11 +96,12 @@ const scalar = (v: string): string =>
  *  from untrusted input, and running it back through a parser would launder it
  *  into something with authority. The frontmatter has been through `validate()`;
  *  the prose is for human eyes only. */
-export function renderProposal(stamp: string, p: Proposal): string {
+export function renderProposal(captureRel: string, p: Proposal): string {
+  const key = keyOf(captureRel);
   const fm: string[] = [
     "---",
     `${K.state}: proposed`,
-    `${K.capture}: "[[inbox/${stamp}]]"`,
+    `${K.capture}: "[[${captureRel.replace(/\.md$/, "")}]]"`,
     `${K.kind}: ${scalar(p.kind)}`,
     `${K.title}: ${scalar(p.title)}`,
   ];
@@ -129,7 +138,7 @@ export function renderProposal(stamp: string, p: Proposal): string {
     // note, on a phone as much as at the desk. The agent never creates it,
     // because a file it has written to is a file it could be argued into
     // writing to again — and "nothing writes this path" is the whole guarantee.
-    `Write your answer in [[${stamp}.reply]] — \`yes\`, or what to change.`,
+    `Write your answer in [[${key}.reply]] — \`yes\`, or what to change.`,
     "Nothing happens until you do.",
     "",
     "---",
@@ -138,9 +147,9 @@ export function renderProposal(stamp: string, p: Proposal): string {
     "",
     // A TRANSCLUSION, not a copy. Obsidian renders the captured text inline so
     // you read the whole decision in one view, while the untrusted bytes stay in
-    // the other file. Path-qualified because the capture and this note would
-    // otherwise share a basename.
-    `![[inbox/${stamp}]]`,
+    // the other file. Path-qualified, because a capture at the vault root and
+    // this note would otherwise be two plausible targets for one basename.
+    `![[${captureRel.replace(/\.md$/, "")}]]`,
     "",
   );
   return `${fm.join("\n")}${body.join("\n")}`;
@@ -148,7 +157,7 @@ export function renderProposal(stamp: string, p: Proposal): string {
 
 export interface ParsedProposal {
   state: string;
-  stamp: string;
+  key: string;
   proposal: Proposal;
 }
 
@@ -156,7 +165,7 @@ export interface ParsedProposal {
  *  never its prose. Returns null for anything that isn't one, because a
  *  `_triage/` directory is a shared address space and a file that doesn't parse
  *  is not a file to act on. */
-export function parseProposal(text: string, stamp: string): ParsedProposal | null {
+export function parseProposal(text: string, key: string): ParsedProposal | null {
   let data: Record<string, unknown>;
   try {
     data = (matter(text).data ?? {}) as Record<string, unknown>;
@@ -172,7 +181,7 @@ export function parseProposal(text: string, stamp: string): ParsedProposal | nul
   const newScopeName = str(K.newScope);
   return {
     state: str(K.state),
-    stamp,
+    key,
     proposal: {
       title,
       kind,

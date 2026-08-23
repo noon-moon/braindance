@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
-  renderProposal, parseProposal, readReply, receipt, triageRel, replyRel,
+  renderProposal, parseProposal, readReply, receipt, triageRel, replyRel, keyOf,
   type Proposal,
 } from "../src/approval.js";
 
@@ -25,6 +25,7 @@ const check = (label: string, cond: boolean) => {
 };
 
 const STAMP = "2026-08-22T17-18-10-000Z";
+const CAP = `inbox/${STAMP}.md`;
 const P: Proposal = {
   title: "Building Effective Agents article",
   kind: "memo",
@@ -38,6 +39,8 @@ const P: Proposal = {
 
 console.log("test: paths — three files, distinct basenames");
 {
+  check("the key is the capture's basename", keyOf(CAP) === STAMP);
+  check("a capture at the vault root keys off its own name", keyOf("Building Effective Agents.md") === "Building Effective Agents");
   check("the proposal lives in _triage/", triageRel(STAMP) === "_triage/2026-08-22T17-18-10-000Z.triage.md");
   check("so does the reply", replyRel(STAMP) === "_triage/2026-08-22T17-18-10-000Z.reply.md");
   // Obsidian resolves [[wikilinks]] by basename, so a proposal named after its
@@ -48,7 +51,7 @@ console.log("test: paths — three files, distinct basenames");
 
 console.log("test: the proposal note");
 {
-  const t = renderProposal(STAMP, P);
+  const t = renderProposal(CAP, P);
   check("it declares its state", t.includes("bd_state: proposed"));
   check("it names its capture, path-qualified", t.includes(`bd_capture: "[[inbox/${STAMP}]]"`));
   check("the destination is a real wikilink — one tap from the proposal", t.includes("[[AI Orchestration]]"));
@@ -66,32 +69,32 @@ console.log("test: the proposal note");
   check("no bare `tags:` key leaks the proposed tags into this note",
     !/^tags:/m.test(t) && t.includes("bd_tags: [agents, llm]"));
 
-  const noScope = renderProposal(STAMP, { ...P, scope: null });
+  const noScope = renderProposal(CAP, { ...P, scope: null });
   check("no hub says so in words rather than leaving a blank", noScope.includes("no existing hub fits"));
-  const fresh = renderProposal(STAMP, { ...P, scope: null, newScope: { name: "Woodworking", why: "A standing craft interest." } });
+  const fresh = renderProposal(CAP, { ...P, scope: null, newScope: { name: "Woodworking", why: "A standing craft interest." } });
   check("a proposed hub says it would be CREATED", fresh.includes("does not exist yet, which filing would create"));
   check("…and carries the case for it", fresh.includes("A standing craft interest."));
-  const dated = renderProposal(STAMP, { ...P, due: "2026-09-01", priority: "high" });
+  const dated = renderProposal(CAP, { ...P, due: "2026-09-01", priority: "high" });
   check("due and priority reach both the frontmatter and the prose",
     dated.includes("bd_due: 2026-09-01") && dated.includes("due 2026-09-01"));
 }
 
 console.log("test: reading a proposal back");
 {
-  const parsed = parseProposal(renderProposal(STAMP, P), STAMP)!;
+  const parsed = parseProposal(renderProposal(CAP, P), STAMP)!;
   check("state round-trips", parsed.state === "proposed");
   check("title round-trips", parsed.proposal.title === P.title);
   check("the scope comes back unwrapped from its wikilink", parsed.proposal.scope === "AI Orchestration");
   check("tags round-trip", parsed.proposal.tags.join(",") === "agents,llm");
 
-  const fresh = parseProposal(renderProposal(STAMP, { ...P, scope: null, newScope: { name: "Woodworking", why: "x" } }), STAMP)!;
+  const fresh = parseProposal(renderProposal(CAP, { ...P, scope: null, newScope: { name: "Woodworking", why: "x" } }), STAMP)!;
   check("a proposed hub round-trips", fresh.proposal.newScope?.name === "Woodworking" && fresh.proposal.scope === null);
 
   // A title carrying YAML punctuation is the ordinary case, not an edge one —
   // captures are prose, and prose has colons in it.
   const awkward = { ...P, title: 'Re: the thing — a: b #4, "quoted"' };
   check("a title full of YAML punctuation survives the round trip",
-    parseProposal(renderProposal(STAMP, awkward), STAMP)!.proposal.title === awkward.title);
+    parseProposal(renderProposal(CAP, awkward), STAMP)!.proposal.title === awkward.title);
 
   check("a note that is not a proposal parses as null", parseProposal("# just a note\n", STAMP) === null);
   check("frontmatter without the required keys is not a proposal",

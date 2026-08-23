@@ -105,8 +105,21 @@ NOTEEOF
 git pull --rebase -q >>"$LOG" 2>&1 || fail "git pull"
 
 cd "$API" || fail "api directory"
-npx --yes tsx src/cli.ts propose --limit "$LIMIT" >>"$LOG" 2>&1 || fail "propose"
-npx --yes tsx src/cli.ts pass --limit "$LIMIT"    >>"$LOG" 2>&1 || fail "pass"
+
+# COMPILED OUTPUT IF THERE IS ANY. At a one-minute cadence, re-transpiling the
+# whole module graph on every run is pure waste — `npm ci && npm run build` once
+# at deploy time and every pass is a plain `node`. tsx stays as the fallback
+# because it is what a checkout has before anyone has built it, and a loop that
+# refuses to run until someone remembers a build step is a loop that is off.
+if [ -f dist/cli.js ]; then
+  RUN=(node dist/cli.js)
+else
+  echo "note: no dist/ — falling back to tsx (run 'npm ci && npm run build')" >>"$LOG"
+  RUN=(npx --yes tsx src/cli.ts)
+fi
+
+"${RUN[@]}" propose --limit "$LIMIT" >>"$LOG" 2>&1 || fail "propose"
+"${RUN[@]}" pass    --limit "$LIMIT" >>"$LOG" 2>&1 || fail "pass"
 
 cd "$VAULT" || fail "vault directory"
 # A good pass clears the alarm before anything else, so "the note is gone" and

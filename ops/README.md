@@ -57,6 +57,15 @@ changed. This is the **only writer of the vault on this box** — the api that
 used to own that checkout is gone — which is why the git handling lives in
 `ops/applier.sh` rather than inside the tool.
 
+The api used to run in a container, so the host has no `node_modules` and no
+build. Both are needed now — the applier runs on the host:
+
+```console
+$ cd /srv/braindance/api && npm ci && npm run build
+```
+
+Then the unit:
+
 ```console
 $ sudo cp ops/braindance-applier.{service,timer} /etc/systemd/system/
 $ sudoedit /etc/systemd/system/braindance-applier.service   # set User= and the paths

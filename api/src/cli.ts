@@ -26,6 +26,20 @@ import { report, reset } from "./usage.js";
 const VAULT = process.env.VAULT_PATH ?? join(REPO_PATH, VAULT_SUBDIR);
 const abs = (rel: string): string => join(VAULT, rel);
 
+/** Say which vault this is operating on, every run, before doing anything.
+ *
+ *  It resolves from `VAULT_PATH`, falling back to `REPO_PATH`/`VAULT_SUBDIR` —
+ *  and that fallback silently pointed a live run at a stale checkout, because
+ *  the wrapper script knew where the vault was and never passed it on. A tool
+ *  that writes to a vault should never leave "which one" implicit. */
+function announceVault(): void {
+  if (!existsSync(VAULT)) {
+    console.error(`no vault at ${VAULT} — set VAULT_PATH`);
+    process.exit(1);
+  }
+  console.log(`vault: ${VAULT}`);
+}
+
 /** A validated `Suggestion` as a `Proposal`. The one place the classifier's
  *  vocabulary is translated into the filer's, so a change to either shows up
  *  here rather than in three scripts. */
@@ -70,6 +84,9 @@ async function propose(captureRel: string): Promise<void> {
   const key = keyOf(captureRel);
   const out = triageRel(key);
   mkdirSync(abs(TRIAGE_DIR), { recursive: true });
+  // Gone between the scan and now — filed by hand, renamed, unsynced. Nothing
+  // to classify and nothing worth remembering about it.
+  if (!existsSync(abs(captureRel))) { console.log(`skip ${key} — capture is gone`); return; }
   try {
     const text = readFileSync(abs(captureRel), "utf8");
     const p = asProposal(await suggestFor(text, scopeCatalogue()));
@@ -211,25 +228,47 @@ function pending(): string[] {
  *  notes at once. Whatever it skips is NAMED — a silent truncation reads as
  *  "handled everything". */
 const DEFAULT_LIMIT = 10;
-const limitFrom = (args: string[]): number => {
-  const i = args.indexOf("--limit");
-  const n = i === -1 ? NaN : Number(args[i + 1]);
+
+/** Flags out, positionals in. Written because `propose --limit 10` took
+ *  `--limit` as the capture to classify and then recorded four patient retries
+ *  against a file of that name — a bug that only looks silly until you notice
+ *  it wrote a failure note into the vault. */
+function parseArgs(args: string[]): { flags: Map<string, string>; rest: string[] } {
+  const flags = new Map<string, string>();
+  const rest: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!a.startsWith("--")) { rest.push(a); continue; }
+    const [k, inline] = a.slice(2).split("=", 2);
+    if (inline !== undefined) { flags.set(k, inline); continue; }
+    const next = args[i + 1];
+    if (next !== undefined && !next.startsWith("--")) { flags.set(k, next); i++; }
+    else flags.set(k, "true");
+  }
+  return { flags, rest };
+}
+
+const limitOf = (flags: Map<string, string>): number => {
+  const n = Number(flags.get("limit"));
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_LIMIT;
 };
 
-const [cmd, ...rest] = process.argv.slice(2);
-if (cmd === "propose" && rest[0]) await propose(rest[0]);
+const [cmd, ...argv] = process.argv.slice(2);
+const { flags, rest } = parseArgs(argv);
+if (cmd === "propose" && rest[0]) { announceVault(); await propose(rest[0]); }
 else if (cmd === "propose") {
-  const limit = limitFrom(rest);
+  announceVault();
+  const limit = limitOf(flags);
   const todo = pending();
   if (!todo.length) console.log("nothing is armed — no #capture waiting");
   for (const rel of todo.slice(0, limit)) await propose(rel);
   if (todo.length > limit) console.log(`\n${todo.length - limit} more waiting — capped at ${limit} this pass`);
   if (todo.length) console.log(`\n${report()}`);
 } else if (cmd === "find") {
+  announceVault();
   const todo = pending();
   console.log(todo.length ? todo.join("\n") : "nothing is armed — no #capture waiting");
-} else if (cmd === "pass") await pass(rest.includes("--dry"), limitFrom(rest));
+} else if (cmd === "pass") { announceVault(); await pass(flags.has("dry"), limitOf(flags)); }
 else {
   console.error("usage: cli.ts find | propose [<capture-path>] [--limit N] | pass [--dry] [--limit N]");
   process.exit(1);

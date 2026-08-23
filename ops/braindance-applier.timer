@@ -1,0 +1,24 @@
+# Every minute.
+#
+# That sounds aggressive and is nearly free: a pass with nothing armed makes NO
+# model call at all — it is a filesystem scan and a `git pull`. What the cadence
+# buys is latency, and latency is the whole feel of this loop. Arm a capture on
+# a phone and the proposal is waiting by the time you have put it down.
+#
+# The spending ceiling is not here, it is the `--limit` in the pass itself. An
+# interval is the wrong place to bound cost: lengthening it makes a runaway
+# slower without making it smaller, and makes the good case worse.
+#
+# AccuracySec is explicit because systemd's default is a whole minute, which on
+# a one-minute timer means the interval and the jitter are the same size.
+[Unit]
+Description=Run a braindance applier pass every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=5s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

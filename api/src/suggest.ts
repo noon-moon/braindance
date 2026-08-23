@@ -33,6 +33,7 @@
 // The API key is read from the environment by the SDK and nowhere else in this
 // process. It is never stored, logged, or reported (see /health).
 import Anthropic from "@anthropic-ai/sdk";
+import { record, type Usage } from "./usage.js";
 import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SUGGESTIONS_DIR, aiSuggestConfig, stateDirConflict } from "./config.js";
@@ -370,6 +371,8 @@ export async function suggestFor(noteText: string, scopes: ScopeBlurb[]): Promis
     },
   }));
 
+  record("classify", res.usage as Usage | undefined);
+
   // BEFORE `content` is touched. A refused response can have an empty content
   // array, and reading content[0] would throw an error that reads like a bug.
   if (res.stop_reason === "refusal") throw new RefusalError(res.stop_details?.category ?? null);
@@ -391,7 +394,7 @@ export async function suggestFor(noteText: string, scopes: ScopeBlurb[]): Promis
  *  what turned a fifteen-minute outage into a permanently dead queue. A failure
  *  that IS about the note (an unparseable answer, one that fails validation, a
  *  truncated response) is thrown as a plain Error further down, and those count. */
-async function callModel<T>(send: () => Promise<T>): Promise<T> {
+export async function callModel<T>(send: () => Promise<T>): Promise<T> {
   try {
     return await send();
   } catch (e) {
@@ -410,7 +413,7 @@ async function callModel<T>(send: () => Promise<T>): Promise<T> {
 // constructor throws when ANTHROPIC_API_KEY is absent. Constructing eagerly would
 // mean a vault with no key can't boot the app at all.
 let anthropic: Anthropic | null = null;
-function client(): Anthropic {
+export function client(): Anthropic {
   // 2 minutes: a low-effort classification that hasn't answered by then is stuck,
   // and a stuck request must not hold the worker's tick open behind it.
   anthropic ??= new Anthropic({ timeout: 120_000 });

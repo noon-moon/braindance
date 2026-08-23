@@ -105,5 +105,5 @@ Nothing is filed or discarded while it is failing; the loop stops rather than
 guessing.
 
 If git itself is what broke, the note cannot be pushed — it stays on the box and
-rides out on the first run that can push. Check `journalctl --user -u
+rides out on the first run that can push. Check `journalctl -u
 braindance-applier` when the vault says nothing and you expected it to.

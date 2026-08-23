@@ -102,13 +102,23 @@ NOTEEOF
   # out on the next run that can. It is on the box either way.
   git add -A -- "$NOTE" >/dev/null 2>&1 \
     && git commit -qm "braindance: pass failing at $stage" >/dev/null 2>&1 \
-    && git push -q >/dev/null 2>&1
+    && git push -q origin "$(git symbolic-ref --short HEAD 2>/dev/null)" >/dev/null 2>&1
   echo "pass failed at $stage (run $n)"
   cat "$LOG"
   exit 1
 }
 
-git pull --rebase -q >>"$LOG" 2>&1 || fail "git pull"
+# EXPLICIT REFS, not `git pull --rebase`. That form asks git to work out what
+# to rebase onto from `branch.*.merge`, `remote.*.fetch` and FETCH_HEAD — and on
+# this box it answered "Cannot rebase onto multiple branches", because the api
+# synced by explicit URL to keep its PAT out of `.git/config` and left the
+# tracking config in a shape a bare pull cannot read. Naming the branch removes
+# the question rather than repairing the config, which is the right fix for a
+# script that has to run on a checkout it did not create.
+BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null)" || fail "detached HEAD"
+[ -n "$BRANCH" ] || fail "detached HEAD"
+git fetch -q origin "$BRANCH" >>"$LOG" 2>&1 || fail "git fetch"
+git rebase -q "origin/$BRANCH" >>"$LOG" 2>&1 || fail "git rebase"
 
 cd "$API" || fail "api directory"
 
@@ -135,6 +145,6 @@ cd "$VAULT" || fail "vault directory"
 if [ -n "$(git status --porcelain)" ]; then
   git add -A >>"$LOG" 2>&1 || fail "git add"
   git commit -qm "braindance: applier pass" >>"$LOG" 2>&1 || fail "git commit"
-  git push -q >>"$LOG" 2>&1 || fail "git push"
+  git push -q origin "$BRANCH" >>"$LOG" 2>&1 || fail "git push"
 fi
 cat "$LOG"

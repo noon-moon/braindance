@@ -42,7 +42,7 @@ export type Action =
 export interface Revision {
   title?: string;
   funnel?: string;
-  scope?: string | null;
+  scopes?: string[];
   newScope?: string | null;
   due?: string | null;
   priority?: string | null;
@@ -65,7 +65,10 @@ const ACTION_SCHEMA = {
     },
     title: { anyOf: [{ type: "string" }, { type: "null" }], description: "New title, or null to keep the proposed one." },
     funnel: { anyOf: [{ type: "string", enum: FUNNEL_IDS }, { type: "null" }], description: "New type, or null to keep." },
-    scope: { anyOf: [{ type: "string" }, { type: "null" }], description: "An EXISTING hub named in the reply, or null to keep." },
+    scope: {
+      anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }],
+      description: "EVERY hub the reply names, in the order it names them, or null to keep what was proposed. The first is primary.",
+    },
     newScope: { anyOf: [{ type: "string" }, { type: "null" }], description: "A hub the reply asks to CREATE, or null." },
     due: { anyOf: [{ type: "string" }, { type: "null" }], description: "YYYY-MM-DD, or null to keep." },
     priority: { anyOf: [{ type: "string", enum: PRIORITIES }, { type: "null" }], description: "Or null to keep." },
@@ -96,8 +99,9 @@ function systemPrompt(p: Suggestion, kindLabel: string, scopes: string[], today:
     "Rules:",
     "- Return a DIFF. Every field they did not mention must be null, meaning 'keep what was proposed'.",
     "- 'yes' / 'ok' / 'sure' / a bare tick means file it exactly as proposed: action=file, every field null.",
-    "- A hub they name that is in the list above goes in `scope`. One that is NOT goes in `newScope`,",
-    "  which means they are asking to create it. Never put an unlisted name in `scope`.",
+    "- Hubs they name that are in the list above go in `scope`, ALL of them, in the order named.",
+    "  A name that is NOT in the list goes in `newScope`, meaning they are asking to create it.",
+    "  Never put an unlisted name in `scope`. A reply naming two hubs must return two.",
     `- Dates are YYYY-MM-DD. Today is ${today}; resolve 'friday' or 'next week' against it.`,
     "- If you cannot tell what they meant, return `unclear`. A wrong guess files someone's note in the",
     "  wrong place and they will not find it again; `unclear` just asks them once more. Prefer it.",
@@ -162,23 +166,25 @@ export function validateAction(raw: unknown, liveScopes: string[], takenNames: S
   const funnel = funnelById(str(r.funnel, 40));
   if (funnel) revised.funnel = funnel.id;
 
-  // Membership, exactly as suggest.ts does it — the reply may name a hub, but
-  // the model does not get to invent one behind it.
-  const wanted = str(r.scope, 200);
-  if (wanted) {
-    const live = liveScopes.find((s) => s.toLowerCase() === wanted.toLowerCase());
-    if (live) revised.scope = live;
-    else if (isHubName(wanted) && !takenNames.has(wanted.toLowerCase())) revised.newScope = wanted;
-    else return unclear(`no hub named “${wanted}”`);
-  }
-
+  // Membership, exactly as suggest.ts does it — the reply may name hubs, but
+  // the model does not get to invent one behind it. Each name is resolved
+  // independently and ORDER IS KEPT: the first is the hub the note primarily
+  // belongs to, which is the rule `Contained By` follows everywhere else.
+  const named: string[] = Array.isArray(r.scope) ? r.scope.map((x) => str(x, 200)).filter(Boolean) : [];
   const fresh = str(r.newScope, 60);
-  if (fresh && !revised.scope) {
-    const live = liveScopes.find((s) => s.toLowerCase() === fresh.toLowerCase());
-    if (live) revised.scope = live;
-    else if (isHubName(fresh) && !takenNames.has(fresh.toLowerCase())) revised.newScope = fresh;
-    else return unclear(`cannot create a hub named “${fresh}”`);
+  if (fresh) named.push(fresh);
+  const resolved: string[] = [];
+  for (const n of named) {
+    const live = liveScopes.find((sc) => sc.toLowerCase() === n.toLowerCase());
+    if (live) { if (!resolved.includes(live)) resolved.push(live); continue; }
+    // Not a hub that exists. One such name is a creation request; more than one
+    // is a reply we have misread, and inventing two hubs off a misreading is
+    // exactly the damage `unclear` exists to prevent.
+    if (!isHubName(n) || takenNames.has(n.toLowerCase())) return unclear(`no hub named “${n}”`);
+    if (revised.newScope) return unclear("more than one new hub asked for");
+    revised.newScope = n;
   }
+  if (resolved.length) revised.scopes = resolved;
 
   const due = str(r.due, 20);
   if (due) {

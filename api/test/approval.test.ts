@@ -29,7 +29,7 @@ const CAP = `inbox/${STAMP}.md`;
 const P: Proposal = {
   title: "Building Effective Agents article",
   kind: "memo",
-  scope: "AI Orchestration",
+  scopes: ["AI Orchestration"],
   newScope: null,
   tags: ["agents", "llm"],
   due: null,
@@ -69,9 +69,9 @@ console.log("test: the proposal note");
   check("no bare `tags:` key leaks the proposed tags into this note",
     !/^tags:/m.test(t) && t.includes("bd_tags: [agents, llm]"));
 
-  const noScope = renderProposal(CAP, { ...P, scope: null });
+  const noScope = renderProposal(CAP, { ...P, scopes: [] });
   check("no hub says so in words rather than leaving a blank", noScope.includes("no existing hub fits"));
-  const fresh = renderProposal(CAP, { ...P, scope: null, newScope: { name: "Woodworking", why: "A standing craft interest." } });
+  const fresh = renderProposal(CAP, { ...P, scopes: [], newScope: { name: "Woodworking", why: "A standing craft interest." } });
   check("a proposed hub says it would be CREATED", fresh.includes("does not exist yet, which filing would create"));
   check("…and carries the case for it", fresh.includes("A standing craft interest."));
   const dated = renderProposal(CAP, { ...P, due: "2026-09-01", priority: "high" });
@@ -84,11 +84,17 @@ console.log("test: reading a proposal back");
   const parsed = parseProposal(renderProposal(CAP, P), STAMP)!;
   check("state round-trips", parsed.state === "proposed");
   check("title round-trips", parsed.proposal.title === P.title);
-  check("the scope comes back unwrapped from its wikilink", parsed.proposal.scope === "AI Orchestration");
+  check("the scope comes back unwrapped from its wikilink", parsed.proposal.scopes.join() === "AI Orchestration");
+  check("several hubs round-trip, in order",
+    parseProposal(renderProposal(CAP, { ...P, scopes: ["Songwriting", "Phrases"] }), STAMP)!.proposal.scopes.join(" + ")
+      === "Songwriting + Phrases");
+  // A triage note written before scopes went plural must not stop parsing.
+  check("a lone scalar bd_scope still parses",
+    parseProposal('---\nbd_state: proposed\nbd_capture: "[[x]]"\nbd_kind: memo\nbd_title: t\nbd_scope: "[[Poetry]]"\n---\n', STAMP)!.proposal.scopes.join() === "Poetry");
   check("tags round-trip", parsed.proposal.tags.join(",") === "agents,llm");
 
-  const fresh = parseProposal(renderProposal(CAP, { ...P, scope: null, newScope: { name: "Woodworking", why: "x" } }), STAMP)!;
-  check("a proposed hub round-trips", fresh.proposal.newScope?.name === "Woodworking" && fresh.proposal.scope === null);
+  const fresh = parseProposal(renderProposal(CAP, { ...P, scopes: [], newScope: { name: "Woodworking", why: "x" } }), STAMP)!;
+  check("a proposed hub round-trips", fresh.proposal.newScope?.name === "Woodworking" && fresh.proposal.scopes.length === 0);
 
   // A title carrying YAML punctuation is the ordinary case, not an edge one —
   // captures are prose, and prose has colons in it.
@@ -155,7 +161,7 @@ console.log("test: the receipt left on an unattended file");
   check("it says when", r.includes("2026-08-22"));
   check("it says how to undo the decision", r.includes("Rename or move it"));
   check("a new hub is flagged as new",
-    receipt({ ...P, scope: null, newScope: { name: "Woodworking", why: "x" } }, "2026-08-22T00:00:00Z")
+    receipt({ ...P, scopes: [], newScope: { name: "Woodworking", why: "x" } }, "2026-08-22T00:00:00Z")
       .includes("[[Woodworking]] (new hub)"));
 }
 

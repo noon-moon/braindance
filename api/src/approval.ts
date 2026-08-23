@@ -93,7 +93,12 @@ export interface Proposal {
   title: string;
   /** Funnel label as a person reads it ("memo", "todo"). */
   kind: string;
-  scope: string | null;
+  /** The hubs this would be filed under, in order — the FIRST is primary, the
+   *  same rule `Contained By` follows everywhere else in the vault. Plural
+   *  because the vault is: `slice-a-knot` carries three, `containment()` takes a
+   *  list, and a single-valued field here silently dropped the second hub a
+   *  reply asked for. Empty means the vault root. */
+  scopes: string[];
   newScope: { name: string; why: string } | null;
   tags: string[];
   due: string | null;
@@ -125,7 +130,7 @@ export function renderProposal(captureRel: string, p: Proposal): string {
     `${K.kind}: ${scalar(safe(p.kind))}`,
     `${K.title}: ${scalar(safe(p.title))}`,
   ];
-  if (p.scope) fm.push(`${K.scope}: "[[${safe(p.scope)}]]"`);
+  if (p.scopes.length) fm.push(`${K.scope}: [${p.scopes.map((x) => `"[[${safe(x)}]]"`).join(", ")}]`);
   if (p.newScope) fm.push(`${K.newScope}: ${scalar(safe(p.newScope.name))}`);
   if (p.tags.length) fm.push(`${K.tags}: [${p.tags.map((t) => scalar(safe(t))).join(", ")}]`);
   if (p.due) fm.push(`${K.due}: ${safe(p.due)}`);
@@ -134,8 +139,8 @@ export function renderProposal(captureRel: string, p: Proposal): string {
 
   const where = p.newScope
     ? `[[${safe(p.newScope.name)}]] — a hub that does not exist yet, which filing would create`
-    : p.scope
-      ? `[[${safe(p.scope)}]]`
+    : p.scopes.length
+      ? p.scopes.map((x) => `[[${safe(x)}]]`).join(" + ")
       : "the vault root — no existing hub fits";
   const meta = [
     p.tags.length ? p.tags.map((t) => `\`${safe(t)}\``).join(" ") : "",
@@ -202,7 +207,12 @@ export function parseProposal(text: string, key: string): ParsedProposal | null 
     proposal: {
       title,
       kind,
-      scope: str(K.scope) ? unlink(str(K.scope)) : null,
+      // Accepts a list or a lone scalar: notes written before this went plural
+      // carry `bd_scope: "[[Poetry]]"`, and a triage note already sitting in the
+      // queue must not stop parsing because the schema moved under it.
+      scopes: Array.isArray(data[K.scope])
+        ? (data[K.scope] as unknown[]).map((x) => unlink(String(x))).filter(Boolean)
+        : str(K.scope) ? [unlink(str(K.scope))] : [],
       newScope: newScopeName ? { name: newScopeName, why: "" } : null,
       tags: Array.isArray(data[K.tags]) ? (data[K.tags] as unknown[]).map(String) : [],
       due: str(K.due) || null,
@@ -247,8 +257,8 @@ export function readReply(text: string): string {
 export function receipt(p: Proposal, atISO: string, note?: string): string {
   const where = p.newScope
     ? `[[${safe(p.newScope.name)}]] (new hub)`
-    : p.scope
-      ? `[[${safe(p.scope)}]]`
+    : p.scopes.length
+      ? p.scopes.map((x) => `[[${safe(x)}]]`).join(" + ")
       : "the vault root";
   return [
     "> [!note]- filed by braindance",

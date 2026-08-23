@@ -19,8 +19,8 @@ const check = (label: string, cond: boolean) => {
   passed++;
 };
 
-const SCOPES = ["AI Orchestration", "Songwriting", "Music"];
-const TAKEN = new Set(["ai orchestration", "songwriting", "music", "readme"]);
+const SCOPES = ["AI Orchestration", "Songwriting", "Music", "Phrases"];
+const TAKEN = new Set(["ai orchestration", "songwriting", "music", "phrases", "readme"]);
 const V = (over: Record<string, unknown> = {}): Action =>
   validateAction({ action: "file", title: null, funnel: null, scope: null, newScope: null, due: null, priority: null, note: "", ...over }, SCOPES, TAKEN);
 
@@ -38,7 +38,7 @@ console.log("test: the three plain answers");
 console.log("test: revisions are a DIFF — silence means 'as proposed'");
 {
   const r = (a: Action) => (a as { revised: Record<string, unknown> }).revised;
-  check("an unmentioned field is absent, not null", !("scope" in r(V())) && !("due" in r(V())));
+  check("an unmentioned field is absent, not null", !("scopes" in r(V())) && !("due" in r(V())));
   check("a named title comes through", r(V({ title: "Shorter" })).title === "Shorter");
   check("a named type resolves through funnelById", r(V({ funnel: "todo" })).funnel === "todo");
   check("a retired funnel id still resolves", r(V({ funnel: "task" })).funnel === "todo");
@@ -47,15 +47,26 @@ console.log("test: revisions are a DIFF — silence means 'as proposed'");
 console.log("test: a hub the model named must EXIST, or be an explicit creation");
 {
   const r = (a: Action) => (a as { revised: Record<string, unknown> }).revised;
-  check("a live hub is matched", r(V({ scope: "Songwriting" })).scope === "Songwriting");
-  check("…case-insensitively, since a person typed it", r(V({ scope: "songwriting" })).scope === "Songwriting");
+  check("a live hub is matched", r(V({ scope: ["Songwriting"] })).scopes.join() === "Songwriting");
+  check("…case-insensitively, since a person typed it", r(V({ scope: ["songwriting"] })).scopes.join() === "Songwriting");
+  // The case that made this plural: a reply naming two hubs must yield two.
+  check("SEVERAL hubs come back, in the order named",
+    r(V({ scope: ["Songwriting", "Phrases"] })).scopes.join(" + ") === "Songwriting + Phrases");
+  check("duplicates collapse", r(V({ scope: ["Music", "music"] })).scopes.length === 1);
   check("an unlisted name becomes a CREATION, not a silent file-elsewhere",
-    r(V({ scope: "Woodworking" })).newScope === "Woodworking" && r(V({ scope: "Woodworking" })).scope === undefined);
+    r(V({ scope: ["Woodworking"] })).newScope === "Woodworking");
+  check("a live hub and a new one can be asked for together",
+    r(V({ scope: ["Songwriting", "Woodworking"] })).scopes.join() === "Songwriting"
+      && r(V({ scope: ["Songwriting", "Woodworking"] })).newScope === "Woodworking");
+  // Two unlisted names means the reply was misread, and inventing two hubs off
+  // a misreading is exactly what `unclear` exists to prevent.
+  check("two hubs that do not exist is unclear, not two new hubs",
+    V({ scope: ["Woodworking", "Joinery"] }).kind === "unclear");
   check("a name already taken by another note is unclear — creating it would overwrite",
-    V({ scope: "Readme" }).kind === "unclear");
+    V({ scope: ["Readme"] }).kind === "unclear");
   check("a name a hub filename cannot hold is unclear", V({ newScope: "Home/DIY" }).kind === "unclear");
   check("newScope naming a hub that exists is treated as filing into it",
-    r(V({ newScope: "Music" })).scope === "Music");
+    r(V({ newScope: "Music" })).scopes.join() === "Music");
 }
 
 console.log("test: dates and priorities — a real day, a real level");

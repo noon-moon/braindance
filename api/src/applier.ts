@@ -20,8 +20,11 @@ export function reviseProposal(p: Proposal, r: Revision): Proposal {
     ...p,
     title: r.title ?? p.title,
     kind: r.funnel ? (funnelById(r.funnel)?.label.toLowerCase() ?? p.kind) : p.kind,
-    scope: r.newScope ? null : (r.scope !== undefined ? r.scope : p.scope),
-    newScope: r.newScope ? { name: r.newScope, why: "" } : (r.scope !== undefined ? null : p.newScope),
+    // Naming any hub replaces the whole set rather than adding to it — "file it
+    // under Songwriting and Phrases" is a statement about where it goes, not an
+    // amendment to a list the person cannot see.
+    scopes: r.scopes ?? (r.newScope ? [] : p.scopes),
+    newScope: r.newScope ? { name: r.newScope, why: "" } : (r.scopes ? null : p.newScope),
     due: r.due !== undefined ? r.due : p.due,
     priority: r.priority !== undefined ? r.priority : p.priority,
   };
@@ -44,7 +47,9 @@ export function fileNote(
   note?: string,
 ): BuiltNote & { content: string } {
   const funnel = funnelById(p.kind) ?? funnelById("memo")!;
-  const scope = p.newScope?.name ?? p.scope ?? "";
+  // Order is meaning and is kept: `containment()` writes them in this order and
+  // the first is the hub the note primarily belongs to.
+  const scope = [...(p.newScope ? [p.newScope.name] : []), ...p.scopes].join(", ");
   const built = funnel.build({
     title: p.title,
     body: captureBody.trim(),

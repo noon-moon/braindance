@@ -58,20 +58,27 @@ used to own that checkout is gone — which is why the git handling lives in
 `ops/applier.sh` rather than inside the tool.
 
 The api used to run in a container, so the host has no `node_modules` and no
-build. Both are needed now — the applier runs on the host:
+build. Both are needed now — the applier runs on the host. Paths are absolute
+throughout: `api/` and `ops/` are siblings, and every `cp` below reads from
+`ops/`, so running them from `api/` is the obvious way to get "No such file".
 
 ```console
-$ cd /srv/braindance/api && npm ci && npm run build
-```
-
-Then the unit:
-
-```console
-$ sudo cp ops/braindance-applier.{service,timer} /etc/systemd/system/
+$ cd /srv/braindance && git pull
+$ (cd api && npm ci && npm run build)
+$ sudo cp /srv/braindance/ops/braindance-applier.{service,timer} /etc/systemd/system/
 $ sudoedit /etc/systemd/system/braindance-applier.service   # set User= and the paths
 $ sudo systemctl daemon-reload
 $ sudo systemctl enable --now braindance-applier.timer
 $ systemctl list-timers braindance-applier.timer
+
+Before enabling, check the vault checkout is clean and unowned — the api used to
+drive its own rebase there, and a tree left dirty or mid-rebase makes the first
+`git pull --rebase` fail:
+
+```console
+$ git -C /srv/vault status -sb
+$ docker ps          # the old api container is a second writer; stop it first
+```
 ```
 
 Knobs, all environment (`/srv/.env` via `EnvironmentFile`):

@@ -25,6 +25,30 @@ set -uo pipefail
 # source of truth for "which vault", and it is this line.
 export VAULT_PATH="${VAULT_PATH:-/srv/vault}"
 VAULT="$VAULT_PATH"
+
+# THE SCRIPT READS ITS OWN ENV FILE.
+#
+# The unit carries `EnvironmentFile=-/srv/.env`, which systemd honours and a
+# shell does not — so running this by hand ran it without an API key, and the
+# instruction "test it by hand before enabling the timer" was testing a
+# different program than the one the timer runs. A script whose behaviour
+# depends on who invoked it is a script you cannot rehearse.
+#
+# Parsed, not sourced: `/srv/.env` is a docker-style env file and `.` would hand
+# arbitrary shell to bash on a file nobody thinks of as code. Only well-formed
+# KEY=VALUE lines are taken, and ANYTHING ALREADY IN THE ENVIRONMENT WINS, so
+# `VAULT_PATH=… ops/applier.sh` still overrides for a one-off run.
+ENV_FILE="${BD_ENV_FILE:-/srv/.env}"
+if [ -r "$ENV_FILE" ]; then
+  while IFS='=' read -r k v; do
+    case "$k" in ''|'#'*|*[!A-Za-z0-9_]*) continue ;; esac
+    [ -n "${!k:-}" ] && continue
+    v="${v%$'\r'}"; v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+    export "$k=$v"
+  done < "$ENV_FILE"
+fi
+
+[ -n "${ANTHROPIC_API_KEY:-}" ] || echo "warning: no ANTHROPIC_API_KEY (looked in $ENV_FILE)" >&2
 API="${BD_API:-/srv/braindance/api}"
 LIMIT="${BD_LIMIT:-10}"
 NOTE="$VAULT/_triage/BRAINDANCE PASS FAILING.md"

@@ -84,8 +84,8 @@ exactly as you left it; the loop stops rather than guessing.
 
 Worth checking, roughly in order:
 
-- \`systemctl --user status braindance-applier.timer\`
-- \`journalctl --user -u braindance-applier -n 50\`
+- \`systemctl status braindance-applier.timer\`
+- \`journalctl -u braindance-applier -n 50\`
 - Is \`ANTHROPIC_API_KEY\` still set for the unit? (\`/srv/.env\`)
 - Did the rebase conflict? This vault has several writers — \`git -C $VAULT status\`.
 - Is the box simply out of disk or off the network?

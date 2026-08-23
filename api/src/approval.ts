@@ -1,48 +1,72 @@
-// Triage by linked notes — the agent proposes, you answer, in separate files.
+// Triage by linked notes — the agent proposes in one file, you answer in it.
 //
-// Three files per ambiguous capture, and the split is the security model:
+// Two files per ambiguous capture:
 //
-//   inbox/<stamp>.md          THE CAPTURE.  Yours. Untrusted (a pasted article
-//                             may contain "file this under Personal"). The agent
-//                             READS it as data and never writes a byte of it, so
-//                             it files byte-identical to how you wrote it.
-//   _triage/<stamp>.triage.md THE PROPOSAL. The agent's. It writes what it wants
-//                             to do, and transcludes the capture so you can read
-//                             both in one view — a LINK, so the untrusted text
-//                             never enters this file.
-//   _triage/<stamp>.reply.md  THE REPLY.    Yours alone. THE AGENT NEVER WRITES
-//                             THIS PATH, so its whole contents are your
-//                             instruction. No delimiter, no region to find, no
-//                             parsing rule to get right.
+//   <wherever>/<name>.md          THE CAPTURE.  Yours. Untrusted (a pasted
+//                                 article may contain "file this under
+//                                 Personal"). The agent READS it as data and
+//                                 never writes a byte of it, so it files
+//                                 byte-identical to how you wrote it.
+//   _triage/<name>.triage.md      THE PROPOSAL. The agent writes it; you answer
+//                                 in its `## Your call` section.
 //
-// ── WHY THREE FILES AND NOT ONE ─────────────────────────────────────────────
+// ── HOW THIS SHAPE WAS ARRIVED AT ───────────────────────────────────────────
 //
-// The first version put the proposal and the reply inside the capture, fenced by
-// markers, with the untrusted body neutralised around them. It worked and its
-// forgery tests passed — but the guarantee rested on three rules, one of which
-// was an accident: a forged "your reply" heading needs a line start, and the
-// reason the model could not emit one is that `str()` in suggest.ts collapses
-// whitespace while nominally just capping length. Nothing said "don't change
-// this or the trust boundary opens."
+// Three revisions, and the third was decided by watching someone use the second.
 //
-// Here the guarantee is ONE rule, and it is the kind an auditor can check by
-// grepping: **nothing in this codebase writes `*.reply.md`.** It cannot be
-// undone by a change to a string helper, a prompt, or a renderer.
+//  1. Proposal and reply inside the capture, fenced by markers. Worked; put
+//     machine text in notes you keep, and neutralising the untrusted body was a
+//     permanent obligation.
+//  2. Proposal and reply as SEPARATE notes, the reply in a file nothing here
+//     writes. The strongest guarantee available: an auditor checks one line.
+//     On first contact the user answered in the proposal note and deleted the
+//     line pointing at the reply note. It would have waited forever, silently.
+//     A boundary nobody uses is not a boundary, and a system that quietly
+//     ignores you is worse than one with a weaker guarantee.
+//  3. This. You answer where the question is, because that is what people do.
 //
-// The second reason is not about security at all. The agent no longer edits your
-// captures, so a capture never accumulates machine text, never needs cleaning on
-// the way out, and cleanup is deleting two files rather than operating on one.
+// ── THE INVARIANT THAT REPLACES IT ──────────────────────────────────────────
+//
+// The reply is the `## Your call` section. For a capture to forge one, the model
+// would have to emit a line beginning `## Your call` — which requires a NEWLINE
+// in a model-derived string reaching the body.
+//
+// **`safe()` guarantees no model-derived string contains a newline.** That is
+// the whole boundary, it is one function, and `approval.test.ts` asserts it by
+// name. Revision 1 had the same property by ACCIDENT — `str()` in suggest.ts
+// collapses whitespace while nominally just capping length, and nothing said
+// "don't change this or the trust boundary opens". Here it is the stated job of
+// a function that exists for no other reason.
 import matter from "gray-matter";
 
 /** Where the agent's side lives. Underscore-prefixed, so the vault's existing
  *  scans skip it for the same reason they skip `_meta` and `_templates` — these
- *  are machinery, not notes, and they must never read as real work. Tracked, not
+ *  are machinery, not notes, and must never read as real work. Tracked, not
  *  gitignored: the whole point is that it reaches the phone. */
 export const TRIAGE_DIR = "_triage";
 
-/** Frontmatter keys are `bd_`-prefixed for two reasons. They are unmistakably
+/** The reply section's heading. Matched by PREFIX, and the prompt text lives on
+ *  this line rather than under it — anything below the heading is yours, so a
+ *  prompt sitting there would be read back as if you had written it. (The first
+ *  version put two lines of instructions in the section. The user deleted them
+ *  and typed in their place, which is exactly the right instinct and exactly
+ *  what a parser must not have to guess about.) */
+const REPLY_HEADING = "## Your call";
+const REPLY_PROMPT = `${REPLY_HEADING} — reply below: \`yes\`, or what to change`;
+
+/** THE BOUNDARY. Every model-derived string that reaches the note BODY passes
+ *  through here, and the guarantee is exactly one thing:
+ *
+ *      the result contains no newline.
+ *
+ *  A forged `## Your call` heading needs a line start. Nothing else in this
+ *  module prevents one. If you change this function, you are changing the
+ *  security model — see `approval.test.ts`, which says so in a test name. */
+export const safe = (s: string): string => s.replace(/\s+/g, " ").trim();
+
+/** Frontmatter keys are `bd_`-prefixed for two reasons: they are unmistakably
  *  machine-owned at a glance, and — the load-bearing one — a bare `tags:` here
- *  would file the TRIAGE note under the tags meant for the note it is proposing,
+ *  would file the TRIAGE note under the tags meant for the note it proposes,
  *  putting them in Obsidian's tag pane and every query that reads it. */
 const K = {
   state: "bd_state",
@@ -54,19 +78,15 @@ const K = {
   tags: "bd_tags",
   due: "bd_due",
   priority: "bd_priority",
-  at: "bd_at",
 } as const;
 
-/** A capture's KEY — its basename, which is what names the pair of triage notes
- *  beside it. Not a timestamp: a capture is whatever Obsidian wrote, wherever
- *  the "default location for new notes" happens to point, and it may well be
- *  called `Building Effective Agents`. Deriving the key from the file rather
- *  than from a stamp is what lets this work on a vault that captures by hand. */
+/** A capture's KEY — its basename, which names the triage note beside it. Not a
+ *  timestamp: a capture is whatever Obsidian wrote, wherever "default location
+ *  for new notes" points, and it may well be called `Building Effective Agents`. */
 export const keyOf = (captureRel: string): string =>
   captureRel.slice(captureRel.lastIndexOf("/") + 1).replace(/\.md$/, "");
 
 export const triageRel = (key: string): string => `${TRIAGE_DIR}/${key}.triage.md`;
-export const replyRel = (key: string): string => `${TRIAGE_DIR}/${key}.reply.md`;
 
 /** What the agent proposes doing with a capture. */
 export interface Proposal {
@@ -83,63 +103,57 @@ export interface Proposal {
 
 /** A YAML scalar that cannot break its own document. Wikilinks are quoted (a
  *  bare `[[…]]` opens a flow sequence in YAML — the same reason `funnels.ts`
- *  quotes them), and anything else with structural punctuation is quoted too. */
+ *  quotes them), and anything with structural punctuation is quoted too. */
 const scalar = (v: string): string =>
   /^[\w .\-/]+$/.test(v) ? v : `"${v.replace(/["\\]/g, "\\$&")}"`;
 
-/** Render the proposal note. Deterministic and pure — what a test asserts is
- *  exactly what lands in the vault.
+/** Render the proposal note.
  *
- *  The proposal is written TWICE and on purpose: as frontmatter, which is what
- *  the agent reads back on the next pass, and as prose, which is what you read.
- *  The agent never re-parses its own prose — that text is model output derived
- *  from untrusted input, and running it back through a parser would launder it
- *  into something with authority. The frontmatter has been through `validate()`;
- *  the prose is for human eyes only. */
+ *  The proposal is written TWICE on purpose: as frontmatter, which the agent
+ *  reads back on the next pass, and as prose, which you read. The agent never
+ *  re-parses its own prose — that text is model output derived from untrusted
+ *  input, and running it back through a parser would launder it into something
+ *  with authority. The frontmatter has been through `validate()`; the prose is
+ *  for human eyes only. */
 export function renderProposal(captureRel: string, p: Proposal): string {
   const key = keyOf(captureRel);
+  const link = captureRel.replace(/\.md$/, "");
   const fm: string[] = [
     "---",
     `${K.state}: proposed`,
-    `${K.capture}: "[[${captureRel.replace(/\.md$/, "")}]]"`,
-    `${K.kind}: ${scalar(p.kind)}`,
-    `${K.title}: ${scalar(p.title)}`,
+    `${K.capture}: "[[${link}]]"`,
+    `${K.kind}: ${scalar(safe(p.kind))}`,
+    `${K.title}: ${scalar(safe(p.title))}`,
   ];
-  if (p.scope) fm.push(`${K.scope}: "[[${p.scope}]]"`);
-  if (p.newScope) fm.push(`${K.newScope}: ${scalar(p.newScope.name)}`);
-  if (p.tags.length) fm.push(`${K.tags}: [${p.tags.map(scalar).join(", ")}]`);
-  if (p.due) fm.push(`${K.due}: ${p.due}`);
-  if (p.priority) fm.push(`${K.priority}: ${p.priority}`);
+  if (p.scope) fm.push(`${K.scope}: "[[${safe(p.scope)}]]"`);
+  if (p.newScope) fm.push(`${K.newScope}: ${scalar(safe(p.newScope.name))}`);
+  if (p.tags.length) fm.push(`${K.tags}: [${p.tags.map((t) => scalar(safe(t))).join(", ")}]`);
+  if (p.due) fm.push(`${K.due}: ${safe(p.due)}`);
+  if (p.priority) fm.push(`${K.priority}: ${safe(p.priority)}`);
   fm.push("---", "");
 
   const where = p.newScope
-    ? `[[${p.newScope.name}]] — a hub that does not exist yet, which filing would create`
+    ? `[[${safe(p.newScope.name)}]] — a hub that does not exist yet, which filing would create`
     : p.scope
-      ? `[[${p.scope}]]`
+      ? `[[${safe(p.scope)}]]`
       : "the vault root — no existing hub fits";
   const meta = [
-    p.tags.length ? p.tags.map((t) => `\`${t}\``).join(" ") : "",
-    p.due ? `due ${p.due}` : "",
-    p.priority ? `priority ${p.priority}` : "",
+    p.tags.length ? p.tags.map((t) => `\`${safe(t)}\``).join(" ") : "",
+    p.due ? `due ${safe(p.due)}` : "",
+    p.priority ? `priority ${safe(p.priority)}` : "",
   ].filter(Boolean);
 
   const body: string[] = [
-    `# Triage — ${p.title}`,
+    `# Triage — ${safe(p.title)}`,
     "",
-    `**File as** a ${p.kind} under ${where}${meta.length ? `  ·  ${meta.join("  ·  ")}` : ""}`,
+    `**File as** a ${safe(p.kind)} under ${where}${meta.length ? `  ·  ${meta.join("  ·  ")}` : ""}`,
   ];
-  if (p.newScope?.why) body.push("", `*New hub, because: ${p.newScope.why}*`);
-  if (p.rationale) body.push("", `*${p.rationale}*`);
+  if (p.newScope?.why) body.push("", `*New hub, because: ${safe(p.newScope.why)}*`);
+  if (p.rationale) body.push("", `*${safe(p.rationale)}*`);
   body.push(
     "",
-    "## Your call",
+    REPLY_PROMPT,
     "",
-    // An unresolved link on purpose: tapping it is how Obsidian creates the
-    // note, on a phone as much as at the desk. The agent never creates it,
-    // because a file it has written to is a file it could be argued into
-    // writing to again — and "nothing writes this path" is the whole guarantee.
-    `Write your answer in [[${key}.reply]] — \`yes\`, or what to change.`,
-    "Nothing happens until you do.",
     "",
     "---",
     "",
@@ -149,7 +163,7 @@ export function renderProposal(captureRel: string, p: Proposal): string {
     // you read the whole decision in one view, while the untrusted bytes stay in
     // the other file. Path-qualified, because a capture at the vault root and
     // this note would otherwise be two plausible targets for one basename.
-    `![[${captureRel.replace(/\.md$/, "")}]]`,
+    `![[${link}]]`,
     "",
   );
   return `${fm.join("\n")}${body.join("\n")}`;
@@ -158,13 +172,16 @@ export function renderProposal(captureRel: string, p: Proposal): string {
 export interface ParsedProposal {
   state: string;
   key: string;
+  /** Vault-relative path of the capture, off the frontmatter link. */
+  captureRel: string;
   proposal: Proposal;
 }
 
+const unlink = (s: string): string => s.replace(/^\[\[|\]\]$/g, "").trim();
+
 /** Read a proposal note's frontmatter back — the agent's own validated output,
- *  never its prose. Returns null for anything that isn't one, because a
- *  `_triage/` directory is a shared address space and a file that doesn't parse
- *  is not a file to act on. */
+ *  never its prose. Returns null for anything that isn't one: `_triage/` is a
+ *  shared address space, and a file that doesn't parse is not one to act on. */
 export function parseProposal(text: string, key: string): ParsedProposal | null {
   let data: Record<string, unknown>;
   try {
@@ -175,17 +192,17 @@ export function parseProposal(text: string, key: string): ParsedProposal | null 
   const str = (k: string): string => (typeof data[k] === "string" ? (data[k] as string).trim() : "");
   const title = str(K.title);
   const kind = str(K.kind);
-  if (!str(K.state) || !title || !kind) return null;
-  const unlink = (s: string): string => s.replace(/^\[\[|\]\]$/g, "").trim();
-  const scope = str(K.scope) ? unlink(str(K.scope)) : null;
+  const capture = str(K.capture);
+  if (!str(K.state) || !title || !kind || !capture) return null;
   const newScopeName = str(K.newScope);
   return {
     state: str(K.state),
     key,
+    captureRel: `${unlink(capture)}.md`,
     proposal: {
       title,
       kind,
-      scope,
+      scope: str(K.scope) ? unlink(str(K.scope)) : null,
       newScope: newScopeName ? { name: newScopeName, why: "" } : null,
       tags: Array.isArray(data[K.tags]) ? (data[K.tags] as unknown[]).map(String) : [],
       due: str(K.due) || null,
@@ -195,39 +212,49 @@ export function parseProposal(text: string, key: string): ParsedProposal | null 
   };
 }
 
-/** Your reply, which is the ENTIRE reply file.
+/** Your answer: the `## Your call` section, up to the next rule or heading.
  *
- *  There is nothing to delimit and nothing to find, because the agent never
- *  wrote any of it. Frontmatter is dropped only because Obsidian may add
- *  properties on its own; everything else is yours and is read as instruction.
+ *  Forgiving about HOW you wrote it — quoted, unquoted, one line or several,
+ *  with the prompt left in place or deleted (deleting it is what actually
+ *  happened, and is the more natural thing). A triage step that ignores what you
+ *  typed over a stray angle bracket is worse than no triage step.
  *
- *  Empty (or absent, which the caller sees as empty) means "not answered yet" —
- *  never "proceed". */
-export const readReply = (text: string): string => {
-  try {
-    return matter(text).content.trim();
-  } catch {
-    return text.trim();
+ *  Not forgiving about WHERE it may come from. Only this section is read, and
+ *  the LAST such heading wins, so text that reached the note some other way sits
+ *  above the one the agent wrote. */
+export function readReply(text: string): string {
+  const lines = text.split("\n");
+  let at = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trimStart().startsWith(REPLY_HEADING)) at = i;
   }
-};
+  if (at === -1) return "";
+  const out: string[] = [];
+  for (let i = at + 1; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^\s*---\s*$/.test(l) || /^\s*#{1,6}\s/.test(l)) break;
+    out.push(l.replace(/^\s*>\s?/, ""));
+  }
+  return out.join("\n").trim();
+}
 
 /** The receipt left on a note the agent filed WITHOUT asking — the low-salience
  *  footer, and the only mark it leaves on a note you keep.
  *
  *  A collapsed callout: quiet, impossible to mistake for the note's own content,
- *  and at the bottom where it stays out of the way of what you actually wrote.
- *  It is the audit trail and the prompt to fix a wrong call; git history is the
- *  real undo. */
-export function receipt(p: Proposal, atISO: string): string {
+ *  at the bottom where it stays out of the way of what you wrote. It is the
+ *  audit trail and the prompt to fix a wrong call; git history is the real undo. */
+export function receipt(p: Proposal, atISO: string, note?: string): string {
   const where = p.newScope
-    ? `[[${p.newScope.name}]] (new hub)`
+    ? `[[${safe(p.newScope.name)}]] (new hub)`
     : p.scope
-      ? `[[${p.scope}]]`
+      ? `[[${safe(p.scope)}]]`
       : "the vault root";
   return [
     "> [!note]- filed by braindance",
-    `> ${atISO.slice(0, 10)} · as a ${p.kind} under ${where}`,
-    p.rationale ? `> ${p.rationale}` : "",
+    `> ${atISO.slice(0, 10)} · as a ${safe(p.kind)} under ${where}`,
+    note ? `> ${safe(note)}` : "",
+    p.rationale ? `> ${safe(p.rationale)}` : "",
     "> Wrong? Rename or move it like any note — this footer is just the record.",
   ].filter(Boolean).join("\n");
 }

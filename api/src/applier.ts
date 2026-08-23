@@ -24,7 +24,7 @@ export function reviseProposal(p: Proposal, r: Revision): Proposal {
     // under Songwriting and Phrases" is a statement about where it goes, not an
     // amendment to a list the person cannot see.
     scopes: r.scopes ?? (r.newScope ? [] : p.scopes),
-    newScope: r.newScope ? { name: r.newScope, why: "" } : (r.scopes ? null : p.newScope),
+    newScope: r.newScope ? { name: r.newScope, why: r.newScopeWhy ?? "" } : (r.scopes ? null : p.newScope),
     due: r.due !== undefined ? r.due : p.due,
     priority: r.priority !== undefined ? r.priority : p.priority,
   };

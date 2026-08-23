@@ -22,7 +22,7 @@ const check = (label: string, cond: boolean) => {
 const SCOPES = ["AI Orchestration", "Songwriting", "Music", "Phrases"];
 const TAKEN = new Set(["ai orchestration", "songwriting", "music", "phrases", "readme"]);
 const V = (over: Record<string, unknown> = {}): Action =>
-  validateAction({ action: "file", title: null, funnel: null, scope: null, newScope: null, due: null, priority: null, note: "", ...over }, SCOPES, TAKEN);
+  validateAction({ action: "file", title: null, funnel: null, scope: null, newScope: null, newScopeWhy: null, due: null, priority: null, note: "", ...over }, SCOPES, TAKEN);
 
 console.log("test: the three plain answers");
 {
@@ -55,6 +55,11 @@ console.log("test: a hub the model named must EXIST, or be an explicit creation"
   check("duplicates collapse", r(V({ scope: ["Music", "music"] })).scopes.length === 1);
   check("an unlisted name becomes a CREATION, not a silent file-elsewhere",
     r(V({ scope: ["Woodworking"] })).newScope === "Woodworking");
+  // A hub with no description is invisible to `blurbFor()`, so nothing can ever
+  // be filed into it again. The reply path has to carry one too.
+  check("a new hub carries its description",
+    r(V({ scope: ["Woodworking"], newScopeWhy: "Hand-tool woodwork projects." })).newScopeWhy
+      === "Hand-tool woodwork projects.");
   check("a live hub and a new one can be asked for together",
     r(V({ scope: ["Songwriting", "Woodworking"] })).scopes.join() === "Songwriting"
       && r(V({ scope: ["Songwriting", "Woodworking"] })).newScope === "Woodworking");

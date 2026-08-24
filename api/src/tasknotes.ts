@@ -22,9 +22,8 @@
 // Guess any of those and the note looks right and is invisible to every query.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { REPO_PATH, VAULT_SUBDIR } from "./config.js";
+import { VAULT } from "./config.js";
 
-const VAULT = process.env.VAULT_PATH ?? join(REPO_PATH, VAULT_SUBDIR);
 const CONFIG_REL = ".obsidian/plugins/tasknotes/data.json";
 const TTL_MS = 3000;
 

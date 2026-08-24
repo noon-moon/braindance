@@ -6,12 +6,9 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import matter from "gray-matter";
-import { REPO_PATH, VAULT_SUBDIR } from "./config.js";
+import { VAULT } from "./config.js";
 
-// Defaults to <REPO_PATH>/<VAULT_SUBDIR> so the viewer reads exactly the checkout
-// the git store commits to. VAULT_PATH still overrides for standalone/legacy
-// setups. (VAULT_SUBDIR is "" once the checkout ROOT is the vault, post-cutover.)
-const VAULT_PATH = process.env.VAULT_PATH ?? join(REPO_PATH, VAULT_SUBDIR);
+
 const WIKILINK = /\[\[([^\]]+)\]\]/g;
 const TTL_MS = 3000;
 
@@ -66,11 +63,11 @@ export function index(): Index {
   if (cache && now - cache.at < TTL_MS) return cache.idx;
 
   const notes = new Map<string, VaultNote>();
-  for (const e of readdirSync(VAULT_PATH, { withFileTypes: true })) {
+  for (const e of readdirSync(VAULT, { withFileTypes: true })) {
     if (!e.isFile() || !e.name.endsWith(".md")) continue; // flat vault; skips daily/, inbox/, _meta/
     const name = e.name.slice(0, -3);
     try {
-      notes.set(name, parse(name, readFileSync(join(VAULT_PATH, e.name), "utf8")));
+      notes.set(name, parse(name, readFileSync(join(VAULT, e.name), "utf8")));
     } catch { /* skip unreadable */ }
   }
 
@@ -130,7 +127,7 @@ export function takenRootNames(): Set<string> {
   const taken = new Set<string>();
   for (const name of index().notes.keys()) taken.add(name.toLowerCase());
   try {
-    for (const e of readdirSync(VAULT_PATH, { withFileTypes: true })) {
+    for (const e of readdirSync(VAULT, { withFileTypes: true })) {
       if (e.isFile() && e.name.toLowerCase().endsWith(".md")) taken.add(e.name.slice(0, -3).toLowerCase());
     }
   } catch { /* unreadable vault dir — the index is all we have */ }

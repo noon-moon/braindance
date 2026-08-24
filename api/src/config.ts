@@ -1,14 +1,18 @@
-// Shared vault-location config, and the one place the model knobs resolve.
+// Where the vault is, and the model knobs. Two facts, one file.
 //
-// The api commits captures into (and the viewer reads) a vault that lives at
-// <REPO_PATH>/<VAULT_SUBDIR>. Today VAULT_SUBDIR="ctx/vault" — the vault sits
-// inside the braindance checkout. At the v2 cutover the vault becomes its own
-// repo whose ROOT is the vault, so VAULT_SUBDIR="" and paths collapse to
-// `inbox/…`. Everything derives from these two values, so the flip is config-only.
-import { join, resolve } from "node:path";
-
-export const REPO_PATH = process.env.REPO_PATH ?? "/srv/braindance";
-export const VAULT_SUBDIR = process.env.VAULT_SUBDIR ?? "ctx/vault";
+// THE VAULT IS `VAULT_PATH` AND NOTHING ELSE. It used to be composed —
+// `<REPO_PATH>/<VAULT_SUBDIR>`, defaulting to `/srv/braindance/ctx/vault` —
+// from a time when the vault lived inside this checkout. That cutover happened;
+// the vault is its own repo. What survived was a DEFAULT that pointed at a
+// stale nested directory, derived independently in three modules, and it did
+// exactly what a wrong default does: a live pass ran for an evening writing to
+// a checkout nobody reads, because the wrapper knew the real path and did not
+// pass it on. Nothing composes it now, and nothing has a fallback to be wrong
+// about.
+//
+// Empty when unset — the caller checks and says so (see `announceVault` in
+// cli.ts). A tool that writes to a vault should never leave which one implicit.
+export const VAULT = process.env.VAULT_PATH ?? "";
 
 export interface AiSuggestConfig {
   /** Both halves must be present: the feature flag AND a key. Either missing and
@@ -44,12 +48,4 @@ export function aiSuggestConfig(env: NodeJS.ProcessEnv = process.env): AiSuggest
     model: env.AI_MODEL?.trim() || "claude-sonnet-5",
     intervalMs: Number.isFinite(interval) && interval >= 5000 ? interval : 60000,
   };
-}
-
-/** Build a repo-relative path inside the vault. Empty segments (e.g. an empty
- *  VAULT_SUBDIR when the checkout root IS the vault) drop out cleanly, so
- *  `vaultRel("ctx/vault","inbox","x.md")` → `ctx/vault/inbox/x.md` and
- *  `vaultRel("","inbox","x.md")` → `inbox/x.md`. */
-export function vaultRel(subdir: string, ...segments: string[]): string {
-  return [subdir, ...segments].filter(Boolean).join("/");
 }

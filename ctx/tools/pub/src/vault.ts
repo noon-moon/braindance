@@ -73,7 +73,7 @@ export function hasTag(note: Note, tag: string): boolean {
 }
 
 // Find a referenced asset by basename under the vault's binary stores.
-// Assets live in ctx/vault/assets|attachments (gitignored but present locally).
+// Assets live in <vault>/assets or <vault>/attachments (gitignored, present locally).
 export function findAsset(vaultDir: string, name: string): string | null {
   const target = name.split('/').pop()!; // accept both `x.png` and `assets/x.png`
   for (const sub of ['assets', 'attachments']) {

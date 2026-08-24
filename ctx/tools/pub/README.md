@@ -25,10 +25,10 @@ Every run prints the `vault:` and `pub:` it resolved — check that line before 
 
 | What | Flag | Env | Default |
 |---|---|---|---|
-| Vault to read | `--vault` | `VAULT_REPO`, then `VAULT_PATH` | `ctx/vault` (in-repo placeholder) |
+| Vault to read | `--vault` | `VAULT_REPO`, then `VAULT_PATH` | `$VAULT_PATH` (in-repo placeholder) |
 | Site to write | `--pub` | `PUB_REPO` | **none — required** |
 
-`VAULT_PATH` is in the chain because the instance resolver exports it, so inside a configured context the right vault is already named. The in-repo `ctx/vault` fallback is a gitignored placeholder and will select nothing on a real instance.
+`VAULT_PATH` is in the chain because the instance resolver exports it, so inside a configured context the right vault is already named. The in-repo `$VAULT_PATH` fallback is a gitignored placeholder and will select nothing on a real instance.
 
 Pipeline (per note): `stripScaffolding` (drop `Created:`/`Tags:` preamble, `# References`, `dataview` blocks) → `normalizeAssetEmbeds` → `classifyLinks` → **gate** (strict: block any link to a non-published note — the privacy boundary; missing assets always block) → `whitelistFrontmatter` (drop everything but a safe key set) → `regenerate` (writes flat into `garden/content`; a `.publish-manifest.json` records the tool-owned files so deletes are automatic and hand-authored pages like `index.md` are untouched).
 

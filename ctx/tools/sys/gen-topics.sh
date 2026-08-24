@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# gen-topics.sh — generate ctx/vault/_meta/Topics.md, the topics manifest.
+# gen-topics.sh — generate <vault>/_meta/Topics.md, the topics manifest.
 # Part of the braindance lifecycle; not a user-authored note.
 #
 # Walks every `scope`-tagged vault note's frontmatter (tags / scope_kind /
@@ -15,7 +15,7 @@
 # Named .sh for discoverability alongside its sibling lifecycle scripts; it is a
 # python3 program (stdlib only — no third-party deps) because frontmatter and
 # wikilink parsing are cleaner there than in pure sh.
-"""Generate the braindance topics manifest (ctx/vault/_meta/Topics.md)."""
+"""Generate the braindance topics manifest (<vault>/_meta/Topics.md)."""
 
 import os
 import re

@@ -7,7 +7,7 @@
 // business living outside the typecheck that guards the vault's own writers.
 import { readFileSync, writeFileSync, unlinkSync, readdirSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { REPO_PATH, VAULT_SUBDIR } from "./config.js";
+import { VAULT } from "./config.js";
 import { suggestFor, scopeCatalogue, type Suggestion } from "./suggest.js";
 import { funnelById } from "./funnels.js";
 import { getIngestableScopesStrict, takenRootNames, invalidate } from "./vault.js";
@@ -23,18 +23,15 @@ import {
 import { TransientError, RefusalError } from "./suggest.js";
 import { report, reset } from "./usage.js";
 
-const VAULT = process.env.VAULT_PATH ?? join(REPO_PATH, VAULT_SUBDIR);
 const abs = (rel: string): string => join(VAULT, rel);
 
 /** Say which vault this is operating on, every run, before doing anything.
  *
- *  It resolves from `VAULT_PATH`, falling back to `REPO_PATH`/`VAULT_SUBDIR` —
- *  and that fallback silently pointed a live run at a stale checkout, because
- *  the wrapper script knew where the vault was and never passed it on. A tool
- *  that writes to a vault should never leave "which one" implicit. */
+ *  There is no fallback any more — see config.ts. This says which vault out
+ *  loud because the version that did not cost an evening. */
 function announceVault(): void {
   if (!existsSync(VAULT)) {
-    console.error(`no vault at ${VAULT} — set VAULT_PATH`);
+    console.error(VAULT ? `no vault at ${VAULT}` : "VAULT_PATH is not set");
     process.exit(1);
   }
   console.log(`vault: ${VAULT}`);

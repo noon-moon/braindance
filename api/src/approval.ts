@@ -307,7 +307,6 @@ const scalar = (v: string): string =>
  *  with authority. The frontmatter has been through `validate()`; the prose is
  *  for human eyes only. */
 export function renderProposal(captureRel: string, p: Proposal): string {
-  const key = keyOf(captureRel);
   const link = captureRel.replace(/\.md$/, "");
   const fm: string[] = [
     "---",

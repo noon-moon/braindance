@@ -7,7 +7,7 @@ description: Search, create, and manage notes in the Obsidian vault with wikilin
 
 ## Vault location
 
-Configure this skill with your vault path. Default for braindance users: `ctx/vault/` relative to the repo root.
+Configure this skill with your vault path. Under braindance it is `$VAULT_PATH` — there is no default and no nested vault; the resolver reports it with `bd where`.
 
 ## Naming conventions
 

@@ -159,14 +159,14 @@ untouched at step 0, so the `api` and one-off overrides keep working.
   matched nothing. Convenience for `cwd=~`; opt-in per registry.
 - **Step 4 — legacy compat.** With **zero** instances registered, the resolver
   produces today's nested defaults exactly (`BD_CORE` self-resolved from the
-  tooling's own location, `VAULT_PATH=<core>/ctx/vault`, `REPOS_PATH=<core>/repo`).
+  tooling's own location, `VAULT_PATH=<core>/$VAULT_PATH`, `REPOS_PATH=<core>/repo`).
   The bare template and any single-instance user who never runs `./configure`
   behave identically to now — this model is purely additive.
 - **Step 5 — stop, don't guess.** Instances *are* registered, but cwd maps to
   none and no pin/default applies → the resolver exits non-zero with a message
   (`no active instance for this location; run: bd use <name>`). The
   `SessionStart` hook surfaces this rather than silently falling back to empty
-  `ctx/vault` scaffolding — the footgun that once left a real vault unused.
+  `$VAULT_PATH` scaffolding — the footgun that once left a real vault unused.
 
 ## Invariants
 
@@ -174,7 +174,7 @@ untouched at step 0, so the `api` and one-off overrides keep working.
   `vault`, or `repos` may nest inside a *different* instance's. `./configure`
   refuses a registration that would overlap. This guarantees the longest-prefix
   match at step 2 is unique. *Nesting within one instance is legal* — the legacy
-  nested layout (`repos = <core>/repo`, `vault = <core>/ctx/vault`) is exactly
+  nested layout (`repos = <core>/repo`, `vault = <core>/$VAULT_PATH`) is exactly
   that, and walk-up there only ever meets the one instance.
 - **The legacy path is untouched.** See step 4. Zero-instance behavior is
   byte-for-byte today's behavior.

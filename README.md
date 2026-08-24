@@ -1,16 +1,49 @@
 # braindance
 
-A meta-repository for agentic development. Clone it once, keep it as your personal knowledge and workflow layer, then plug any repository into the repos dir to bring that context to bear.
+Personal tooling: an agent layer over a plain-markdown vault that Obsidian owns
+and git syncs. It carries skills, agent guidance, worktree discipline, and one
+agent that triages what you capture.
 
-braindance is the **system**, not your data. It carries the tooling, skills, agent guidance, and an optional admin container you deploy to your own infrastructure. Your notes live in a separate vault; anything you publish lives in a separate site repo:
+**Not a product.** There is no version of this to hand a stranger — no
+quickstart for someone else, no feature flags, no export. It is one person's
+setup, written down. You are welcome to read it and take what is useful.
+
+Three repos, each independent:
 
 ```
-braindance      this repo — tooling, skills, agent guides, and the admin app (→ container → your infra)
-vault           your knowledge base; the container owns a checkout of it and syncs periodically
-<site>          optional: a public site repo the publish tool projects notes into
+braindance      this repo — skills, agent guides, tooling, and the applier
+<vault>         your notes. Obsidian opens it, obsidian-git syncs it
+<site>          optional: a public site the publish tool projects notes into
 ```
 
-Each is independent. You can use braindance with nothing but a vault and never deploy anything.
+## What actually runs
+
+One systemd timer, a second or two a minute. Nothing listens; there is no
+container and no port.
+
+```
+Obsidian     write a note, anywhere → arm it: #capture
+   ↓ obsidian-git
+the timer    classify what is armed → a proposal in _triage/
+             act on proposals you have answered → the filed note
+   ↓ obsidian-git
+Obsidian     read the proposal, answer in it, arm it → filed
+```
+
+The marker is armed by **deleting a character** (`##capture` → `#capture`), so a
+template can carry it disarmed and a note you are three words into is invisible.
+Nothing files without an answer you armed by hand. Details:
+[`docs/serving.md`](docs/serving.md).
+
+## The rule
+
+> **Could Obsidian do this? Could a community plugin? Could a Shortcut, or a
+> cron? If any answer is yes, it does not get built here.**
+
+That question, asked once, would have prevented about nine thousand lines that
+were written, maintained, and then deleted — a task engine, a review desk, a
+vault viewer, a daily-note editor, a calendar feed and a capture form. Obsidian
+does all of it, better. Reasoning: [`docs/architecture.md`](docs/architecture.md).
 
 ## Layout
 
@@ -18,41 +51,50 @@ Each is independent. You can use braindance with nothing but a vault and never d
 bd/
 ├── ctx/
 │   ├── skills/        LLM-agnostic skill prompts (plain markdown; installed into your harness)
-│   ├── tools/
-│   │   ├── sys/       Lifecycle tooling — configure, resolve, sync.sh, wt.sh (`bd`), gen-topics
-│   │   ├── orchestration/  Multi-agent fleet helpers
-│   │   └── pub/       Publish tool: projects `publish: true` notes into a site repo
-│   └── vault/         Default (nested) vault location — Obsidian config + templates only
+│   └── tools/
+│       ├── sys/       Lifecycle tooling — configure, resolve, sync.sh, wt.sh (`bd`), gen-topics
+│       ├── orchestration/  Multi-agent fleet helpers
+│       └── pub/       Publish tool: projects `publish: true` notes into a site repo
+├── api/               The classifier and the applier — no server, a CLI the timer invokes
+├── ops/               The timer, the script it runs, and its tests
 ├── docs/              The manual (see the map below)
-├── api/               Admin app: mobile capture + review desk + read-only vault viewer
-├── Caddyfile · docker-compose.yml · deploy.sh · ops/     Serving stack
+├── Caddyfile · docker-compose.yml · deploy.sh   Caddy only, if you serve a public site
 ├── CLAUDE.md · AGENTS.md    Agent directives (Claude / cross-tool)
 └── repo/              Gitignored — default (nested) home for your target repos
 ```
 
-## Quick start
+## Setting up a clone
 
 ```bash
 git clone <this-repo> bd
 cd bd
-./configure --name personal --default
+./configure --name personal --vault ~/dev/vault --default
 ```
 
-`./configure` registers this clone and wires your machine, idempotently:
+`--vault` is **required**: there is no default and no vault inside this
+checkout. `configure` refuses rather than inventing one, because a plausible
+wrong path is worse than none — a default pointing at a nested directory once
+had the applier writing into a checkout nobody reads, for an evening, silently.
+
+It then registers the clone and wires the machine, idempotently:
 
 - writes `~/.config/braindance/instances/personal.conf` (its three paths)
 - installs the `SessionStart` + cross-instance-guard hooks into `~/.claude/settings.json`
 - appends `source <core>/ctx/tools/sys/wt.sh` to your shell rc (`~/.zshrc` / `~/.bashrc`)
 
-Open a new shell so the rc change takes effect — that gives you the `bd` command and automatic context resolution as you `cd`. Then:
+Open a new shell so the rc change takes effect — that gives you the `bd` command
+and automatic context resolution as you `cd`. Then:
 
 ```bash
 ./ctx/tools/sys/sync.sh claude-code    # install skills as /slash-commands
 ```
 
-Open your vault directory in Obsidian. By default that's `$VAULT_PATH/`; point `--vault` at somewhere else if you keep it outside the checkout (most people do — see Contexts).
+Open the vault in Obsidian and install `obsidian-git`; that is the sync, on the
+desk and on a phone, and it is what replaced paying for Obsidian Sync.
 
-Useful flags: `--vault <path>` and `--repos <path>` to place those territories, `--worktrees <path>` to say where agent worktrees live (`bd new <task>` creates `<worktrees>/<task>`; defaults to a `worktrees` sibling of this clone), `--no-wire` to register without touching your settings or rc.
+Useful flags: `--repos <path>` to place the repos territory, `--worktrees <path>`
+to say where agent worktrees live (`bd new <task>` creates `<worktrees>/<task>`),
+`--no-wire` to register without touching your settings or rc.
 
 ## Contexts — running more than one braindance
 
@@ -103,7 +145,7 @@ Territories must be **disjoint** — no context's core, vault, or repos may sit 
 
 **The registry** lives at `~/.config/braindance/` — one `instances/<name>.conf` per context plus an optional `default`. It's machine-local and never committed.
 
-**Escape hatch.** If you export `VAULT_PATH` / `REPOS_PATH` / `BD_ROOT` yourself, resolution stays dormant and your values win. That's how the deployed app and one-off `VAULT_PATH=… command` invocations stay authoritative. Unset them to hand the shell back to the resolver.
+**Escape hatch.** If you export `VAULT_PATH` / `REPOS_PATH` / `BD_ROOT` yourself, resolution stays dormant and your values win. That is how `ops/applier.sh` and one-off `VAULT_PATH=… command` invocations stay authoritative. Unset them to hand the shell back to the resolver.
 
 Full mechanics — the resolution ladder, step semantics, worked examples: [`docs/instances.md`](docs/instances.md).
 
@@ -112,11 +154,11 @@ Full mechanics — the resolution ladder, step semantics, worked examples: [`doc
 | If you're… | Read |
 |---|---|
 | wondering what braindance is for, or whether a change belongs | [`docs/architecture.md`](docs/architecture.md) |
-| deploying the capture/review app to a host | [`docs/deploy.md`](docs/deploy.md) |
+| setting the timer up on a host | [`docs/deploy.md`](docs/deploy.md) |
 | installing or writing skills | [`docs/skills.md`](docs/skills.md) |
 | working in the vault — conventions, triage, scratch | [`docs/vault.md`](docs/vault.md) |
 | resolving or bootstrapping contexts | [`docs/instances.md`](docs/instances.md) |
-| running the admin app or the serving stack | [`docs/serving.md`](docs/serving.md) |
+| working on the classifier, the applier, or the triage loop | [`docs/serving.md`](docs/serving.md) |
 | publishing vault notes to a public site | [`docs/publishing.md`](docs/publishing.md) |
 | running parallel agent sessions (worktrees, landing) | [`docs/worktrees.md`](docs/worktrees.md) |
 | orchestrating a fleet of sub-agents | [`docs/orchestration.md`](docs/orchestration.md) |

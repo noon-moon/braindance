@@ -1,109 +1,150 @@
 # Architecture — what braindance is, and the test every change has to pass
 
-This is the north star. When a technical decision is hard, check it against the goals below rather than against local convenience; a lot of what braindance accumulated in its first months was locally sensible and didn't add up.
+This is the north star. When a technical decision is hard, check it against the
+test below rather than against local convenience.
 
-> **⚠ Partly superseded, and deliberately not rewritten here.** "The desk" below
-> describes a web app — capture form, triage desk, task roll-up, vault viewer —
-> that has been deleted. Obsidian is the interface now, on the phone as well as
-> the desk; git is the transport; and what runs on a host is a timer that
-> classifies armed captures and files the ones you answered. See
-> [`serving.md`](serving.md) for what exists.
->
-> The three goals below have NOT been re-derived against that, and neither has
-> the feature-gate table. That is a conversation rather than a cleanup: the
-> product definition is the one thing in this repo that should not be quietly
-> edited by whoever happened to be deleting code. Left standing, and flagged, so
-> the next person reads it knowing which half is current.
+Rewritten 2026-08-23, after a day that deleted 8,723 lines of it. The previous
+version described a self-hosted web app — capture form, triage desk, task
+roll-up, vault viewer — with three goals, two of which that app existed to
+serve. All of it is gone. What follows is derived from what survived and why,
+not from what would be nice.
 
-## The product
+## What this is
 
-> A personal notes system built on plain markdown in git, with a small self-hosted app for capturing and triaging from a phone, and enough context for an agent to work in it.
+> **Personal tooling: an agent layer over a plain-markdown vault that Obsidian
+> owns and git syncs.**
+
+Not a product. There is no version of this to hand a stranger, no quickstart, no
+feature flags, no export bundle. That was a real ambition once and it is
+withdrawn — it cost a product/instance boundary, a template vault, a gated
+deploy story, and a roadmap, all of which existed to serve users who do not
+exist. Genericity remains as *hygiene* — no hardcoded paths, no personal content
+in this repo — because two instances run on one machine and one of them may
+belong to an employer. That is a privacy boundary, not a distribution strategy.
 
 Three parts, in order of durability:
 
-1. **The vault** — flat markdown in a git repo. The actual asset. It outlives every other component here and is readable with `cat`. Nothing may compromise this.
-2. **The desk** — capture → `inbox/` → review → filed. The only piece that has to be *running*.
-3. **The context layer** — skills, agent guides, worktree and instance discipline. What makes the vault workable by an agent.
+1. **The vault** — flat markdown in a git repo. The actual asset. It outlives
+   every other component here and is readable with `cat`. Nothing may compromise
+   this.
+2. **The context layer** — skills, agent guides, worktree and instance
+   discipline. What makes the vault workable by an agent, and the half of this
+   repo that has never been deleted.
+3. **The agents** — processes that read the vault, propose, and act on an answer.
+   The applier (triage) is the first. It is the only part that has to be
+   *running*, and that is a cost rather than a feature.
 
-## The three goals
+## The goals
 
 Every change is measured against these, in this order:
 
-1. **Lightweight note access** — a thought reaches the vault in one tap, from a phone, without losing anything; and you can read the vault back the same way.
-2. **A simple review flow** — an inbox item becomes a filed note in as few decisions as possible. Features that *remove* decisions (pre-filled suggestions) serve this; features that add surface do not.
-3. **Portability and maintainability** — fewest moving parts, fewest schemas, fewest repos. The vault must survive the app being deleted.
+1. **The vault outlives everything here.** Plain markdown in git, readable with
+   `cat`, and correct after every tool in this repo is deleted. This was third
+   on the old list and it is the one that paid: removing an entire web app cost
+   nothing, because the asset was never inside it.
+2. **Obsidian is the interface, and braindance never competes with it.** Reading,
+   writing, searching, linking, tasks, calendars, mobile — all of it belongs to
+   Obsidian and its plugins. Everything built here that duplicated one of those
+   was deleted within weeks.
+3. **Agents propose; you dispose.** Nothing an agent decides reaches the vault
+   without an answer you armed by hand, on any device, in the vault itself. What
+   it does is legible where you will see it and reversible through git.
+4. **Fewest running things.** A convention beats a document beats a script you
+   invoke beats a service. Anything that must be live needs saying out loud.
 
-**The test:** if a proposed feature doesn't serve one of these, it needs an explicit fourth goal stated out loud before it gets built. Two subsystems were built without that and cost more maintenance than everything else combined.
+## The test
 
-## The boundary that matters: product vs instance
+**Could Obsidian do this? Could a community plugin? Could a Shortcut, or a
+cron?** If any answer is yes, it does not get built here.
 
-Not app vs context — **product vs instance**.
+That question, asked once, would have prevented the task engine, the review desk,
+the vault viewer, the Today tab, the calendar feed, and the capture form —
+roughly nine thousand lines, every one of them written, maintained, and then
+deleted. It is not a rule of thumb; it is the summary of what actually happened.
+
+The old test — *a feature serving none of the goals needs an explicit fourth goal
+stated out loud* — **worked**, and is kept as the second gate. It correctly
+flagged the task system as unratified, and the task system is precisely what got
+deleted. The mechanism was sound; the goals underneath it were stale.
+
+## The protocol
+
+Agents share one shape, and the applier is its first implementation rather than
+a special case:
 
 ```
-braindance   THE PRODUCT — app, tooling, skills, schema, docs.
-             Zero personal content. Zero hardcoded paths. This is what you hand someone.
-
-<instance>   YOUR DATA — the vault repo, plus instance config (registry entry, /srv/.env,
-             feature flags). Nothing instance-specific lives in the product repo.
+you arm a marker  →  the agent proposes, in a note, in the vault
+                  →  you answer in that note and arm it
+                  →  the agent acts, and the proposal disappears
 ```
 
-**The fork model is retired.** braindance is not a template you fork and keep merged with `upstream/master`. You **clone and deploy** it; your data lives outside it; there is nothing to merge back. The "template vs fork — where changes go" rule disappears along with the whole class of confusion it created, in which the product and one instance were the same checkout.
+Everything that makes this safe is in the shape, not in the model:
 
-**The app is not split into its own repo.** Someone deploying wants one clone that gives them skills, agent guides, and the desk together. A second remote would double their onboarding and create a cross-repo schema contract — the exact coupling that has already caused drift. The api's independence from `ctx/` is real and worth preserving as a *module* boundary, not a second repository.
+- **The marker is armed by deleting a character** (`##capture` → `#capture`), so
+  a template can carry it disarmed and nothing is ever read mid-writing.
+- **Only the answer is an instruction.** The captured text is data, fenced; the
+  reply region is bounded by a rule the model cannot forge (`safe()` guarantees
+  no model-derived string reaching a note body contains a newline).
+- **Nothing the model returns is taken at its word** — every value is checked
+  against the live vault, and anything ambiguous asks again rather than guessing.
+- **A failure reports where you will see it**, in the vault, and clears itself.
 
-## Deployment floor: Docker on any host
+A second agent — a weekly review, a publish pass, a link-rot check — should reuse
+that shape. But it must pass the test first: **this protocol is not a licence to
+add agents.** It is how an agent behaves *once it has justified existing*, and
+the way the last system accreted was one plausible feature at a time.
 
-The target is one `docker compose up` against any host the person controls — VPS, home server, work box. **No assumption that they built the host, own a domain, or know the internals.** Phone access is Tailscale or a tunnel; the app binds a private interface and never `0.0.0.0`.
+Extraction follows a second implementation, not the anticipation of one. There is
+no protocol module today because there is one caller.
 
-This means the deploy path must be a **generic quickstart**, not one operator's runbook. `ctx/vps-setup.md` is currently the latter and does not belong in the product.
+## The boundary that remains
 
-## Feature gates
+Not product vs instance — **the tooling repo vs the vault repo**, and it is a
+privacy boundary rather than a distribution one:
 
-One instance config decides what a deployment even has. Everything off-by-default that costs a key or an external service.
+```
+braindance   tooling, skills, agent guides, the applier. No personal content.
+<vault>      your notes. Its own repo, its own remote, its own sync.
+```
 
-| Gate | Turns on | Default |
-|---|---|---|
-| `capture` | phone capture → `inbox/` | on |
-| `review` | the triage desk | on |
-| `tasks` | `/todo` roll-up + `.ics` feed | on |
-| `suggest` | AI pre-suggestions per capture (needs an API key) | **off** |
-| `publish` | projection → public site | **off** |
+Publishing keeps its own version of the same line: `publish: true` notes are
+projected into a **separate site repo**, and that separateness *is* the
+guarantee — a repo cannot leak a note it was never given.
 
-Someone who wants notes-only runs with `publish` off and never learns the publish tool exists. The public garden stops being a topology decision and becomes one flag.
+Instances (work and personal side by side, resolved from where you are) stay for
+the same reason. The cross-instance write guard is a genuine boundary when one
+vault belongs to an employer. Mechanics: [`instances.md`](instances.md).
 
-## Export = a deploy bundle
+## Deployment
 
-`bd export` takes a configured instance and emits everything needed to stand it up elsewhere: compose file, env template, feature flags, image reference. Publishing is a **gated step inside** that bundle, not a parallel pipeline.
+One systemd timer running a shell script for a second or two a minute. Nothing
+listens; there is no container, no port, no private network to arrange. See
+[`deploy.md`](deploy.md) and [`../ops/README.md`](../ops/README.md).
 
-This is what makes "give it to a friend" and "run it at work" the same operation as "deploy my own", rather than three bespoke paths.
+The previous version of this document specified "one `docker compose up` against
+any host", Tailscale, a public container image, and a CI deploy that SSHed in.
+That was the deployment story of a web app.
 
-## Schema: one module, generated docs
+## Schema drift
 
-The vault's tag vocabulary and task-line grammar are currently encoded in four places; three had drifted, and one drift shipped a bug (an api funnel emitting a shape the vault no longer parsed).
-
-Because this is **one repo**, the fix is cheap: a workspace module owning the constants, the frontmatter whitelist, and the task-line grammar, imported by both the api and the publish tool, with conformance tests both run. The vault's `_meta/Tags.md` is **generated** from it — the same pattern `gen-topics.sh` already uses for `Topics.md`.
-
-What prevents drift is shared code plus tests. A schema *document* in a fifth location would just be a fifth thing to drift.
-
-## Instances
-
-Work and personal run side by side on one machine, each owning a `core` / `vault` / `repos` triple, resolved from where you are. This stopped being over-engineering the moment work became a real second instance: the cross-instance write guard (C2) is a genuine privacy boundary when one of the vaults belongs to an employer.
-
-Mechanics: [`instances.md`](instances.md).
-
-## Roadmap
-
-Sequenced so each phase leaves the repo coherent:
-
-1. ~~**Evict the instance from the product.**~~ **Done.** `ctx/vps-setup.md` moved to the instance vault, the publish skill and docs genericized, the orphaned tournament spec dropped, and the VPS runbook replaced by the generic [`deploy.md`](deploy.md).
-2. **Feature gates.** One config, read by the app; everything that needs a key or a service defaults off.
-3. **Schema module.** Extract the grammar and constants, add conformance tests, generate `_meta/Tags.md`.
-4. **`bd export`.** Emit the deploy bundle.
-5. **Publish as a gated feature.** Fold the projection into the bundle behind `publish`.
+The vault's vocabulary is defined in its own `_meta/Tags.md` and read at runtime;
+the publish tool carries a frontmatter whitelist. Those two can still drift, and
+have. The old fix — one module owning the grammar, importing into both, with
+conformance tests — is still the right shape and is still unbuilt. It is smaller
+now: the task-line grammar it was mostly about no longer exists, TaskNotes owns
+that and its config is read from the plugin.
 
 ## What braindance is not
 
-- Not a template to fork and merge.
-- Not a website. The public site is an output of `publish`, and lives in its own repo.
-- Not a general note-taking app. It assumes a flat markdown vault in git and is unapologetic about it — that assumption is what makes goal 3 achievable.
-- **Not a home for domain-specific tools.** Braindance is domain-agnostic: it encodes *how you work*, never *what you are into*. A utility that knows about a particular hobby, service, or media library belongs in a separate tools repo, even when it writes vault notes — such a tool takes the vault as an argument (`--vault`, `$VAULT_PATH`) rather than assuming this layout. The `music/` tools were extracted on exactly this line, along with the orphaned tournament scripts.
+- **Not a product.** See above. No quickstart, no gates, no export.
+- **Not a note-taking app.** Obsidian is. Anything here that starts to look like
+  one is a mistake with a deletion date.
+- **Not a website.** The public site is an output of `publish` and lives in its
+  own repo.
+- **Not a home for domain-specific tools.** Braindance encodes *how you work*,
+  never *what you are into*. A utility that knows about a hobby, a service, or a
+  media library belongs in a separate repo and takes the vault as an argument.
+  The `music/` tools were extracted on exactly this line.
+- **Not a task manager.** That was tried, ratified as a fourth goal, and reversed
+  inside a day. TaskNotes owns tasks; this repo reads its configuration and
+  otherwise stays out of the way.

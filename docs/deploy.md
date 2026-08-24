@@ -1,127 +1,84 @@
-# Deploy — standing up the desk on a host you control
+# Standing it up on a host
 
-The floor is **Docker on any host**: a VPS, a home server, a work box. Nothing here assumes you built the machine, own a domain, or know braindance's internals. Budget 30–45 minutes for a fresh Linux host; much less if it already runs Docker.
+Almost nothing runs. There is no container to deploy, no port to open, no image
+to pull, and no private network to arrange — **nothing listens**. What runs is a
+systemd timer executing a shell script for a second or two a minute.
 
-What you need before starting:
+That is a recent and deliberate shrinking. This document used to describe
+deploying a Hono app behind Tailscale on port 3000, with a public container
+image, a CI deploy that SSHed in, and a `/health` endpoint to gate the roll.
+All of that existed to serve a web UI — capture, triage, a task roll-up, a vault
+viewer. Obsidian does those now, on the phone as well as the desk, and the box
+was left with one job: classify what you armed, and file what you answered.
 
-- A host you can SSH into, with sudo.
-- **A vault repo** — a git repo of markdown notes. It can be empty; the app will start filing into `inbox/`.
-- **A GitHub token** with `repo` scope — the app commits captures to your vault repo. That's all it's for; the container image is public and needs no token to pull.
-- **A private network path** — [Tailscale](https://tailscale.com) is the easy one. The app has no authentication, so it must never be reachable from the public internet.
+## What the host needs
 
-> **Read that last point twice.** The api binds a single private interface and the compose file refuses to start without one. Everything below is arranged so that stays true.
+- **A vault checkout** it can read and write, on the branch your clients push to.
+- **node**, and the tool built once (`npm ci && npm run build`).
+- **`ANTHROPIC_API_KEY`** in `/srv/.env`.
+- **Git push credentials** for the vault remote.
 
-## 1. Prepare the host
+No Docker, unless you also serve a public site — Caddy is the only container
+left in `docker-compose.yml`, and it is unrelated to this loop.
 
-Skip anything already done. **Order matters** — UFW before Docker, so Docker's iptables rules layer onto a known-good baseline; Tailscale before enabling UFW, so you keep a second way in.
+## Layout
 
-```bash
-# A non-root sudo user, if you're still root
-adduser <you> && usermod -aG sudo <you>
-rsync --archive --chown=<you>:<you> ~/.ssh /home/<you>
-su - <you>
-
-# Deny-by-default, keeping SSH
-sudo ufw default deny incoming
-sudo ufw default allow outgoing
-sudo ufw allow 22
-
-# Tailscale, and note the IP it gives you
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
-tailscale ip -4
-
-# Open the public web ports, and the app port ONLY on the tailnet
-sudo ufw allow 80
-sudo ufw allow 443
-sudo ufw allow in on tailscale0 to any port 3000
-sudo ufw enable
-sudo ufw status verbose      # verify before continuing
-
-# Docker
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker <you> && newgrp docker
+```
+/srv/vault          the vault checkout — the applier is the only writer here
+/srv/braindance     this repo: ops/applier.sh, and api/ built to api/dist
+/srv/.env           ANTHROPIC_API_KEY, and any BD_* overrides
 ```
 
-## 2. The image
+Both checkouts must be **owned by the user the timer runs as**. A root-owned
+directory under a user-owned vault is a real failure mode and cost an evening:
+every pass died inside a rebase with one buried "Permission denied". The script
+checks writability on its first line now and says exactly what is wrong, but the
+cheaper fix is not creating the situation — never run `applier.sh`, or git in
+these checkouts, with `sudo`.
 
-The api ships as a **public** container image. Nothing to build, no GitHub account needed, no `docker login` — the host pulls it anonymously:
+## Install
 
-```bash
-docker pull ghcr.io/noon-moon/braindance/api:latest    # optional; deploy.sh pulls it anyway
+```console
+$ git clone <this repo> /srv/braindance
+$ git clone <your vault> /srv/vault
+$ (cd /srv/braindance/api && npm ci && npm run build)
+$ printf 'ANTHROPIC_API_KEY=sk-ant-…\n' | sudo tee -a /srv/.env
+$ /srv/braindance/ops/applier.sh          # once, by hand
 ```
 
-`:latest` is the only tag published, and it always means the newest build of the default branch. It's what `API_IMAGE` points at, what the CI deploy rolls, and what `ops/braindance-sync.timer` falls back to.
+That manual run is the whole smoke test. It prints which vault it resolved,
+finds nothing armed, and exits — proving the key, the paths, the build, and the
+git configuration in one line each. **Run it before enabling the timer**: the
+script reads `/srv/.env` itself precisely so that a hand run and a timer run are
+the same program, which they were not until it did.
 
-**To freeze a box on one build**, pin a digest rather than a tag: `/health` reports the commit SHA the container is running, the GitHub Packages page lists the matching digest, and `API_IMAGE=ghcr.io/noon-moon/braindance/api@sha256:<digest>` holds it there. That is also how you roll back.
+Then the timer: [`../ops/README.md`](../ops/README.md).
 
-**Building your own instead?** Push to your fork and `.github/workflows/deploy-api.yml` publishes to `ghcr.io/<owner>/<repo>/api`; set `API_IMAGE` to that path. A private package needs `docker login ghcr.io -u <you> --password-stdin` with a `read:packages` token on the host.
+## Updating
 
-## 3. Lay out `/srv` and clone
+The box no longer updates itself. `braindance-sync.timer` rolled the api image
+and is obsolete; disable it. To take a new version:
 
-Two checkouts, deliberately: the deploy config and your vault are separate repos, so the app never writes the config it runs from.
-
-```bash
-sudo mkdir -p /srv/braindance /srv/www /srv/garden
-sudo chown -R $USER:$USER /srv
-
-git clone https://<user>:<token>@github.com/<owner>/braindance.git /srv/braindance
-git clone https://<user>:<token>@github.com/<owner>/<your-vault>.git /srv/vault
+```console
+$ cd /srv/braindance && git pull
+$ (cd api && npm ci && npm run build)      # only when api/ changed
 ```
 
-`/srv/braindance` is config only — the api never writes it, which is what makes the host-side `git pull --ff-only` (in `ops/sync.sh` and in the CI deploy) safe. **It must be owned by the deploy user**: root-owned, git refuses it as "dubious ownership" and the config silently stops shipping while image rolls keep working. `/srv/vault` is the api's read-write checkout and it is the single writer there.
+The timer picks up a changed `ops/applier.sh` on its next firing with no restart
+— it is a script, not a daemon.
 
-`/srv/www` and `/srv/garden` are what Caddy serves. They stay empty unless you publish a site into them ([`publishing.md`](publishing.md)).
+## Failure
 
-## 4. Configure
+A pass that cannot complete writes `_triage/BRAINDANCE PASS FAILING.md` into the
+vault and pushes it, so a broken host reaches your phone. It clears itself on the
+next good pass. `journalctl -u braindance-applier` is the fallback for the case
+the note cannot cover: when git itself is what broke, and the report cannot be
+pushed.
 
-```bash
-cat > /srv/.env <<'EOF'
-DOMAIN=example.com                       # Caddy's TLS hostname
-API_IMAGE=ghcr.io/noon-moon/braindance/api:latest   # public; see step 2 for tags
-TAILSCALE_IP=100.x.y.z                   # from `tailscale ip -4`
-TZ=America/New_York                      # decides what "today" means for tasks
-GITHUB_TOKEN=<token>
-GITHUB_REPO=<owner>/<your-vault>
-REPO_PATH=/srv/vault
-VAULT_SUBDIR=                            # empty: notes at the vault repo's root
-VAULT_EXTERNAL=1
-EOF
-chmod 600 /srv/.env
-```
+## What is gone, and why you may still find references
 
-`API_IMAGE` and `TAILSCALE_IP` are `${VAR:?}` in the compose file — **missing either aborts the run**, on purpose. A missing `DOMAIN` breaks Caddy's TLS. Leave `TZ` unset and the container's UTC midnight decides your day boundary. Full knob list: [`serving.md`](serving.md).
-
-## 5. Start it
-
-```bash
-cd /srv/braindance
-./deploy.sh up -d
-```
-
-Always go through `./deploy.sh` — it passes `--env-file /srv/.env`, and bare `docker compose` resolves every `${VAR}` empty.
-
-## 6. Keep it current
-
-Deploys are **push-based**: on every push to the default branch, `.github/workflows/deploy-api.yml` builds the image, SSHes in, fast-forwards the deploy config, rolls the container, and gates the run on `/health` reporting the commit it just built. Set `VPS_HOST`, `VPS_USER` and `VPS_SSH_KEY` as repository secrets to enable it; with `VPS_HOST` unset the deploy step skips and says so loudly in the run summary, so a green run never implies a deploy that didn't happen.
-
-The systemd timer below stays on as a **slow fallback** (~30 min) so a failed or unconfigured CI deploy still converges. Both paths are idempotent.
-
-```bash
-sudo sed -i "s/^User=deploy/User=$USER/" /srv/braindance/ops/braindance-sync.service
-sudo ln -sf /srv/braindance/ops/braindance-sync.{service,timer} /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now braindance-sync.timer
-```
-
-Detail in [`ops/README.md`](../ops/README.md).
-
-## 7. Verify
-
-```bash
-curl http://<tailscale-ip>:3000/health      # from another device on your tailnet
-curl --max-time 5 http://<public-ip>:3000/  # MUST fail — refused or timeout
-```
-
-`/health` reports the running build SHA and the resolved knobs, so you can confirm a deploy landed without SSHing in. **The second check matters more than the first** — if the public IP answers, stop and fix the binding before you capture anything.
-
-Then open `http://<tailscale-ip>:3000` on your phone and capture a note. It should appear in `inbox/` in your vault repo within a minute.
+The api's container image, `api/Dockerfile`, and
+`.github/workflows/deploy-api.yml` are deleted. If a host still has
+`braindance-api-1` running it is a second writer of your vault and will fight
+the applier — stop it and set `--restart=no`, or it returns on the next Docker
+daemon restart.

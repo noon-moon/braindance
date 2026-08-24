@@ -3,37 +3,21 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
-    "test": "npm run test:git && npm run test:proposals && npm run test:dedup && npm run test:object && npm run test:migrate && npm run test:tasks && npm run test:funnels && npm run test:ics && npm run test:health && npm run test:inbox && npm run test:suggest && npm run test:worker && npm run test:daily && npm run test:approval && npm run test:intent && npm run test:applier",
-    "test:git": "tsx test/git.test.ts",
-    "test:proposals": "tsx test/proposals.test.ts",
-    "test:dedup": "tsx test/dedup.test.ts",
-    "test:object": "tsx test/objectadapter.test.ts",
-    "test:migrate": "tsx test/migrate.test.ts",
-    "test:tasks": "tsx test/tasks.test.ts",
+    "start": "node dist/cli.js",
+    "test": "npm run test:approval && npm run test:intent && npm run test:applier && npm run test:suggest && npm run test:funnels",
     "test:funnels": "tsx test/funnels.test.ts",
-    "test:ics": "tsx test/ics.test.ts",
-    "test:health": "tsx test/health.test.ts",
-    "test:inbox": "tsx test/inbox.test.ts",
     "test:suggest": "tsx test/suggest.test.ts",
-    "test:worker": "tsx test/worker.test.ts",
-    "test:daily": "tsx test/daily.test.ts",
     "test:approval": "tsx test/approval.test.ts",
     "test:intent": "tsx test/intent.test.ts",
-    "test:applier": "tsx test/applier.test.ts"
+    "test:applier": "tsx test/applier.test.ts",
+    "dev": "tsx src/cli.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
-    "@hono/node-server": "^1.13.0",
-    "gray-matter": "^4.0.3",
-    "hono": "^4.6.0",
-    "markdown-it": "^14.1.0",
-    "simple-git": "^3.27.0"
+    "gray-matter": "^4.0.3"
   },
   "devDependencies": {
-    "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"

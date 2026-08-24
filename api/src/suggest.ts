@@ -1,45 +1,47 @@
-// M0 — the async triage suggestion. Read-only by construction.
+// The classifier — a capture in, a proposed filing out.
 //
-// A capture lands in `inbox/` and, some seconds later, a suggested title / type /
-// scope is waiting for it at the desk. The value is small; the interesting part
-// is what this module is NOT allowed to do, and the answer is enforced by shape
-// rather than by policy:
+// The value is small; the interesting part is what this module may not do, and
+// how much of that is still enforced by shape rather than by policy. Three of
+// the four original guarantees hold unchanged. ONE HAS BEEN GIVEN UP, and it is
+// named here rather than left as a comment that used to be true.
 //
-//   1. NO VAULT WRITE PATH. The only sink here is SUGGESTIONS_DIR — a plain
-//      directory outside the checkout, never committed, invisible to git.ts.
-//      There is no adapter, no gitStore import, no path that resolves into the
-//      vault. Nothing this file produces reaches the vault except by the user
-//      pressing a button on a form.
-//   2. NO TOOLS. One `messages.create`, no `tools`, no MCP, no server tools —
+//   1. NO TOOLS. One `messages.create`, no `tools`, no MCP, no server tools —
 //      so there is no surface for an instruction hidden inside a captured note
-//      to act on. The worst a hostile note can do is get itself mislabelled in a
-//      form field the user is looking at.
-//   3. NOTHING THE MODEL SAYS IS TAKEN AT ITS WORD. `validate()` is the only
-//      door from model output into app values: a scope must be in the LIVE
-//      STRICTLY-ingestable list, a funnel must resolve via funnelById, a date
-//      must parse.
-//      The model cannot name a path, a filename, or a scope that doesn't exist,
-//      because none of those are things it can return — it returns a candidate,
-//      and the candidate is checked against the vault we already have.
-//   4. THE NOTE IS DATA, NOT INSTRUCTIONS. It rides in a delimited block in the
-//      user turn (the only untrusted content in the request) with an explicit
-//      statement to that effect in the system prompt, which is the only turn
-//      carrying instructions.
+//      to act on. The worst a hostile note can do is get itself mislabelled.
+//   2. NOTHING THE MODEL SAYS IS TAKEN AT ITS WORD. `validate()` is the only
+//      door from model output into values anything acts on: a scope must be in
+//      the LIVE strictly-ingestable list, a funnel must resolve via funnelById,
+//      a date must be a real day, a proposed hub must NOT already be a name on
+//      disk. The model cannot name a path, a filename, or a scope that does not
+//      exist, because none of those are things it can return — it returns a
+//      candidate, and the candidate is checked against the vault we have.
+//   3. THE NOTE IS DATA, NOT INSTRUCTIONS. It rides in a delimited block in the
+//      user turn — the only untrusted content in the request — with an explicit
+//      statement to that effect in the system prompt, the one turn carrying
+//      instructions.
 //
-// Applying a suggestion is an ordinary form submit through POST
-// /review/triage/:name — the same commit path a hand-typed triage takes, so it
-// is one atomic op, it shows up in /history, and it is one click from revert.
+//   ── GIVEN UP: "no vault write path" ──────────────────────────────────────
+//
+//   This module once wrote only to a sidecar directory outside the checkout,
+//   invisible to the git store, so that nothing it produced could reach the
+//   vault except by a person pressing a button on a form. That directory is
+//   gone and so is the form. What this module returns is now written into the
+//   vault by the applier, as a proposal a person answers IN the vault.
+//
+//   That was a deliberate trade, not an oversight: a review surface only the
+//   desk could reach is a review surface that does not exist on a phone. What
+//   replaces the guarantee is that nothing is FILED without an answer, and the
+//   answer is armed by hand. But the weaker claim should be the one written
+//   down — a security comment that no longer holds is worse than none.
 //
 // The API key is read from the environment by the SDK and nowhere else in this
-// process. It is never stored, logged, or reported (see /health).
+// process. It is never stored, logged, or reported.
 import Anthropic from "@anthropic-ai/sdk";
 import { record, type Usage } from "./usage.js";
-import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { SUGGESTIONS_DIR, aiSuggestConfig, stateDirConflict } from "./config.js";
-import { FUNNELS, PRIORITY_SIGNIFIER, funnelById } from "./funnels.js";
+import { aiSuggestConfig } from "./config.js";
+import { FUNNELS, funnelById } from "./funnels.js";
+import { knownPriorities } from "./tasknotes.js";
 import { getIngestableScopesStrict, getNote, takenRootNames } from "./vault.js";
-import { firstLine, isSafeNoteName, type InboxNote } from "./inbox.js";
 
 /** One suggestion, AFTER validation — every field here has already been checked
  *  against the live vault. Rendering this is safe; rendering the model's raw
@@ -99,26 +101,6 @@ export interface NewScope {
   why: string;
 }
 
-/** The sidecar file for one inbox note. Three states, one file, so triage
- *  deletes exactly one path however the note went. `retry`/`dead` exist so a
- *  note that fails is not re-attempted forever: without a marker "notes lacking
- *  a sidecar" would include every note that has ever failed, and one malformed
- *  capture would spin the worker for the life of the container. */
-export type Sidecar =
-  | { v: 1; note: string; at: string; state: "ok"; model: string; suggestion: Suggestion }
-  | {
-      v: 1; note: string; at: string; state: "retry";
-      /** EVERY failure so far, transient included. Drives the backoff only. */
-      attempts: number;
-      /** The subset that were a verdict on THIS NOTE (unparseable answer, failed
-       *  validation, truncation) rather than on the service. Only these count
-       *  toward MAX_ATTEMPTS: see TransientError. */
-      noteAttempts: number;
-      nextAttemptAt: string;
-      error: string;
-    }
-  | { v: 1; note: string; at: string; state: "dead"; attempts: number; error: string };
-
 /** Thrown when the API declines the request outright (`stop_reason: "refusal"`).
  *  Distinguished from every other failure because a refusal is a verdict on the
  *  note, not a transient fault — retrying it burns tokens to be told no again. */
@@ -158,7 +140,12 @@ export class TransientError extends Error {
 // (structured outputs don't support string constraints) — they're capped in
 // validate() instead.
 const FUNNEL_IDS = FUNNELS.map((f) => f.id);
-const PRIORITIES = Object.keys(PRIORITY_SIGNIFIER);
+// THE VAULT'S priorities, not Obsidian Tasks'. This read `PRIORITY_SIGNIFIER`
+// — highest/high/medium/low/lowest, the emoji scale of a model this vault no
+// longer uses. TaskNotes defines none/low/normal/high, so "medium" validated
+// here and then landed in a task note as a priority no view matches: accepted,
+// written, invisible.
+const PRIORITIES = knownPriorities();
 
 const SUGGESTION_SCHEMA = {
   type: "object",
@@ -212,6 +199,27 @@ const SUGGESTION_SCHEMA = {
   required: ["title", "funnel", "scope", "newScope", "tags", "due", "priority", "rationale"],
   additionalProperties: false,
 } as const;
+
+/** A note's opening line, cut to fit.
+ *
+ *  Lifted out of `inbox.ts` when that module's other job — reading a queue
+ *  directory — stopped existing. Captures are found by their marker now, from
+ *  anywhere in the vault, so there is no inbox to read. This is the only part
+ *  that outlived it, and it belongs beside the one thing that calls it.
+ The label an untitled capture carries: the body's first non-blank line, cut to
+ *  something that still reads on a phone row. Capture (the toast) and the review
+ *  list share this rule deliberately — a note named one thing as it lands and
+ *  another when it comes back up for triage is a note you can't find twice.
+ *
+ *  Which means those two callers pass NO `max`: the shared rule is the default,
+ *  and a call site that names its own width has quietly stopped sharing it (the
+ *  toast passed 48 against this 60 and relabelled every line in between). `max`
+ *  is for callers doing something else entirely with a first line — suggest.ts
+ *  cuts a scope blurb for egress, which is a budget, not a label. */
+export function firstLine(body: string, max = 60): string {
+  const line = body.split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+  return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
+}
 
 // ── Egress ──────────────────────────────────────────────────────────────────
 
@@ -276,22 +284,6 @@ const NOTE_TAG_RE = /<\s*\/?\s*captured-note\s*>/gi;
  *  variants can be tested without a network call — the function is three
  *  characters long and the interesting part is entirely in the pattern. */
 export const neutraliseFences = (text: string): string => text.replace(NOTE_TAG_RE, "[captured-note]");
-
-/** Exactly what leaves the box for one note: the captured body, the note's title,
- *  and nothing else — no vault paths, no scope the user already picked, no other
- *  note. The title rides along only when it carries information the body doesn't:
- *  an untitled capture's title IS its first line (inbox.ts), so including it there
- *  would just send the first line twice.
- *
- *  Note that a TITLED capture's title is derived from the filename slug, so for
- *  those the filename's human part does go out — it is text the user typed as the
- *  note's name, not a path, but it is not "no filename". */
-export function noteBody(note: InboxNote): string {
-  const text = note.text.trim();
-  const title = note.title.trim();
-  const body = title && title !== firstLine(text) ? `${title}\n\n${text}` : text;
-  return body.slice(0, MAX_NOTE_CHARS);
-}
 
 function systemPrompt(scopes: ScopeBlurb[], today: string): string {
   const catalogue = scopes.map((s) => `- ${s.name}${s.blurb ? ` — ${s.blurb}` : ""}`).join("\n");
@@ -521,175 +513,4 @@ function validDate(s: string): string | null {
   if (!DATE_RE.test(s)) return null;
   const d = new Date(`${s}T00:00:00Z`);
   return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s ? null : s;
-}
-
-// ── Sidecar store ───────────────────────────────────────────────────────────
-// One JSON file per inbox note, keyed by the note's name, outside the vault.
-
-/** Every file this module owns starts with this. The store PRUNES — it deletes
- *  files in its directory whose note has left the inbox — so it needs a way to
- *  say "mine" that does not amount to "everything with a .json extension". A
- *  directory is a shared address space (PROPOSALS_DIR is one typo away and holds
- *  `prop_<uuid>.json`), and a sweep that can't tell its own files from a
- *  neighbour's is a mass delete waiting for a misconfiguration. */
-const SIDECAR_PREFIX = "sug_";
-
-/** Non-null when SUGGESTIONS_DIR is somewhere this module must not sweep. The
- *  prefix above makes a collision survivable; this makes it impossible, because
- *  "survivable" is not a thing to bet a proposal queue on. Resolved once at load
- *  — the paths come from the environment and cannot change under us. */
-const DIR_CONFLICT = stateDirConflict();
-if (DIR_CONFLICT) console.error(`suggest: sidecar store DISABLED — ${DIR_CONFLICT}`);
-
-/** Names whose sidecar was unusable and has already been reported, so a note
- *  that keeps failing to parse costs one log line rather than one per render. */
-const warnedSidecars = new Set<string>();
-
-const pathFor = (name: string): string => join(SUGGESTIONS_DIR, `${SIDECAR_PREFIX}${name}.json`);
-
-/** The sidecar's OWN fields, checked as hard as `validate()` checks the model's.
- *
- *  A sidecar is written by us, but it is read back off a disk that survives
- *  restarts, hand edits, half-finished writes and (until now) whatever else was
- *  in the directory. The control fields are the ones that matter: the worker does
- *  arithmetic on `attempts` and feeds `nextAttemptAt` to Date, and `attempts:
- *  "x"` used to make `Date.now() + NaN` throw a RangeError from inside the error
- *  handler — aborting the whole tick, forever, for every note. `v === 1` alone
- *  bought a version number and nothing else. */
-function parseSidecar(raw: unknown): Sidecar | null {
-  if (!raw || typeof raw !== "object") return null;
-  const r = raw as Record<string, unknown>;
-  if (r.v !== 1 || typeof r.note !== "string" || !isSafeNoteName(r.note)) return null;
-  if (typeof r.at !== "string") return null;
-
-  switch (r.state) {
-    case "ok":
-      // `suggestion` is only shape-checked here; validate() re-checks its VALUES
-      // against the live vault on every render, which is the load-bearing pass.
-      return typeof r.model === "string" && r.suggestion && typeof r.suggestion === "object"
-        ? (r as Sidecar) : null;
-    case "retry":
-      return count(r.attempts) !== null && count(r.noteAttempts) !== null
-        && typeof r.nextAttemptAt === "string" && Number.isFinite(Date.parse(r.nextAttemptAt))
-        && typeof r.error === "string"
-        ? (r as Sidecar) : null;
-    case "dead":
-      return count(r.attempts) !== null && typeof r.error === "string" ? (r as Sidecar) : null;
-    default:
-      return null; // an unknown state is not a state we know how to leave
-  }
-}
-
-/** A counter as the worker will use it: a finite non-negative integer, or null.
- *  `Number.isInteger` alone admits negatives, and a negative attempt count makes
- *  `2 ** attempts` a fraction and MAX_ATTEMPTS unreachable. */
-const count = (v: unknown): number | null =>
-  typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null;
-
-export async function readSidecar(name: string): Promise<Sidecar | null> {
-  if (DIR_CONFLICT || !isSafeNoteName(name)) return null;
-  let raw: string;
-  try {
-    raw = await readFile(pathFor(name), "utf8");
-  } catch {
-    return null; // absent or unreadable — "no suggestion yet", the ordinary case
-  }
-  // The name it claims must be the name we asked for: a file that names another
-  // note is another note's answer, whatever it is doing under this filename.
-  const sc = (() => {
-    try {
-      const parsed = parseSidecar(JSON.parse(raw));
-      return parsed?.note === name ? parsed : null;
-    } catch {
-      return null;
-    }
-  })();
-  // Absent-but-LOUD. A malformed sidecar reads as "never attempted", which is the
-  // safe answer for the renderer and a re-submission for the worker — so it has
-  // to be visible, or a file that can never be parsed becomes a standing bill
-  // with no symptom.
-  if (!sc && !warnedSidecars.has(name)) {
-    warnedSidecars.add(name);
-    console.warn(`suggest: ignoring malformed sidecar for ${JSON.stringify(name)} — treating as unattempted`);
-  }
-  return sc;
-}
-
-export async function writeSidecar(sc: Sidecar): Promise<void> {
-  // Throws on a filesystem failure rather than swallowing it: the caller's cost
-  // control lives entirely in this file, so "the write failed" is news.
-  if (DIR_CONFLICT) throw new Error(`sidecar store disabled: ${DIR_CONFLICT}`);
-  if (!isSafeNoteName(sc.note)) throw new Error(`refusing to write sidecar for unsafe name ${JSON.stringify(sc.note)}`);
-  await mkdir(SUGGESTIONS_DIR, { recursive: true });
-  await writeFile(pathFor(sc.note), JSON.stringify(sc, null, 2), "utf8");
-}
-
-/** Drop a note's sidecar. Called when the note leaves the inbox — filed or
- *  discarded — so the directory tracks the queue rather than growing forever,
- *  and a name reused by a later capture can't inherit a stale suggestion. */
-export async function dropSidecar(name: string): Promise<void> {
-  if (DIR_CONFLICT || !isSafeNoteName(name)) return;
-  await unlink(pathFor(name)).catch(() => undefined);
-}
-
-/** Drop every sidecar whose note is no longer in the inbox. Triage deletes its
- *  own sidecar, so this only catches the paths that bypass it — an inbox file
- *  removed by hand, a sync that pulled the note away — but without it those
- *  leave a file that nothing will ever delete.
- *
- *  This is the only bulk delete in the app, so it unlinks a file only when it can
- *  prove the file is one of ours THREE ways: our prefix, our `.json`, and content
- *  that parses as a sidecar naming the very note the filename claims. Anything
- *  else in the directory — a proposal, an operator's note, a file we can't read —
- *  is left exactly where it is. Deleting one file too few costs a stale byte;
- *  deleting one too many cost the reviewer their whole proposal queue. */
-export async function pruneSidecars(keep: Set<string>): Promise<void> {
-  if (DIR_CONFLICT) return;
-  let files: string[];
-  try {
-    files = await readdir(SUGGESTIONS_DIR);
-  } catch {
-    return; // dir not created yet ⇒ nothing to prune
-  }
-  for (const f of files) {
-    if (!f.startsWith(SIDECAR_PREFIX) || !f.endsWith(".json")) continue;
-    const note = f.slice(SIDECAR_PREFIX.length, -5);
-    if (keep.has(note)) continue;
-    const path = join(SUGGESTIONS_DIR, f);
-    const sc = await readFile(path, "utf8")
-      .then((raw) => parseSidecar(JSON.parse(raw) as unknown))
-      .catch(() => null);
-    // Parsed and self-consistent ⇒ ours, and its note is gone. Anything else
-    // under our prefix that doesn't parse is left alone too: an unreadable file
-    // is exactly the case where "it's probably ours" is a guess.
-    if (sc?.note === note) await unlink(path).catch(() => undefined);
-  }
-}
-
-/** The renderer's entry point: a suggestion for this note, re-validated against
- *  the vault as it is right now, or null.
- *
- *  No sidecar can make this throw — absent, corrupt, half-written and stale all
- *  return null, because a desk that won't render because a suggestion is
- *  malformed is a worse failure than a desk with no suggestion. It does inherit
- *  whatever the index does with an unreadable vault, which is the right coupling:
- *  every other thing on this page reads the same index, so a vault the api can't
- *  see is not a failure to paper over here.
- *
- *  Re-validated against the STRICT list, the same one the suggestion was made
- *  from — the picker's fallback would re-admit a scope that lost its tag between
- *  the call and the render, which is precisely the staleness this second pass
- *  exists to catch.
- *
- *  It is also what keeps a PROPOSED hub honest over time. A sidecar can sit in
- *  the queue for days, and `newScope` is a claim about what the vault does NOT
- *  contain — the one kind of claim that a later commit can falsify. Re-running
- *  the non-membership check on every render means a hub you created in the
- *  meantime shows up as an ordinary scope suggestion, and a name since taken by
- *  some other note stops being offered at all, without anything having to notice
- *  the sidecar went stale. */
-export async function suggestionFor(name: string): Promise<Suggestion | null> {
-  const sc = await readSidecar(name);
-  if (sc?.state !== "ok") return null;
-  return validate(sc.suggestion, getIngestableScopesStrict(), takenRootNames());
 }

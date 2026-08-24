@@ -16,8 +16,9 @@ ctx/
     _ephemeral/  Non-persisted scratch — transient inputs & outputs; gitignored but Obsidian-visible
   skills/    LLM-agnostic skill prompts; installed into a harness via ctx/tools/sys/sync.sh
   tools/     Lifecycle tooling (sys/), orchestration/ (multi-agent fleet helpers), pub/ (the publish tool)
-api/         Admin app: mobile note-capture API + read-only vault viewer (Hono/Node)
-Caddyfile, docker-compose.yml, deploy.sh, ops/   Serving stack — the public site itself lives in a SEPARATE repo
+api/         The classifier + applier: reads armed captures, proposes a filing, files the answered ones
+Caddyfile, docker-compose.yml, deploy.sh   Caddy only — the public site itself lives in a SEPARATE repo
+ops/         The applier's systemd timer, and the script it runs
 repo/        Default (nested) home for target repos you're working on — gitignored
 docs/        On-demand detail this core points to (see map below)
 ```
@@ -36,7 +37,7 @@ The common path (a coding task, a vault lookup, a worktree session) is fully ser
 | running a worktree session, landing a PR, coordinating a fleet (full R1–R7 + the `bd` workflow) | [`docs/worktrees.md`](docs/worktrees.md) |
 | orchestrating a fleet of sub-agents (delegation doctrine O1–O9, model right-sizing) | [`docs/orchestration.md`](docs/orchestration.md) |
 | searching/creating/restructuring vault notes, or writing scratch (what braindance requires of a vault, triage tree, `_ephemeral` naming, daily notes) | [`docs/vault.md`](docs/vault.md) |
-| working on the api / serving stack / capture pipeline | [`docs/serving.md`](docs/serving.md) |
+| working on the classifier, the applier, or the triage loop | [`docs/serving.md`](docs/serving.md) |
 | standing the app up on a host | [`docs/deploy.md`](docs/deploy.md) |
 | publishing vault notes to the public site, or touching the publish tool | [`docs/publishing.md`](docs/publishing.md) |
 | installing or writing skills | [`docs/skills.md`](docs/skills.md) |
@@ -72,7 +73,7 @@ Multiple agent sessions must **never share the one working tree** — a shared i
 - Agent sessions work in worktrees under `$BD_WT/<task>` (outside the core and the vault, so Obsidian never indexes them), cut off **freshly-fetched `origin/main`** and **rebased before every push**. `$BD_WT` is the instance's `worktrees` setting — `bd where` reports it. Helper `bd` (in `ctx/tools/sys/wt.sh`) bakes this in: `bd new <task>` → work → `bd land` → `bd rm <task>`.
 - **Always address a worktree by its ABSOLUTE path**; never rely on an ambient `cwd` that could resolve into the sacred main tree.
 
-Full discipline (R1–R7), the `bd` workflow, and fleet tooling: [`AGENTS.md`](AGENTS.md) + [`docs/worktrees.md`](docs/worktrees.md). Orchestrating a fleet of sub-agents: [`docs/orchestration.md`](docs/orchestration.md). Orthogonal ingress: VPS/`api` captures land directly on `main` in `ctx/vault/inbox/`, triaged in-vault at the desk ([`docs/serving.md`](docs/serving.md)).
+Full discipline (R1–R7), the `bd` workflow, and fleet tooling: [`AGENTS.md`](AGENTS.md) + [`docs/worktrees.md`](docs/worktrees.md). Orchestrating a fleet of sub-agents: [`docs/orchestration.md`](docs/orchestration.md). Orthogonal ingress: you write a note in Obsidian and arm it with `#capture`; a timer on the VPS proposes a filing, you answer in the note, and it files ([`docs/serving.md`](docs/serving.md)).
 
 ## Conventions
 

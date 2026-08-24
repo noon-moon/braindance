@@ -1,7 +1,4 @@
-// Shared vault-location config.
-//
-// Also the one place the AI-suggestion knobs resolve, so /health can report what
-// the worker is running without importing the worker (or the SDK).
+// Shared vault-location config, and the one place the model knobs resolve.
 //
 // The api commits captures into (and the viewer reads) a vault that lives at
 // <REPO_PATH>/<VAULT_SUBDIR>. Today VAULT_SUBDIR="ctx/vault" — the vault sits
@@ -12,37 +9,6 @@ import { join, resolve } from "node:path";
 
 export const REPO_PATH = process.env.REPO_PATH ?? "/srv/braindance";
 export const VAULT_SUBDIR = process.env.VAULT_SUBDIR ?? "ctx/vault";
-
-/** Where agent proposals live — api-owned control-plane state, outside the vault
- *  checkout so nothing here is ever captured or synced. */
-export const PROPOSALS_DIR = process.env.PROPOSALS_DIR ?? join(REPO_PATH, "..", "braindance-proposals");
-
-/** Where the suggestion worker's sidecars live. OUTSIDE the vault checkout —
- *  same reason as PROPOSALS_DIR: a sidecar is api-owned control-plane state, and
- *  the one guarantee the worker makes is that nothing it writes can reach the
- *  vault except through the user's click. A directory the git store can't see
- *  makes that structural rather than a rule.
- *
- *  An absolute literal rather than a path derived from REPO_PATH, because this
- *  directory is a NAMED DOCKER VOLUME (docker-compose.yml) and a mount point is
- *  a fixed string: a default that moved with REPO_PATH would, on the day
- *  REPO_PATH changes, quietly point at the container's ephemeral layer again and
- *  silently un-persist every `dead` marker the cost story rests on. Override
- *  with SUGGESTIONS_DIR — but then move the volume's mount point with it. */
-export const SUGGESTIONS_DIR = process.env.SUGGESTIONS_DIR ?? "/srv/braindance-suggestions";
-
-/** The two api-owned state dirs pointing at the same place, or null.
- *
- *  Checked because the suggestion store PRUNES: it deletes sidecars whose note
- *  has left the inbox, and pointed at the proposals dir that sweep would be a
- *  silent mass delete of every pending proposal on the first tick. Cheap to
- *  detect, unrecoverable if missed, so the suggestion feature refuses to run at
- *  all rather than trusting a prefix check to save it. */
-export function stateDirConflict(): string | null {
-  return resolve(SUGGESTIONS_DIR) === resolve(PROPOSALS_DIR)
-    ? `SUGGESTIONS_DIR and PROPOSALS_DIR both resolve to ${resolve(SUGGESTIONS_DIR)}`
-    : null;
-}
 
 export interface AiSuggestConfig {
   /** Both halves must be present: the feature flag AND a key. Either missing and

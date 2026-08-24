@@ -2,6 +2,19 @@
 
 This is the north star. When a technical decision is hard, check it against the goals below rather than against local convenience; a lot of what braindance accumulated in its first months was locally sensible and didn't add up.
 
+> **⚠ Partly superseded, and deliberately not rewritten here.** "The desk" below
+> describes a web app — capture form, triage desk, task roll-up, vault viewer —
+> that has been deleted. Obsidian is the interface now, on the phone as well as
+> the desk; git is the transport; and what runs on a host is a timer that
+> classifies armed captures and files the ones you answered. See
+> [`serving.md`](serving.md) for what exists.
+>
+> The three goals below have NOT been re-derived against that, and neither has
+> the feature-gate table. That is a conversation rather than a cleanup: the
+> product definition is the one thing in this repo that should not be quietly
+> edited by whoever happened to be deleting code. Left standing, and flagged, so
+> the next person reads it knowing which half is current.
+
 ## The product
 
 > A personal notes system built on plain markdown in git, with a small self-hosted app for capturing and triaging from a phone, and enough context for an agent to work in it.

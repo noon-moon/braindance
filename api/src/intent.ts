@@ -26,7 +26,8 @@ import { record, type Usage } from "./usage.js";
 // Everything the model returns is still validated against the live vault before
 // it is used — same rule as suggest.ts, for the same reason. The reply is
 // trusted; the model's reading of it is not.
-import { funnelById, PRIORITY_SIGNIFIER } from "./funnels.js";
+import { funnelById } from "./funnels.js";
+import { knownPriorities } from "./tasknotes.js";
 import { aiSuggestConfig } from "./config.js";
 import { client, callModel, isHubName, RefusalError } from "./suggest.js";
 import type { Proposal } from "./approval.js";
@@ -54,7 +55,12 @@ export interface Revision {
   priority?: string | null;
 }
 
-const PRIORITIES = Object.keys(PRIORITY_SIGNIFIER);
+// THE VAULT'S priorities, not Obsidian Tasks'. This read `PRIORITY_SIGNIFIER`
+// — highest/high/medium/low/lowest, the emoji scale of a model this vault no
+// longer uses. TaskNotes defines none/low/normal/high, so "medium" validated
+// here and then landed in a task note as a priority no view matches: accepted,
+// written, invisible.
+const PRIORITIES = knownPriorities();
 const FUNNEL_IDS = ["memo", "scope", "todo"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 

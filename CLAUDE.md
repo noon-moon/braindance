@@ -70,8 +70,9 @@ Multiple agent sessions must **never share the one working tree** — a shared i
 - The main tree (the braindance checkout — wherever you cloned it; `bd where` reports it) is **sacred and read-only to agents**: it stays on `main`, it's the Obsidian window and the integration point. **Agents don't write here.**
 - Agent sessions work in worktrees under `$BD_WT/<task>` (outside the core and the vault, so Obsidian never indexes them), cut off **freshly-fetched `origin/main`** and **rebased before every push**. `$BD_WT` is the instance's `worktrees` setting — `bd where` reports it. Helper `bd` (in `ctx/tools/sys/wt.sh`) bakes this in: `bd new <task>` → work → `bd land` → `bd rm <task>`.
 - **Always address a worktree by its ABSOLUTE path**; never rely on an ambient `cwd` that could resolve into the sacred main tree.
+- **One worktree per *agent*, not per lane — verifiers included.** Verifiers are told to mutate the tree, so any two sharing one corrupt each other's runs: a fleet that put four verifiers on a single worktree got three different test totals reported for the same commit, with the tree reporting clean throughout. If an agent runs, it gets its own tree.
 
-Full discipline (R1–R7), the `bd` workflow, and fleet tooling: [`AGENTS.md`](AGENTS.md) + [`docs/worktrees.md`](docs/worktrees.md). Orchestrating a fleet of sub-agents: [`docs/orchestration.md`](docs/orchestration.md). Orthogonal ingress: you write a note in Obsidian and arm it with `#capture`; a timer on the VPS proposes a filing, you answer in the note, and it files ([`docs/serving.md`](docs/serving.md)).
+Full discipline (R1–R7), the `bd` workflow, and fleet tooling: [`AGENTS.md`](AGENTS.md) + [`docs/worktrees.md`](docs/worktrees.md). Orchestrating a fleet of sub-agents — delegation (O1–O9) and **verifying what comes back (V1–V8: mutation-first, name-set diffs, count-don't-time, drafts before pushes)**: [`docs/orchestration.md`](docs/orchestration.md). Orthogonal ingress: you write a note in Obsidian and arm it with `#capture`; a timer on the VPS proposes a filing, you answer in the note, and it files ([`docs/serving.md`](docs/serving.md)).
 
 ## Conventions
 

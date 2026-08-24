@@ -1,4 +1,4 @@
-# Orchestration doctrine (O1–O9, V1–V8) + main-thread responsiveness
+# Orchestration doctrine (O1–O9, V1–V9) + main-thread responsiveness
 
 On-demand detail for the delegation principle stated tightly in [`AGENTS.md`](../AGENTS.md). Read this when you are **the top-level (orchestrator) session running or planning a fleet of sub-agents** — deciding who does the work, how the main thread stays lean, and how to right-size models. The worktree discipline (R1–R7) that keeps those parallel workers from colliding is in [`worktrees.md`](worktrees.md); this file is the *who does the work* half.
 
@@ -14,9 +14,9 @@ On-demand detail for the delegation principle stated tightly in [`AGENTS.md`](..
 - **O8 — Prune the orchestrator's context aggressively; keep pointers, not payloads.** Because everything durable already lives in the vault, the coordination ledger, and PRs, the orchestrator does not need to *retain* raw detail. Each turn it keeps only **live fleet state** (the ledger), **durable pointers** (paths / note titles / PR links), and the **active decision** — and drops or summarizes the rest. Once a sub-agent's result has been relayed *and* its pointer recorded (a ledger row, a PR link, a note path), the raw detail is **droppable**: it is recoverable on demand via a read or a recall sub-agent (O4). This *complements* the harness's own context summarization rather than fighting it — prune proactively at natural checkpoints (right after a relay-and-record) so what survives is chosen, not whatever a forced compaction happens to keep. **Safety:** the rule is **record, then drop** — never prune anything not yet durably written to vault / ledger / PR, so pruned context is always re-fetchable, never lost.
 - **O9 — Right-size the model to the task's risk.** Match model capability to the cost of getting it wrong. Put the **strongest available model** on work with an unforgiving correctness/quality floor — **code changes** (they hit build/test/review gates, and a wrong change costs far more than the model savings) and **deep design/architecture synthesis** (decision-driving analysis whose errors propagate). Use a **cheaper capable model** for lower-risk work — routine investigations and research, vault lookups, summaries, and relays; a trivial mechanical code edit may drop a tier. The rationale is leverage: most of a multi-agent session's spend is non-code sub-agents, so tiering *them* down is the largest efficiency lever at no quality cost, while the hard correctness surfaces stay on the top model. It is applied by judgment, not a benchmark — the one high-value lever left once the pure-hygiene wins (O1–O8) are adopted. (Capability tiers, not vendor names; e.g. with Claude: code + hard synthesis → Opus, lookups / summaries / routine research → Sonnet.)
 
-## Verification doctrine (V1–V8)
+## Verification doctrine (V1–V9)
 
-O1–O9 decide *who does the work*. V1–V8 decide **whether you can believe the result** — and
+O1–O9 decide *who does the work*. V1–V9 decide **whether you can believe the result** — and
 they are the half that gets skipped, because a green report is pleasant and checking it is
 not. Every rule below was paid for: a wasted wave, an hour, or a test that could never fail.
 The recurring failure class across fleets is **an implementer's report overstating what was
@@ -69,6 +69,19 @@ make claims falsifiable.
   be re-run directly). A job moderately past baseline while its siblings have finished is
   merely **slow**, and cancelling it costs another full run. Do not assume long-pending means
   slow.
+
+- **V9 — Iteration cost is a first-class problem, and it is measurable.** A fleet
+  multiplies whatever a single build costs, so the suite's own speed is
+  orchestration work rather than housekeeping. Three levers, in payoff order, all
+  from one session that took CI from ~16 min to 5.9 and a fresh worktree to a
+  green full suite in 75 s: **optimize the test profile** (two lines of config,
+  measured 13.9× on the dominant crate — unoptimized numeric kernels are
+  pathological, and tests are usually kernels); **delete dead weight** (seventeen
+  tests were 65.7 % of all test CPU); **share a compiler cache across worktrees**
+  (a fresh lane gained 135 hits against 14 misses, which matters precisely
+  because every agent gets its own tree under V1). Measure before assuming a
+  lever applies — linker flags were *not* one on that host, the platform default
+  already being the fast one.
 
 **Corollary — cite symbols, never line numbers.** Briefs decay. Line citations go stale within
 days and a rename invalidates the paths too, sending an agent somewhere that no longer exists.

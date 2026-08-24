@@ -96,6 +96,18 @@ capture on a phone and the proposal is waiting by the time you put it down. The
 spending ceiling is `BD_LIMIT`, not the interval; lengthening an interval makes
 a runaway slower without making it smaller.
 
+**Tests: `bash ops/test_applier.sh`.** Throwaway repos and a stub tool — no
+network, no key, no vault. Every case in it is a failure that actually happened
+on a live box in one evening: the env file systemd read and a shell did not,
+node missing from an empty PATH, a checkout whose tracking config a bare `git
+pull` could not read, a rebase blocked by a tree the script itself had dirtied,
+a root-owned directory under a user-owned vault, a push that lost a race, and a
+modify/delete on a triage note resolved by hand with `rebase --skip` — which
+drops the whole commit, so a correctly filed note went with it.
+
+The loop this script wraps had 231 checks and needed no fix that evening. The
+wrapper had none and needed ten. The difference was not difficulty.
+
 **A failing pass reports into the vault, not into the journal.** It writes
 `_triage/BRAINDANCE PASS FAILING.md` and pushes it, so a broken box turns up in
 Obsidian on your phone like anything else — with the stage it died at, how long

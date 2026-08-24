@@ -6,7 +6,7 @@ This file is the **cross-tool entry point** (the [AGENTS.md](https://agents.md) 
 
 ## Product vs. instance — where changes go
 
-braindance is a **product you clone and deploy**, not a template you fork. Everything committed here must be generic enough to hand to a stranger: tooling, skills, conventions, docs, this file, `CLAUDE.md`, the app. Instance-specific content — real vault notes, one operator's domain or droplet, `/srv` specifics — belongs to an **instance**: its vault repo plus machine-local config, never this checkout. Before committing, ask whether someone else cloning this repo would want the change; if not, it belongs in your instance.
+braindance is **personal tooling** — an agent layer over a plain-markdown vault that Obsidian owns and git syncs. Not a product: there is nothing here to hand a stranger. The separation from the vault repo is a privacy boundary, not a distribution one — two instances run on one machine and one may belong to an employer — so no personal content, no hardcoded paths, no one operator's droplet in this checkout. **The test for anything new: could Obsidian, a plugin, a Shortcut or a cron do it? If yes, it is not built here.** See `docs/architecture.md`.
 
 The old fork-and-`git merge upstream/master` model is retired — there is nothing to merge back. Rationale, the three goals every change is measured against, and the roadmap for evicting the instance content still here: [`docs/architecture.md`](docs/architecture.md).
 

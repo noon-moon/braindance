@@ -10,7 +10,7 @@
 # Options:
 #   --name <name>     instance name (default: basename of core). [a-z0-9-]+
 #   --core <path>     the checkout (default: $PWD)
-#   --vault <path>    knowledge base (default: $VAULT_PATH | $BD_ROOT/vault | <core>/ctx/vault)
+#   --vault <path>    knowledge base (default: $VAULT_PATH | $BD_ROOT/vault)
 #   --repos <path>    repos dir     (default: $REPOS_PATH | $BD_ROOT | <core>/repo)
 #   --worktrees <p>   agent worktrees (default: $BD_WT | $BD_ROOT/worktrees | <core>/../worktrees)
 #   --default         also set this instance as the registry `default` pointer
@@ -65,7 +65,13 @@ _under() { [ "$1" = "$2" ] || [ "${1#"$2"/}" != "$1" ]; }  # $1 == $2 or under $
 # --- resolve this instance's territories (mirrors the single-root model) ---
 core="$(_canon "${core:-$PWD}")"
 [ -d "$core" ] || die "core is not a directory: $core"
-vault="${vault:-${VAULT_PATH:-${BD_ROOT:+$BD_ROOT/vault}}}"; vault="${vault:-$core/ctx/vault}"
+vault="${vault:-${VAULT_PATH:-${BD_ROOT:+$BD_ROOT/vault}}}"
+# NO NESTED FALLBACK. It used to end `vault="${vault:-$core/ctx/vault}"`, so an
+# instance configured with no vault anywhere got one INSIDE the tooling
+# checkout — scaffolding that existed for a stranger cloning a product this no
+# longer is. A default that points somewhere plausible and wrong is worse than
+# no default: the applier spent an evening writing to exactly that path.
+[ -n "$vault" ] || { echo "configure: no vault — pass --vault <path>, or set BD_ROOT" >&2; exit 1; }
 repos="${repos:-${REPOS_PATH:-${BD_ROOT:-$core/repo}}}"
 # Worktrees are never nested in the core (a worktree inside its own checkout) nor
 # in the vault (Obsidian would index every agent branch) — so the last-resort

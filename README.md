@@ -50,7 +50,7 @@ Open a new shell so the rc change takes effect — that gives you the `bd` comma
 ./ctx/tools/sys/sync.sh claude-code    # install skills as /slash-commands
 ```
 
-Open your vault directory in Obsidian. By default that's `ctx/vault/`; point `--vault` at somewhere else if you keep it outside the checkout (most people do — see Contexts).
+Open your vault directory in Obsidian. By default that's `$VAULT_PATH/`; point `--vault` at somewhere else if you keep it outside the checkout (most people do — see Contexts).
 
 Useful flags: `--vault <path>` and `--repos <path>` to place those territories, `--worktrees <path>` to say where agent worktrees live (`bd new <task>` creates `<worktrees>/<task>`; defaults to a `worktrees` sibling of this clone), `--no-wire` to register without touching your settings or rc.
 

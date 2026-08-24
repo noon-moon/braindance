@@ -15,7 +15,7 @@ The old fork-and-`git merge upstream/master` model is retired — there is nothi
 **The main thread orchestrates, it does not do the work.** The top-level session the user talks to is a **dispatcher**, not a worker; its scarcest resource is its own responsiveness. Substantive, parallelizable work is handed to background sub-agents that run in parallel (each under the worktree discipline below); the main thread stays free to answer the user and steer the fleet. The core guardrails:
 
 - **Delegate by default, in parallel** (O1); **fold a follow-up into the agent that already owns that scope** before spawning a new workstream (O2); **quick questions stay inline** — don't pay a spawn for a one-liner (O3).
-- **Keep the main thread lean:** it never front-loads the costly `ctx/vault` context — vault work is delegated to a sub-agent that loads it, does the work, and reports back a distilled result (O4/O5).
+- **Keep the main thread lean:** it never front-loads the costly `$VAULT_PATH` context — vault work is delegated to a sub-agent that loads it, does the work, and reports back a distilled result (O4/O5).
 - **Relay eagerly, never block the user;** sub-agents hand back **conclusions plus durable pointers (paths / note titles / PR links), not raw dumps** (O6/O7); **prune the orchestrator's context to pointers, but only after the detail is durably recorded** — record, then drop, so nothing is lost (O8).
 - **Right-size the model to the task's risk** (O9): strongest model on code changes and deep design synthesis; a cheaper capable model on lookups, summaries, and routine research.
 
@@ -45,7 +45,7 @@ One machine may host several braindance clones at once, each governing a differe
 
 - **C1 — Resolve the active instance before doing work.** Determine which instance governs your cwd — an explicit `bd use <name>` pin, else the nearest owning territory (registry longest-prefix, incl. a worktree's main checkout), else the registry `default`. Never assume a global singleton. The `SessionStart` hook surfaces it; `bd where` reports it on demand.
 - **C2 — Stay inside the active instance.** Reads and writes touch only its resolved `VAULT_PATH` / `REPOS_PATH`. Never reach into another instance's vault or repos — the cross-instance `PreToolUse` guard blocks such a write.
-- **C3 — Ambiguity ⇒ stop, don't guess.** If no instance resolves, or a pin disagrees with cwd, halt and surface it — never silently fall back to the checkout's empty `ctx/vault` scaffolding.
+- **C3 — Ambiguity ⇒ stop, don't guess.** If no instance resolves, or a pin disagrees with cwd, halt and surface it — never silently fall back to the checkout's empty `$VAULT_PATH` scaffolding.
 - **C4 — One command bootstraps a clone.** `./configure` registers the instance (validating the disjoint-territory invariant) and installs the resolver hook — idempotent, per-clone, so N clones coexist and none is "the" global default.
 
 Full mechanics — the registry, the resolution ladder, `configure`, `bd use`/`where`, and the two hooks: [`docs/instances.md`](docs/instances.md).
@@ -55,6 +55,6 @@ Full mechanics — the registry, the resolution ladder, `configure`, `bd use`/`w
 Two defaults hold for the outputs we produce:
 
 - **Markdown, with language-hinted code fences** (universal). Format outputs as Markdown; put every span of code, console/terminal output, query, config, or structured data in a fenced code block with a language hint (```python, ```sql, ```console, ```json, …). Never paste code or command output as bare prose — in a note, in `_ephemeral`, or back to the user.
-- **`_ephemeral` by default** (braindance context). When working in braindance (not a target project under `repo/`, whose skills set their own output locations), generated work products — reports, analyses, drafts, query results — go to `ctx/vault/_ephemeral/` (flat, timestamp-prefixed; see [`docs/vault.md`](docs/vault.md)), not the repo root, `/tmp`, or the vault proper.
+- **`_ephemeral` by default** (braindance context). When working in braindance (not a target project under `repo/`, whose skills set their own output locations), generated work products — reports, analyses, drafts, query results — go to `$VAULT_PATH/_ephemeral/` (flat, timestamp-prefixed; see [`docs/vault.md`](docs/vault.md)), not the repo root, `/tmp`, or the vault proper.
 
 For everything else about this repo — the vault ontology, ephemeral scratch, skills, and the serving layer — see [`CLAUDE.md`](CLAUDE.md) and the `docs/` it maps to.

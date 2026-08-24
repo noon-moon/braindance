@@ -64,11 +64,21 @@ CF="$REG/instances/work-env.conf"
 eq "env vault" "$(val "$CF" vault)" "$TMP/work/vault"
 eq "env repos" "$(val "$CF" repos)" "$TMP/work"
 
-# 5. nested defaults when no flags/env
+# 5. A vault is REQUIRED. There used to be a nested default — the vault inside
+#    the tooling checkout, scaffolding shipped for a stranger cloning a product
+#    this is not. A default that points somewhere plausible and wrong is worse
+#    than none: the applier spent an evening writing to exactly that path.
+# `run` always returns 0 — it captures the status in $RC, which is the thing to
+# assert on.
 fresh_reg
 run --core "$TMP/dev/braindance" --name nested
+if [ "$RC" -ne 0 ]; then ok; else bad "no vault anywhere should be refused, not defaulted"; fi
+
+# repos still nests, which is fine — it holds checkouts, not the asset.
+fresh_reg
+run --core "$TMP/dev/braindance" --vault "$TMP/dev/vault" --name nested
 CF="$REG/instances/nested.conf"
-eq "nested vault" "$(val "$CF" vault)" "$TMP/dev/braindance/ctx/vault"
+eq "explicit vault is taken" "$(val "$CF" vault)" "$TMP/dev/vault"
 eq "nested repos" "$(val "$CF" repos)" "$TMP/dev/braindance/repo"
 
 # 5a. --worktrees is recorded verbatim, and resolve.sh then emits it as BD_WT
@@ -88,7 +98,7 @@ eq "env worktrees" "$(val "$REG/instances/work-wt.conf" worktrees)" "$TMP/work/w
 
 # 5c. BD_WT in the env is honoured as the default when no flag is given
 fresh_reg
-BD_WT="$TMP/dev/from-env" run --core "$TMP/dev/braindance" --name envwt
+BD_WT="$TMP/dev/from-env" run --core "$TMP/dev/braindance" --vault "$TMP/dev/vault" --name envwt
 eq "BD_WT env default" "$(val "$REG/instances/envwt.conf" worktrees)" "$TMP/dev/from-env"
 
 # 5d. worktrees inside the vault warns (Obsidian would index agent branches)

@@ -1,122 +1,128 @@
-# The admin app — deploy, configuration, capture pipeline
+# The triage loop
 
-The whole serving layer is **optional**. braindance works with nothing but a vault; this is what you add when you want to capture and triage from a phone.
+How a thought becomes a filed note, and what runs where. Read this when you are
+working on the classifier, the applier, or anything the timer touches.
 
-## The model
-
-You deploy a container image to **your own infrastructure**, where it works against a local checkout of your vault and syncs periodically. The image is published publicly, so running it needs no build and no GitHub account — building your own is the fork path, not the default:
+## The shape
 
 ```
-a release  →  CI publishes ghcr.io/noon-moon/braindance/api:latest (public)
-                        │
-        the box pulls it itself (ops/braindance-sync.timer) — CI never SSHes in
-                        ▼
-   ┌── your host ───────────────────────────────────────────┐
-   │  caddy   TLS + routing for the public surface          │
-   │  api     owns a read-write checkout of your vault      │
-   │            · writes captures locally, instantly        │
-   │            · pull --rebase + push on an interval       │
-   └────────────────────────────────────────────────────────┘
-                        ▲
-                  your vault repo — the sync point shared with your laptop
+Obsidian     write a note, anywhere → arm it: #capture
+   ↓ obsidian-git
+VPS          ops/applier.sh, every minute:
+               pull → classify what is armed  → _triage/<key>.triage.md
+                    → act on answered proposals → the filed note
+             → commit → push
+   ↓ obsidian-git
+Obsidian     read the proposal, answer in it, arm it → filed
 ```
 
-The api is a **local-first git store**: a capture is a file plus a commit in its own checkout (instant), reconciled with the remote asynchronously. It is the single writer of that checkout; on a rebase conflict it stops and pauses sync rather than clobber.
+**Obsidian is the whole interface**, identically on a phone and at the desk, and
+git is the only transport. Nothing serves HTTP; nothing has a UI.
 
-The two services:
+## The marker
 
-- **`caddy`** — TLS and routing for the public surface: your homepage from `/srv/www`, and a published garden from `/srv/garden` if you have one. Both directories are filled by whatever owns your site — see [`publishing.md`](publishing.md); the api does not write them.
-- **`api`** (`api/`) — a small Hono/Node service: mobile capture, the review desk, the task roll-up, the daily note, and a read-only vault viewer.
+One keyword for the loop, and it means **proceed**. Which step depends on the
+file it is in: on a capture, "classify this"; on a proposal, "act on my answer".
 
-**Bring your own secure hosting.** The api binds a plain HTTP port and has **no built-in authentication**. Put it behind Tailscale, a VPN, an authenticating proxy, or an SSH tunnel. Never expose it to the public internet as-is — the compose file binds it to `${TAILSCALE_IP}` rather than `0.0.0.0` for exactly this reason (Docker's iptables rules would otherwise punch straight through UFW).
+| | |
+|---|---|
+| `##capture` | inert — not a tag to Obsidian, not a signal to us |
+| `#capture` | armed — a real Obsidian tag, and the signal to act |
 
-## Configuration
+**Arming is deleting one character.** That is the whole point of the pair. A
+template can stamp the disarmed form into every new note without queueing
+anything; the note carries a visible reminder of what to do with it; and a note
+you are three words into still has two hashes, so nothing is ever read
+mid-writing. No quiescence window, no clock to get wrong.
 
-Instance values live in `/srv/.env` on the host (`chmod 600`, never committed). Copy [`.env.example`](../.env.example):
+Armed it is a real tag on purpose — Obsidian's own search and tag pane show you
+everything waiting, with no view to build.
 
-| Var | Used by | Purpose |
-|---|---|---|
-| `DOMAIN` | Caddy (`{$DOMAIN}`) | Public hostname for TLS + routing |
-| `API_IMAGE` | Compose interpolation | `ghcr.io/noon-moon/braindance/api:latest` — the only published tag. Pin a digest to freeze a box; see [`deploy.md`](deploy.md). |
-| `TAILSCALE_IP` | Compose interpolation | The only interface the api binds |
-| `REPO_PATH` | api + compose mount | The vault checkout the api owns |
-| `VAULT_SUBDIR` | api | Vault path *within* that checkout; empty for a standalone vault repo |
-| `GITHUB_REPO` / `GITHUB_TOKEN` | api | Remote it syncs with, and a PAT with `repo` scope |
-| `TZ` | api | Day boundary for the task roll-up — unset means UTC decides "today" |
+## Nothing files unattended
 
-Further knobs: `REQUIRE_LEASE`, `VAULT_EXTERNAL`, `PROPOSALS_DIR`, `DEDUP_TTL_MS`.
+Every capture gets a proposal; every filing is one you approved. The alternative
+— high-confidence captures filing themselves — was considered and dropped: it
+needs a threshold tuned against a number the model invents about itself.
 
-Two env mechanisms are in play, which is easy to trip over:
+A proposal is a note in `_triage/`. You answer in its `## Your call` section and
+arm the marker. `_triage/` is therefore a queue of things that are **not done**,
+and it empties itself: on a successful file or discard the capture and the
+proposal are deleted in the same commit as the filed note. An empty `_triage/`
+means nothing is pending.
 
-- `${VAR}` in `docker-compose.yml` is **interpolation**, resolved from `--env-file /srv/.env`. Always go through **`./deploy.sh`**, which passes that flag — bare `docker compose` resolves them empty.
-- `env_file: /srv/.env` injects **container runtime** env (Caddy's `$DOMAIN`, the api's `GITHUB_*`).
+What lingers is deliberate: a proposal awaiting your answer, one marked
+`unclear` (with the question on its heading and the marker disarmed), one
+`failed` (with a retry time), and one `dead` — four failed attempts, given up,
+kept because it is the only record that a capture was abandoned. Deleting a
+failure note is how you say "try again".
 
-## Deploy
+## What is enforced by shape
 
-Expects this repo cloned to `/srv/braindance`, your vault cloned wherever `REPO_PATH` points, and host dirs `/srv/www` + `/srv/garden`:
+- **The reply boundary is `safe()`.** The reply is the `## Your call` section, so
+  a captured article could forge one by emitting a line starting `## Your call`.
+  `safe()` guarantees no model-derived string reaching a note body contains a
+  newline, and a heading needs a line start. That is the entire boundary, it is
+  one function, and `approval.test.ts` asserts it by name.
+- **The intent call never sees the capture.** It is the one call whose output has
+  authority — it can delete a note — so the untrusted text is not in the request
+  at all. Everything a reply plausibly changes is already in the proposal; a
+  reply that genuinely needs the note re-read returns `reclassify`, which runs
+  the classifier again with its own fencing.
+- **Nothing the model says is taken at its word.** `validate()` and
+  `validateAction()` check every value against the live vault: a scope must be a
+  live ingestable hub, a proposed hub must not already be a name on disk, a date
+  must be a real day, a priority must be one TaskNotes actually defines. Anything
+  ambiguous degrades to `unclear` — never to `file`.
+- **The prose is never rewritten.** The model is asked about metadata. The body
+  that lands is the body you captured, verbatim, minus the marker.
 
-```bash
-./deploy.sh up -d                                # start the stack
-./deploy.sh config                               # render the resolved compose file (sanity check)
-./deploy.sh pull api && ./deploy.sh up -d api    # roll a new image by hand
-```
+`suggest.ts` names the one guarantee that was **given up**: it used to write only
+to a sidecar outside the vault, so nothing it produced could reach the vault
+except through a click. That surface only existed on a desk. What replaces it is
+that nothing files without an armed answer.
 
-Normally you don't roll by hand: `ops/braindance-sync.timer` pulls new images on a schedule, and with `VAULT_EXTERNAL=1` it also fast-forwards `/srv/braindance` so compose/ops changes ship themselves. Detail in [`ops/README.md`](../ops/README.md). `/health` reports the running build SHA, so you can confirm a deploy landed without SSHing in.
+## Cost
 
-## Capture pipeline
+A pass with nothing armed makes **no model call** — it is a filesystem scan and a
+`git pull`, which is why a one-minute cadence is affordable. A capture costs one
+classify (~3,200 in / ~100 out) plus one intent call (~2,000 / ~80) when you
+answer it.
 
-The capture form is untyped and **one field**: a body textarea, an optional **scope picker**, and a **task toggle**. There is deliberately **no title**. Naming a thought is a decision, and it lands at the exact moment you're trying not to make one — so an untitled capture is named by its timestamp alone (`inbox/<stamp>.md`, no `# heading` in the note at all) and titled at the desk, where you can actually see what it turned out to be. The stamp is a complete identity on its own: unique, chronologically sortable, and the reason two concurrent captures can't touch the same file. The `-<slug>` suffix survives only where a title genuinely exists. Two paths still have one, and neither is the thumb typing it: the JSON `/ingest` path *arrives* titled (the iOS Share Sheet Shortcut posts `{funnel, title, body}`), whose contract is unchanged because `title` stays in the funnel *spec* even though the web form no longer renders it; and the **task toggle derives one** — a task's atom is its own name, so `splitTitleFromBody()` promotes the body's first line to the atom text before validation sees it, which means a task capture lands `<stamp>-<slug>.md` with a real `# heading` (and the rest of the body as its detail). Only an untitled *memo* — the one-tap default — goes without. A `# memo` placeholder heading would be noise in the note and a lie in the queue, so untitled means untitled.
+Three things bound the spend, and all three exist because a bill with no symptom
+is the failure this loop keeps designing against:
 
-Until it's named, an untitled capture is labelled by **its first line** — `firstLine()` in `inbox.ts`, shared by the capture toast and the review rail on purpose, since a note called one thing as it lands and another when it comes back up is a note you can't find twice. The full fallback chain is heading → filename slug → first line → `untitled`; the slug outranks the body because when one exists it *is* the note's title — posted, or promoted off a task's atom — rather than a guess at one. The rail label is truncated to fit a phone row, so `wholeTitle()` gives the untruncated line back before it reaches a form field — that field becomes the filed note's heading (and, for a task, the atom itself), and an ellipsis must never be written into the vault.
+- `--limit` (default 10) caps captures per pass; whatever it skips is named.
+- `bd_asked` records an answer already judged unreadable, so it costs nothing to
+  skip rather than a model call to re-read.
+- A failed capture backs off exponentially and dies after four **note-level**
+  failures. A 5xx, a rate limit or a bad key is a verdict on nothing, so it moves
+  the backoff and never the counter — conflating those once turned a
+  fifteen-minute outage into a permanently dead queue.
 
-The scope picker lists only hubs tagged **`ingestable`** (stacked on `scope`). Most hubs are things notes get *filed into* later, not things you think *at* — a list of every scope in the vault is a scroll, not a pick — so capture offers the handful you actually capture into and **triage still files into everything**. `getIngestableScopes()` **falls back to the full scope list when nothing carries the tag**, and that fallback is the point: a picker optimisation must not be able to brick capture. An untagged vault, a vault where the tag was dropped, a fork that never swept — each degrades to the old behaviour rather than leaving the one-tap path with an empty picker and no way to scope a thought. `GET /scopes?ingestable=1` exposes the same short list to an external client building its own picker. Either way `_meta/` `scope_kind: system` scopes never appear: the flat index reads the vault root only, so they can't enter the list to begin with.
+`usage.ts` reports what each pass actually used, in tokens rather than dollars:
+prices move, and a figure baked into the code would be quietly wrong forever.
 
-The picks land as the note's leading `Tags: [[MOC]]` line, the vault's scope-link convention, so a capture joins its hubs' backlinks immediately; the desk keeps them (the triage pane pre-fills the picker) and can change them. **A note can carry several scopes** — `Tags: [[A]] [[B]]`, one line, order preserved — because a thought rarely belongs to exactly one area and a single-choice control made you pick the least wrong one. The field is comma-separated text (`parseScopes` in `funnels.ts` is the single definition of what that string means, and strips `[`, `]`, `|`, `#` so a name can't break out of the link it lands in). It comes in three tiers, each usable alone: plain text with scripting off, a `<datalist>` for the browser's own whole-field type-ahead, and — the one script this app ships — chips with per-token type-ahead. The enhancement restores the plain field if it throws. The **task toggle** reveals `due` + `priority` (pure CSS) and captures a real `#task` atom instead of a memo. Those two — which scope a thought belongs to, and whether it's an action with a date — are what capture time knows and the desk can only guess at; media/resource typing still happens at triage. Everything stays optional: a scopeless, untyped thought captures in one tap. Tick the toggle with only the body filled and its first line becomes the atom, the rest its detail. No field carries an HTML `required` attribute, since requiredness depends on the toggle and no-JS HTML can't move it — the server decides, and a rejection re-renders the form intact.
+## Tasks are TaskNotes notes
 
-**A capture never leaves the capture screen.** `POST /ingest` is post/redirect/get: it 303s back to `/`, which renders a self-dismissing **toast** (`?ok=<title>`, or `?dup=1` for a de-dup no-op) over a fresh, empty form. Consecutive thoughts go in with no "capture another" tap in between, and a reload can't re-submit. A rejected capture (a missing required field) is the exception — it re-renders the form **in place with the typed text intact**, since the one thing this pipeline must never do is lose a thought to a validation error.
+A task is a **note** in TaskNotes' folder with metadata in frontmatter, not a
+`- [ ] … #task` line. `tasknotes.ts` reads the plugin's own
+`.obsidian/plugins/tasknotes/data.json` for the folder, the statuses, the
+priorities and the field mapping — all user-configured, so guessing produces a
+note that looks right and is invisible to every view. This vault remaps the
+plugin's `projects` key to `Contained By`, so a task names its scope the same way
+every other note does.
 
-The `api` captures notes **directly to `main`**, into `ctx/vault/inbox/` (so they show up in Obsidian and the read-only vault viewer immediately, no merge step); the desk-side `Process Inbox` routine then triages each capture in-vault — an `inbox/` → flat-vault file move, no git. Writing `main` directly is safe because the api is **Tailscale-only** with no public exposure and **no built-in auth** (it must sit behind a VPN/tunnel); the old `inbox`-branch isolation was belt-and-suspenders and is now retired.
+## Failure reports into the vault
 
-This capture ingress is orthogonal to the worktree landing flow ([`worktrees.md`](worktrees.md)): both now target `main`, but captures arrive funnel-shaped and are triaged in-vault at the desk, while agent work lands via squash-merge PRs.
+A pass that cannot complete writes `_triage/BRAINDANCE PASS FAILING.md` and
+pushes it, so a broken box turns up in Obsidian like anything else — the stage it
+died at, how long it has been failing, the last 2 KB of output, and what to
+check. It **deletes itself on the next good pass**, so its presence always means
+"broken right now". A timer whose failures live only in `journalctl` has the same
+silent-bill problem the backoff exists to prevent.
 
-**No built-in auth** — the api must sit behind a VPN/tunnel (Tailscale). Do not expose it publicly.
+Writability is checked on the first line, on stderr, because the failure note is
+itself a file in the vault — reporting a problem through the thing the problem
+breaks is how one permissions error became eight lines of git internals.
 
-## v2 — local-first git, pluggable persistence, review & versioning
-
-The api is a **local-first git store**: a capture writes a file + commits it to a working checkout *locally* (instant), then an async worker `pull --rebase`s and pushes to the remote. It owns that checkout as the **single writer**; on a rebase conflict it aborts and pauses sync rather than clobber. All of the below is config-driven and off/at-default unless set, so the default behaviour is exactly the "capture → `ctx/vault/inbox/`" pipeline above.
-
-- **Pluggable persistence (portability).** The vault is a `VaultAdapter` (`api/src/adapter.ts`) over a backend: a **git repo** (`git.ts`) or an **object store / S3** (`objectstore.ts` + `objectadapter.ts`), interchangeable — `migrate.ts` moves a vault between them. Each operation is one atomic changeset = one version (git commit / S3 manifest), with `history()` + `revert()`.
-- **Vault location is configurable** (`VAULT_SUBDIR`, default `ctx/vault`). Point `REPO_PATH` at a **standalone vault repo** and set `VAULT_SUBDIR=` (empty) to run the vault as its own repo at the checkout root — the "content-free clone" model, where the deploy config and the vault are separate repos.
-- **Single-writer lease** (`REQUIRE_LEASE=1`): the api acquires + renews a TTL-fenced lease and refuses to write if fenced out; `/health` reports `holdsLease`. A second instance refuses to *start at all* while the lease is held, which is what makes shutdown part of the deploy path: the process releases the lease on `SIGTERM`, so a redeploy's replacement acquires it on its first attempt instead of crash-looping until the TTL (`LEASE_TTL_MS`, 60s) expires. If the container is `SIGKILL`ed the release is skipped and the rollover falls back to waiting out that TTL.
-- **Review model — `/review` is a two-pane desk.** The untriaged inbox is a rail on the left, the capture you're working on fills the right, and **selection rides the URL** (`?note=<name>`) — which is what makes a desk possible with no client-side state. Picking a row is an ordinary link, both panes re-render on one request, and the state is bookmarkable, back-buttonable, and still there after a rejected submit. Before this the queue was a card list and triage was a page of its own, so N notes meant N round trips out and back; the panes cost the same one request each and you never lose sight of what's left. `GET /review/triage/:name` survives as a redirect *into* the pane, so the links already pointing at it keep resolving (the `/vault/:name` untriaged CTA, a `/history` path chip, a bookmark, an old tab). Under 640px there is room for exactly one pane: the server stamps a `.picked` class from the same query and CSS shows the rail until you pick and the note after — the server already knows the answer, so nothing has to sniff for it with `:has()`. The right pane is **fully editable** — a capture is a first draft, and the desk is where it gets edited, not just labelled — with the funnel's prose field hoisted out of the field loop to lead the pane (read the thought, *then* say what it is) and type/title/scope/type-specific fields following as metadata about that text. `file it` and `✕ discard` are each one atomic op; triage files into **every** scope, not just the ingestable ones. Agents don't write the vault directly — they POST self-contained **proposals** (`POST /proposals`) that surface as a plain section *below* the desk (approve → applied via one atomic op, or edit / reject / send-back-with-feedback): a different queue, already gated, sharing only the page. Capture stays ungated → `inbox/` (de-duplicated). **`/history`** is the operation log with one-click revert.
-- **`/today` — the daily note, as an editing surface.** The one screen here that edits a note *directly* rather than filing one, because a daily note is neither of the two things the app already had: it is not a capture (nothing triages it — it is already where it belongs) and not a filed note (nothing links to it by title; it is addressed by its date). It is the day's running page, and what you want from a phone is to open it and type. **Which file that is belongs to Obsidian's Daily Notes plugin, not to this app** — `daily.ts` reads the plugin's own `.obsidian/daily-notes.json` (folder, `format`, template) so both writers land on the same path, and a vault that never configured it still resolves to the file the plugin would create; full rationale and the supported `format` subset in [`vault.md`](vault.md). A day with no note yet opens on its **template**, filled the way Obsidian fills it (`{{title}}`, `{{date}}`, `{{time}}`, `{{date:FMT}}`), and saving is what writes it. `?date=` moves a day either way and is the same parameter the deep links arrive on, so yesterday's half-written page is one tap away. It edits the **raw file, frontmatter and all** — the note has two writers and anything that re-serialised it would rewrite hand-written YAML on every save, as a diff nobody asked for. Every save carries a **hash of the text the page was rendered from**: a blind whole-file write from a tab left open since morning would silently drop everything Obsidian has written since, the one way this screen could destroy work rather than merely fail. A mismatch does not discard what you typed — it re-renders it against the newer hash, so saving again is a deliberate overwrite instead of an accident. The write is one atomic op like every other, revertable from `/history`. Daily notes stay OUT of the flat root index by design (`/vault` doesn't list them, `getNote()` doesn't resolve them), but `/vault/<name>` renders one read-only with an edit CTA back here, so a `/todo` row for an atom in today's log resolves.
-- **Tasks are lines, and the desk files them.** The `task` funnel emits a real `- [ ] <text> <priority> 📅 <due> #task` atom (`taskLine()`), replacing the retired `todo` funnel's note-with-`status`/`due`-frontmatter — that shape predates the line-level model in `ctx/vault/_meta/Tags.md` and no longer parses as a task at all. `funnelById` still resolves `todo` → `task` so an existing Shortcut doesn't start 400ing. Captured, the atom rides in an `inbox/` note and `/todo` lists it as **unfiled** immediately; **filing it at `/review` appends the line to the chosen scope's note** (`appendTaskLine()` — end of a `## Tasks` section if the note has one, else end of file) and drops the memo, in one atomic op. That *is* filing, since a task belongs to the scope whose note it physically lives in. Pick no scope and it files as its own note, keeping a real (if scopeless) atom rather than losing the capture. **Pick several and the FIRST one owns the atom**, the rest riding along as `[[links]]` inside the line: a task is a line, and one line appended to three hubs is three tasks — tick it in one and the other two stay open forever. The links still put the atom in every hub's backlinks, which is what having several scopes was for, and the receipt says which hub it lives in versus which it merely links to. (Non-task funnels have no such tension: the note itself carries every scope on its `Tags:` line.) **Detail** a task carried has nowhere to live on the scope note (a task is one line), so it becomes a memo note of its own in the same op rather than dying with the inbox capture — clear the field at the desk and only the atom lands. Re-typing at the desk pre-fills due/priority parsed back out of the captured line, so neither is dropped on the way in.
-- **Time of day lives in the description.** The vault's date fields stay day-granular — that's Obsidian Tasks' emoji format, and breaking it costs us the plugin — so a time is written into the task TEXT, where Tasks treats it as ordinary prose: `@14:00`, or `@14:00-14:30` for an explicit end. `@` rather than a bare `14:00` because prose false-positives (`John 3:16` is a valid HH:MM); an out-of-range hour is left visible as the typo it is rather than silently vanishing. `tasks.ts` strips it from the display text and shows it as a chip, a day sorts timed-atoms-first in clock order, and the calendar surfaces use it. Only a start given ⇒ `TASK_DEFAULT_DURATION_MIN` (default 30) decides the end, clamped to 23:59 so an atom never spills into the next day.
-- **`/todo` — the task roll-up.** The vault's task model is **line-level** (a checklist line tagged `#task`, bound to the scope note it lives in — see `ctx/vault/_meta/Tags.md`), so `tasks.ts` scans note *bodies* for lines rather than notes for tags: the vault root (filed atoms) plus one level of subdirs, which is where `inbox/` and `daily/` atoms live. Underscore dirs (`_meta`, `_templates`, `_ephemeral`) are skipped — they hold *example* task lines that must never read as real work. Open atoms group into **Apple Reminders-style date sections, ascending**: Overdue (with days-late) → Today → Tomorrow → one section per later date → No date; completed atoms are behind `?done=1`. **`?by=calendar` is the third lens** — a month grid carrying DENSITY only (a dot per occurrence, hollow for a projected one), because a phone-width cell can't hold text; the selected day's atoms render beneath it as an ordinary task list, tick buttons and all. Weeks start Sunday, the grid spills into the adjacent weeks (whose real atoms must not vanish), `?month=YYYY-MM` pages and `?day=` selects. A projected occurrence is deliberately NOT completable: the atom exists once, on its current date, so you tick that one and the recurrence rolls forward. Undated atoms can't be placed on a calendar at all, so a footer says how many there are and links to the date lens rather than letting them disappear. **`?by=scope` is the second lens** — the same open atoms grouped by the note they live in (which IS their scope, by containment), the `group by filename` roll-up `TODO.md` does in Obsidian. Scopes list alphabetically, since the date lens already answers "what's most urgent" and a second urgency ranking would just be noise; each section links to its scope note and carries its own overdue count, so a scope reads as its area's command center. Unfiled atoms collapse into one leading bucket — the task-level inbox. A task with only a `⏳ scheduled` date buckets on that date rather than vanishing into "No date". **Ticking a box is a real vault write** (`POST /todo/complete`): the atom IS the line, so completion rewrites that line in place — `- [x]` plus a `✅ <today>` stamp — as one atomic op, revertable from `/history` (which is also the undo for a mis-tap; there is deliberately no un-complete button). The write is guarded on the line still reading exactly as the page rendered it, so a stale tab can never tick an atom Obsidian has since moved or edited. A `🔁` atom also gets its next instance inserted above the completed line, with every date it carries shifted by the same delta — but only for rules we roll forward unambiguously. The grammar covers what real obligations look like — `every [N] day|week|month|year`, `every [N] week[s] on <weekday>[, …]` (so a bare `every Sunday` too), `every weekday`, and `every [N] month[s] on the <Nth|last>`, each with an optional `when done`. Anything richer (`every 3rd Thursday`) gets no button at all rather than a button that silently drops the recurrence; `parseRecurrence` refuses a rule it only half-understands (`every week on monday and blursday`) whole.
-- **Projection is what makes a calendar possible.** The vault holds only the CURRENT instance of a recurring atom — Obsidian Tasks writes the next one when you complete it — so a weekly chore exists exactly once on disk and would appear on a calendar exactly once. `occurrencesBetween()` expands an atom across a date window, marking every computed instance `projected: true`; only the real one can be ticked. An atom whose rule we can't parse yields just its real instance, which is the honest answer. A `when done` rule projects on its nominal cadence: the true next date depends on when you finish, but a calendar is asking about the pattern. **Set `TZ` in `/srv/.env`** (it's in `.env.example`) or the container's UTC day boundary decides what "Today" means — which in the Americas rolls over mid-afternoon, so an atom due tomorrow starts reading as due today.
-- **`GET /todo.ics` — subscribe once, see obligations where you already look.** An iCalendar feed of every open, dated atom, for Apple Calendar (or anything that speaks iCalendar): add it as a *subscribed calendar* at `webcal://<host>:3000/todo.ics` and tasks appear next to real events with nothing to maintain. Recurrence is emitted as **RRULE rather than expanded**, so the series is unbounded and a rule change re-expands everywhere instead of stranding stale copies; a rule `parseRecurrence` can't read emits a single dated event rather than a guess. Timed atoms (`@14:00`) become **floating local-time** events — no TZID, no VTIMEZONE block to get wrong, and "14:00 wherever you are" is what the notation means. UIDs are content-derived (note + text) so a re-fetch updates an event rather than duplicating it. Completed, cancelled and undated atoms are absent by construction. Read-only, Tailscale-only, no auth of its own — the URL is the credential. Knobs: `PUBLIC_BASE_URL` (adds a link back to the note), `TODO_ICS_ALARM_MIN` / `TODO_ICS_ALLDAY_ALARM_AT` (both comma-separated, both unset ⇒ silent). The two are separate because an all-day event starts at MIDNIGHT: a minutes-before trigger on one fires the night before, so all-day atoms take times of day on their own day (`09:00,18:00`) while timed atoms take minutes before the start. Setting only the timed knob still gives all-day atoms a 09:00 alert rather than inheriting an offset that would misfire. Client-controlled refresh, and it only refreshes while Tailscale is up.
-- **Inbound latency, and `POST /sync` — the answer to "I edited in Obsidian, why isn't it here yet?"** The api owns its checkout and pulls on a timer (`GIT_PULL_INTERVAL_MS`, default 5 min), so an edit you push from a laptop shows up on the *next tick* — and since a poll has no idea when you pushed, the average wait is **half the interval**, not the interval. Shortening it helps, but it can't beat that: at 10s you still average 5s, and below ~10s a reconcile barely finishes before the next starts, holding the one lock that captures and box-ticks need. So the timer is the safety net and **`POST /sync` is the sharp edge** — an explicit "I just pushed, go and look" that reconciles immediately and costs nothing while idle. Two callers: the quiet `↻ sync` button in the `/todo` footer, and the machine you actually edit on, straight after a push — `git push && curl -sX POST http://<tailscale-ip>:3000/sync`, which is what makes the loop feel immediate rather than eventually-consistent. It takes no content and grants no capability the timer doesn't already exercise unprompted, so it needs no auth of its own beyond the Tailscale-only bind everything else has. It redirects to a **site-relative** `back` form field (never the `Referer` header — that would be an open redirect), and it stops waiting after 8s and says "still syncing" rather than leaving a phone spinning; the reconcile carries on regardless. **An idle reconcile now sends no push** — `git push` used to run every tick even with nothing local to send, a whole round-trip to be told "Everything up-to-date", which at a short interval is half the cost of polling. The check reads `FETCH_HEAD..HEAD` rather than a remote-tracking ref, because this store syncs by explicit URL (so the PAT never reaches `.git/config`) and `git pull <url>` updates no `refs/remotes/*`; if it can't tell, it pushes anyway, since a redundant push costs a round-trip and a wrongly-skipped one strands a commit on the box. The `conflicted` flag consequently clears on a clean **reconcile** rather than on a successful push — otherwise an idle box whose conflict was fixed by hand would carry the flag forever.
-- **`/health` is the deploy diagnostic.** It reports the **build** the container is running (`version`, the commit SHA baked in at image build; `dev` when run from source) and the **task/calendar knobs it actually resolved** — `tz` and the day it thinks it is, the ics base URL, both alarm lists, whether the suggestion worker is armed and on which model, and the **reconcile interval** it settled on. That last one is reported because its failure mode is silent: an unparseable `GIT_PULL_INTERVAL_MS` falls back to the 5-minute default rather than disarming the timer, so `10s` looks from outside exactly like never having set it — the box just quietly keeps polling every 5 minutes. Reporting the RESOLVED number is what tells "my edit landed" apart from "my edit was a typo". From outside the box a stale image and an unapplied `/srv/.env` edit look identical (the feed just doesn't change), and answering "which is it?" otherwise means SSHing in. The knobs come from the SAME resolvers the behaviour does (`icsOptionsFromEnv()`, `aiSuggestConfig()`), so the report cannot drift from it. **Nothing secret is exposed** — the endpoint is unauthenticated, so it carries the task/calendar/worker knobs only, never a token, remote URL, notification endpoint or API key.
-- **Self-updating deploy.** CI (`.github/workflows/deploy-api.yml`) rebuilds `:latest` on every `api/**` or compose change, and the host's `ops/braindance-sync.timer` pulls it (and, with `VAULT_EXTERNAL=1`, `git pull`s the deploy config) every few minutes — the box updates itself and CI never SSHes in. That timer runs unattended, so a box you do not want moving underneath you should pin a digest rather than the tag.
-
-### The suggestion worker (M0) — a reader that cannot write
-
-Opt-in, off by default, and **the only thing in this app that makes an outbound call**. An interval worker scans `inbox/` for captures with no suggestion yet, asks the Claude API for the metadata you'd otherwise type at the desk (title, type, scope, due, priority, one-sentence rationale), and writes the answer to a sidecar JSON. `/review` renders it as a quiet dashed card sitting between the note and the fields it would fill — you read the thought, then the machine's reading of it, then decide.
-
-**The security model is the design, not a policy laid over it.** Every claim below is true by shape, so there is nothing to enforce at runtime:
-
-- **No vault write path exists.** The module's only sink is `SUGGESTIONS_DIR` — a plain directory outside the checkout (default `<REPO_PATH>/../braindance-suggestions`), never committed, invisible to `git.ts`. It imports no adapter and no git store, and holds no path that resolves into the vault. Same placement and same reason as `PROPOSALS_DIR`: this is api-owned control-plane state, and a directory the git store can't see makes "it can't write the vault" structural rather than a rule.
-- **No tools.** One `messages.create` — no `tools`, no MCP, no server tools — so there is no surface for an instruction hidden inside a captured note to act *on*. The worst a hostile note can do is get itself mislabelled in a form field you are looking at.
-- **Nothing the model says is taken at its word.** `validate()` is the only door from model output into app values: the title must be non-empty, the funnel must resolve through `funnelById`, the scope must be a member of the **live** ingestable list or it's dropped, `due` must be a real calendar day (a shape check alone would pass `2026-02-31`), and `priority` must be one of the five Obsidian Tasks levels — tested by list membership, never `in`, which walks the prototype and would happily accept `constructor` as a priority. Strings are whitespace-collapsed and length-capped. It runs **twice**: once in the worker before the sidecar is written, once in the renderer against the scope list as it is *right now* — a sidecar can outlive the vault state it was made against, and a stored file is no more trusted than the response it came from. A suggestion that fails wholesale renders as no suggestion; a single bad field is dropped and the rest still shows, because a bad scope still leaves a useful title. What survives renders through `hono/html`, which escapes by default — a suggestion is form pre-fill, never markup and never executed.
-- **The note is data, not instructions.** It rides in a `<captured-note>` block in the user turn — the only untrusted content in the request — with the closing delimiter neutralised in the body so a note can't close its own block and continue as if it were prompt. The system prompt, the one turn carrying instructions, says all of this explicitly.
-- **Your click is the only commit path.** Nothing is ever applied for you. `apply` is a GET that re-renders the pane with the suggestion in the fields; `apply & file` is the *same* `POST /review/triage/:name` a hand-typed triage makes, carrying those values as hidden inputs. Both end at one atomic op, in `/history`, one click from revert. And the model is asked about **metadata only** — the prose field always keeps the captured text, so accepting a suggestion can never rewrite what you wrote. (The suggested `tags` render on the card and go nowhere else: no funnel has a tags field, so they never reach a form or the vault.) **`apply` says what it did.** Filling the fields is all it ever does, and for the ordinary memo that can legitimately be *nothing* — the suggested title is already in the box by default (see above), so a suggestion whose scope the model didn't answer re-renders a form that already read that way, and a button you press to no visible effect reads as a broken one. So the pane marks the fields the apply actually moved, against the values the pane would be showing had you never pressed it, and the card carries the count — or says plainly that there was nothing to change. It is a receipt, not a control: server-rendered from the same `?apply=1` that filled the fields, so it survives with scripting off.
-
-**What leaves the box:** the captured note's body (capped at 8 000 chars — a capture is a thought, not a document, so this is a guard against a pasted article), its title only when that carries something the body doesn't, the **names** of the ingestable scopes with a one-line blurb each (frontmatter `description`/`summary`, else the note's first non-structural prose line, 160 chars), and today's date. **What does not:** filenames, vault paths, frontmatter, any other note, any scope note's body, and any `_meta/` `scope_kind: system` scope — those are excluded by construction, since the flat index reads the vault root only. `ANTHROPIC_API_KEY` is read in `config.ts` for exactly one purpose, to answer "is a key present"; its value is never returned, logged, or passed anywhere — the SDK picks it up from the environment itself. `/health` reports `config.ai: { suggest, model }`, i.e. whether it's on and what it runs, and that endpoint is unauthenticated, so it will never carry more.
-
-**Off means off.** The worker starts only when `AI_SUGGEST=1` **and** a key is present. Absent either, no client is constructed, no request is made, the pane renders its "no suggestion" state, and the process is byte-for-byte the app it was before the feature existed.
-
-Operationally it holds no state of its own: what was tried, what failed, and when to retry all live in the sidecar files (`ok` / `retry` / `dead`), so a container restart resumes instead of re-asking for the whole queue. Failures back off exponentially from the interval to an hour and go `dead` after four attempts; a **refusal** (which arrives as HTTP 200 with `stop_reason: "refusal"`, checked *before* `content` is read) goes `dead` immediately, because a refusal is a verdict on the note rather than a fault and retrying buys the same no. The `dead` marker is load-bearing — without it a note that fails would look untried on every tick and be resubmitted for the life of the container. Three notes per tick and ticks that never overlap, so a stalled API can't become unbounded concurrency and a restart (when every note looks new) can't become a bill. A sidecar is deleted when its note leaves the queue, filed or discarded, and any that survive some other exit are pruned, so the directory tracks the queue rather than growing forever. From the desk, "worker off", "hasn't got to it yet" and "gave up on it" all render the same empty state — they are the same fact to the person triaging.
-
-M1 (an interactive chat pane) is deliberately staged *after* M0 has run long enough to show what the suggestions actually get wrong. It is not built: this app still ships no client JS.
-
-Key `/srv/.env` knobs: `REPO_PATH`, `VAULT_SUBDIR`, `GITHUB_REPO`, `GITHUB_TOKEN`, `GIT_PULL_INTERVAL_MS` (how often it reconciles with the remote; default `300000`, unparseable falls back to that rather than disarming the timer, `0` turns it off), `REQUIRE_LEASE`, `VAULT_EXTERNAL`, `PROPOSALS_DIR`, `DEDUP_TTL_MS`, `API_IMAGE`, `TAILSCALE_IP`, `TZ` (the `/todo` day boundary), `TASK_DEFAULT_DURATION_MIN`, `PUBLIC_BASE_URL`, `TODO_ICS_ALARM_MIN`, `TODO_ICS_ALLDAY_ALARM_AT`, and for the suggestion worker `AI_SUGGEST` (`1` to arm it), `ANTHROPIC_API_KEY` (the other half — both required), `AI_MODEL` (default `claude-sonnet-5`; must accept `output_config.effort`, so Sonnet- or Opus-tier), `SUGGEST_INTERVAL_MS` (default `60000`; anything unparseable or under `5000` falls back to that default), `SUGGESTIONS_DIR`.
+Install and knobs: [`../ops/README.md`](../ops/README.md).

@@ -1,10 +1,14 @@
-# Braindance public + admin stack. Run via ./deploy.sh (not bare
-# `docker compose`) so ${VAR} interpolation reads /srv/.env. Note the two
-# distinct env mechanisms:
-#   - ${VAR} below is *interpolation*, resolved from --env-file /srv/.env
-#     (which ./deploy.sh always passes) — NOT from `env_file:`.
-#   - `env_file:` only injects *container runtime* env (e.g. $DOMAIN for
-#     Caddy, GITHUB_TOKEN for the api).
+# The public stack: Caddy, and nothing else.
+#
+# The admin api used to live here too — a Hono app that owned a read-write
+# checkout of the vault and served capture, triage, the task roll-up and a
+# viewer. It is gone. Obsidian is the interface now, obsidian-git is the
+# transport, and the only thing left running on the box is a systemd timer
+# (ops/braindance-applier.timer) that classifies captures and files the ones you
+# have answered. It needs no container and no port.
+#
+# Run via ./deploy.sh rather than bare `docker compose`, so ${VAR} interpolation
+# reads /srv/.env — `env_file:` only sets *container* env, never interpolation.
 services:
   caddy:
     image: caddy:alpine
@@ -12,9 +16,10 @@ services:
       - "80:80"
       - "443:443"
     # Caddy needs exactly one variable, so it gets exactly one — by interpolation
-    # rather than `env_file: /srv/.env`, which handed the entire secret file
-    # (GITHUB_TOKEN, and now ANTHROPIC_API_KEY) to the only container published
-    # on 0.0.0.0:80/443. Least privilege for the most exposed service.
+    # rather than `env_file: /srv/.env`, which would hand the whole secret file
+    # to the only container published on 0.0.0.0:80/443. Least privilege for the
+    # most exposed service, and it matters more now that ANTHROPIC_API_KEY lives
+    # in that file for the applier's benefit.
     environment:
       DOMAIN: ${DOMAIN:?set DOMAIN in /srv/.env}
     volumes:
@@ -24,37 +29,5 @@ services:
       - /srv/garden:/srv/garden:ro
     restart: unless-stopped
 
-  api:
-    image: ${API_IMAGE:?set API_IMAGE in /srv/.env}
-    ports:
-      # Bind to the Tailscale IP ONLY. The API has no auth, so it must never
-      # publish on the public interface — and Docker's iptables would bypass UFW
-      # if this were plain "3000:3000". Set TAILSCALE_IP in /srv/.env.
-      - "${TAILSCALE_IP:?set TAILSCALE_IP in /srv/.env}:3000:3000"
-    # GITHUB_TOKEN / GITHUB_REPO (push+pull creds), REPO_PATH, GIT_AUTHOR_*.
-    env_file: /srv/.env
-    volumes:
-      # Local-first: mount the writable checkout the api owns (sees `.git`,
-      # commits captures locally, then pulls --rebase + pushes asynchronously).
-      # The mount follows $REPO_PATH so the v2 cutover — pointing the api at the
-      # standalone vault repo — is a pure /srv/.env flip (REPO_PATH=/srv/vault),
-      # no compose edit. Defaults to /srv/braindance (pre-cutover behaviour).
-      - ${REPO_PATH:-/srv/braindance}:${REPO_PATH:-/srv/braindance}
-      # Suggestion sidecars (SUGGESTIONS_DIR). A NAMED VOLUME, not a host bind and
-      # emphatically not a path inside the checkout: these files carry the "already
-      # asked, don't ask again" and "gave up on this one" markers, so unmounted
-      # they live in the container's writable layer, every ./deploy.sh discards
-      # them, and the next boot re-suggests the whole inbox at full price. Inside
-      # the working tree would be worse — a human `git add -A` would commit api
-      # state into the vault, and the app's own commits are pathspec-scoped so they
-      # would never catch it. A volume is invisible to git by construction.
-      #
-      # The mount point must match config.ts's SUGGESTIONS_DIR default. To move it,
-      # set SUGGESTIONS_DIR in /srv/.env: it reaches this line by interpolation and
-      # the api by env_file, so the two cannot drift apart.
-      - braindance_suggestions:${SUGGESTIONS_DIR:-/srv/braindance-suggestions}
-    restart: unless-stopped
-
 volumes:
   caddy_data:
-  braindance_suggestions:

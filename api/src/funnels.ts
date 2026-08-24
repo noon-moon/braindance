@@ -2,21 +2,6 @@
 // build()s a vault-correct note (frontmatter + scoping links). Everything lands on
 // the `inbox` branch for desk triage — the phone never writes `main`.
 // See [[Braindance Admin App]] "Workflow 1 — Note ingest".
-import { ANY_SIGNIFIER } from "./tasks.js";
-
-export interface Field {
-  key: string;
-  label: string;
-  type: "text" | "textarea" | "select" | "scope" | "date" | "url" | "number" | "checkbox";
-  required?: boolean;
-  options?: string[];
-  placeholder?: string;
-  /** `scope` fields only: this picker takes exactly ONE scope. A task is filed by
-   *  living in a note, and a line appended to three hubs is three tasks — so the
-   *  control that picks that note has to be able to say "one", structurally,
-   *  rather than leave the filer to quietly take the first of however many. */
-  single?: boolean;
-}
 
 export interface BuiltNote {
   title: string;
@@ -28,8 +13,14 @@ export interface Funnel {
   id: string;
   label: string;
   hint: string;
-  fields: Field[];
-  build(input: Record<string, string>): BuiltNote;
+  /** How this type becomes a note — ABSENT for a type that does not become one.
+   *
+   *  `todo` has no build any more. A task in this vault is a TaskNotes note,
+   *  written by `tasknotes.ts` from the plugin's own configured schema, and the
+   *  applier routes there rather than here. Leaving a build that produced the
+   *  old `- [ ] … #task` line would have been a shape nothing reads, emitted
+   *  silently by whichever caller forgot. Optional says so in the type. */
+  build?: (input: Record<string, string>) => BuiltNote;
 }
 
 const yaml = (fm: Record<string, unknown>): string => {
@@ -51,32 +42,6 @@ const yaml = (fm: Record<string, unknown>): string => {
   lines.push("---");
   return lines.join("\n");
 };
-
-/** A checklist item — any indent, `-`/`*`/`+` bullet, a status box. */
-const CHECKLIST_ITEM = /^\s*[-*+]\s+\[.?\]/;
-
-/** Append a `#task` atom to an existing note's raw text — how the desk FILES a
- *  task, since a task belongs to the scope whose note it physically lives in.
- *  Lands at the end of a `## Tasks` section when the note has one, else at the
- *  end of the note. Operates on raw file text (frontmatter included) so nothing
- *  round-trips through a YAML re-serialiser. */
-export function appendTaskLine(raw: string, line: string): string {
-  const lines = raw.replace(/\s+$/, "").split("\n");
-  const heading = lines.findIndex((l) => /^#{1,6}\s+tasks\s*$/i.test(l));
-  if (heading === -1) {
-    // Join an existing trailing list rather than starting a second one — a blank
-    // line between two atoms makes them separate (loose) Markdown lists.
-    const gap = CHECKLIST_ITEM.test(lines[lines.length - 1] ?? "") ? "" : "\n";
-    return `${lines.join("\n")}\n${gap}${line}\n`;
-  }
-  // End of that section = the next heading of any level, blank lines trimmed
-  // back so the atom joins the list rather than floating below it.
-  let end = lines.findIndex((l, i) => i > heading && /^#{1,6}\s/.test(l));
-  if (end === -1) end = lines.length;
-  while (end > heading + 1 && lines[end - 1].trim() === "") end--;
-  lines.splice(end, 0, line);
-  return `${lines.join("\n")}\n`;
-}
 
 export const compose = (n: BuiltNote): string =>
   `${yaml(n.frontmatter)}\n\n${n.body.trim()}\n`;
@@ -133,62 +98,12 @@ export const containment = (i: { contains?: string; containedBy?: string }): Rec
   "Contained By": linkList(i.containedBy),
 });
 
-/** Obsidian Tasks' five priority levels → their signifiers. No entry = normal. */
-export const PRIORITY_SIGNIFIER: Record<string, string> = {
-  highest: "🔺", high: "⏫", medium: "🔼", low: "🔽", lowest: "⏬",
-};
-
-/** Obsidian Tasks' signifier alphabet, removed from a description on its way
- *  into an atom.
- *
- *  The description is free text and it is interpolated AHEAD of the structured
- *  fields, so anything the format treats as a signifier is a field the text can
- *  forge. `chase the landlord 🔁 every day 📅 2020-01-01` files a recurring,
- *  permanently-overdue atom into whichever scope note triage appends to — and
- *  `canComplete` (tasks.ts) then refuses to tick it from the app at all, because
- *  a recurrence we can't roll forward belongs to Obsidian. The due/priority
- *  controls are the only legitimate way those fields get set, which now includes
- *  "the only way", not just "the intended way". Reachable from a suggested title
- *  as much as a typed one, so it is fixed here rather than at either caller.
- *
- *  The emoji goes and the words either side stay: a stripped date reads as the
- *  prose it always was, where dropping the clause with it would look like the
- *  desk had eaten what you typed. A trailing VS16 goes too — on its own it is a
- *  signifier's leftovers and nothing a description ever means. */
-const SIGNIFIER_RE = new RegExp(`[${ANY_SIGNIFIER}]\\uFE0F?`, "gu");
-
-/** Render one `#task` atom — the vault's task unit is this LINE, so it is built
- *  once here and reused by capture (which wraps it in an inbox note) and triage
- *  (which appends it to a scope note). Field order follows Obsidian Tasks:
- *  description → priority → dates → the `#task` global filter last.
- *
- *  The description is flattened to a single line, stripped of a `#task` the user
- *  typed themselves (two on one line is a malformed atom), and stripped of every
- *  signifier (above) so it can only ever be a description. */
-export function taskLine(i: Record<string, string>): string {
-  const text = (i.title ?? "")
-    .replace(/(?:^|\s)#task(?![\w/-])/gu, " ")
-    .replace(SIGNIFIER_RE, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  const parts = [text, PRIORITY_SIGNIFIER[i.priority ?? ""] ?? "", i.due ? `📅 ${i.due}` : "", "#task"];
-  return `- [ ] ${parts.filter(Boolean).join(" ")}`;
-}
-
 const MEDIA_SCOPE: Record<string, string> = {
   Game: "Video Games",
   Book: "Books",
   Music: "Music",
   Film: "Film",
 };
-
-/** The two containment pickers, in the order the desk asks them. Shared by every
- *  type so the pair reads the same wherever it appears — these are the two
- *  relationships triage is FOR, not per-type metadata. */
-const CONTAINMENT_FIELDS: Field[] = [
-  { key: "containedBy", label: "contained by", type: "scope", placeholder: "the hub(s) this belongs to — comma-separated" },
-  { key: "contains", label: "contains", type: "scope", placeholder: "what this is a hub for — comma-separated" },
-];
 
 /** The three things a capture can turn out to be. This dropdown used to list the
  *  four *shapes of form* the app happened to have — Memo, Task, Resource, Media —
@@ -211,11 +126,6 @@ export const FUNNELS: Funnel[] = [
     id: "memo",
     label: "Memo",
     hint: "a thought → a note at the vault root",
-    fields: [
-      { key: "title", label: "title", type: "text" },
-      { key: "body", label: "body", type: "textarea", required: true },
-      ...CONTAINMENT_FIELDS,
-    ],
     // The capture screen posts a body and nothing else — naming a thought is a
     // decision the desk makes, not the thumb. So an untitled memo gets NO heading
     // at all: a `# memo` placeholder is noise in the note and a lie in the review
@@ -234,12 +144,6 @@ export const FUNNELS: Funnel[] = [
     id: "scope",
     label: "Scope",
     hint: "a hub for an area — the thing other notes hang off",
-    fields: [
-      { key: "title", label: "name", type: "text", required: true },
-      { key: "body", label: "what it's for", type: "textarea" },
-      ...CONTAINMENT_FIELDS,
-      { key: "ingestable", label: "a capture destination (offer it on the capture form)", type: "checkbox" },
-    ],
     // A hub, written the way the vault's own hubs are: `tags: [scope]`, the
     // containment fields, and a line of prose saying what it covers. NO `# title`
     // heading — a scope's name is its filename and the existing hubs open
@@ -263,31 +167,12 @@ export const FUNNELS: Funnel[] = [
     id: "todo",
     label: "TODO",
     hint: "a dated atom — one next action, filed into one scope",
-    fields: [
-      { key: "title", label: "what needs doing", type: "text", required: true },
-      { key: "body", label: "detail", type: "textarea" },
-      { key: "due", label: "due", type: "date" },
-      { key: "priority", label: "priority", type: "select", options: Object.keys(PRIORITY_SIGNIFIER) },
-      // ONE scope, and a picker that says so. Not `required` here, because this
-      // spec is also what the phone's one-tap task capture is validated against
-      // and a thought must never be rejected for want of filing. The DESK
-      // requires it — that is where "file it" means "append the atom to this
-      // note", and there is nothing to append to without one.
-      { key: "containedBy", label: "file into", type: "scope", single: true, placeholder: "the scope note this atom lives in" },
-    ],
     // A task is a LINE, not a note (see [[Tags]]) — so this builds the smallest
     // note that CARRIES one. Captured, it lands in `inbox/` and `/todo` shows it
     // as an unfiled atom straight away; triage then lifts the line out and
     // appends it to its scope note, which is what "filed" means.
     //
-    // `detail` is prose the atom can't hold (a task is one line). It rides along
-    // in the capture note so nothing typed is dropped, and triage decides where
-    // it goes — the line to the scope, the prose to a memo of its own.
-    build: (i) => ({
-      title: i.title,
-      frontmatter: { tags: ["memo"], ...containment(i) },
-      body: `# ${i.title}\n\n${taskLine(i)}${i.body ? `\n\n${i.body}` : ""}`,
-    }),
+    // NO BUILD. A task is a TaskNotes note now — see the Funnel interface.
   },
 ];
 
@@ -300,14 +185,6 @@ export const LEGACY_FUNNELS: Funnel[] = [
     id: "media",
     label: "Media",
     hint: "a game / book / album / film to check out",
-    fields: [
-      { key: "kind", label: "kind", type: "select", required: true, options: ["Game", "Book", "Music", "Film"] },
-      { key: "title", label: "title", type: "text", required: true },
-      { key: "creator", label: "creator", type: "text", placeholder: "author / director / artist / studio" },
-      { key: "url", label: "url", type: "url" },
-      { key: "why", label: "why", type: "textarea" },
-      { key: "status", label: "status", type: "select", options: ["want", "consuming", "done"] },
-    ],
     build: (i) => ({
       title: i.title,
       frontmatter: {
@@ -321,12 +198,6 @@ export const LEGACY_FUNNELS: Funnel[] = [
     id: "resource",
     label: "Resource",
     hint: "a standing go-to for an activity",
-    fields: [
-      { key: "title", label: "title", type: "text", required: true },
-      { key: "activity", label: "activity", type: "scope", required: true },
-      { key: "url", label: "url", type: "url" },
-      { key: "note", label: "what it's for", type: "textarea" },
-    ],
     build: (i) => ({
       title: i.title,
       frontmatter: {

@@ -7,7 +7,6 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import matter from "gray-matter";
 import { REPO_PATH, VAULT_SUBDIR } from "./config.js";
-import { invalidateTasks } from "./tasks.js";
 
 // Defaults to <REPO_PATH>/<VAULT_SUBDIR> so the viewer reads exactly the checkout
 // the git store commits to. VAULT_PATH still overrides for standalone/legacy
@@ -88,16 +87,9 @@ export function index(): Index {
 }
 
 /** Drop the viewer's cached indexes so the next read re-scans the working tree.
- *  Called after a capture/triage commits, so just-written notes are visible
- *  immediately. Covers the task scan too — filing a note moves its `#task` lines,
- *  so /todo must not serve a pre-commit view. */
-export const invalidate = (): void => {
-  cache = null;
-  invalidateTasks();
-};
-
-export const getScopes = (): string[] =>
-  [...index().notes.values()].filter((n) => n.tags.includes("scope")).map((n) => n.name).sort();
+ *  Called after the applier files a note, so a hub it just minted is visible to
+ *  the collision check on the very next capture in the same pass. */
+export const invalidate = (): void => { cache = null; };
 
 /** The scopes explicitly marked `ingestable`, and NOTHING else. No fallback: an
  *  empty answer means the vault marked nothing, which is a real answer.
@@ -113,30 +105,7 @@ export const getIngestableScopesStrict = (): string[] =>
     .map((n) => n.name)
     .sort();
 
-/** The scopes a capture can be dropped into: `ingestable` stacked on `scope`.
- *  Most hubs are things notes get FILED into later, not things you think *at* —
- *  so the capture dropdown lists the handful you actually capture into and triage
- *  keeps the full list.
- *
- *  Falls back to every scope when nothing carries the tag. THIS IS THE PICKER'S
- *  accessor and the fallback is correct HERE and only here: the tag is an
- *  optimisation of a dropdown, and an untagged vault (or one where the tag was
- *  dropped) must degrade to the old behaviour rather than leave capture with an
- *  empty dropdown and no way to scope a thought at all. Degrading OPEN is safe
- *  for a local picker and unsafe for an allowlist — use the strict accessor
- *  above whenever the list decides what may leave. */
-export const getIngestableScopes = (): string[] => {
-  const tagged = getIngestableScopesStrict();
-  return tagged.length ? tagged : getScopes();
-};
-
 export const getNote = (name: string): VaultNote | undefined => index().notes.get(name);
-
-export const backlinksFor = (name: string): string[] =>
-  [...new Set(index().backlinks.get(name) ?? [])].sort();
-
-export const listNotes = (): VaultNote[] =>
-  [...index().notes.values()].sort((a, b) => a.name.localeCompare(b.name));
 
 export const noteExists = (name: string): boolean => index().notes.has(name);
 
@@ -168,15 +137,4 @@ export function takenRootNames(): Set<string> {
   return taken;
 }
 
-/** A root note's file EXACTLY as it sits on disk. The index hands back PARSED
- *  frontmatter, so rewriting a note from it would re-serialise (and reformat)
- *  YAML the user wrote by hand — an edit has to start from the raw bytes.
- *  Only names the flat index already knows resolve, so no path escapes. */
-export function readNoteRaw(name: string): string | null {
-  if (!noteExists(name)) return null;
-  try {
-    return readFileSync(join(VAULT_PATH, `${name}.md`), "utf8");
-  } catch {
-    return null;
-  }
-}
+

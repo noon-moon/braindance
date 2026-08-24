@@ -10,7 +10,7 @@
 // vault, so running it twice does nothing twice.
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { compose, containment, funnelById, taskLine, appendTaskLine, type BuiltNote } from "./funnels.js";
+import { compose, funnelById, type BuiltNote } from "./funnels.js";
 import { isArmed, stripMarker, type Proposal } from "./approval.js";
 import type { Revision } from "./intent.js";
 
@@ -44,10 +44,14 @@ export function reviseProposal(p: Proposal, r: Revision): Proposal {
  *  unattended decision, and the prompt to correct it. */
 export function fileNote(p: Proposal, captureBody: string): BuiltNote & { content: string } {
   const funnel = funnelById(p.kind) ?? funnelById("memo")!;
+  // A `todo` has no note shape here — tasknotes.ts owns it and the applier
+  // routes there. Reaching this with one is a caller bug, and a loud one beats
+  // a memo quietly written where a task was meant.
+  if (!funnel.build) throw new Error(`${funnel.id} does not build a note — file it through tasknotes.ts`);
   // Order is meaning and is kept: `containment()` writes them in this order and
   // the first is the hub the note primarily belongs to.
   const scope = [...(p.newScope ? [p.newScope.name] : []), ...p.scopes].join(", ");
-  const built = funnel.build({
+  const built = funnel.build!({
     title: p.title,
     // The marker must NOT survive filing. A capture's body is copied verbatim
     // into the note it becomes, so an armed one would ride along — and a filed
@@ -66,15 +70,7 @@ export function fileNote(p: Proposal, captureBody: string): BuiltNote & { conten
  *  picker, and a hub minted while filing one note is a destination, not
  *  somewhere you have thought at yet. */
 export const mintHub = (name: string, why: string): string =>
-  compose(funnelById("scope")!.build({ title: name, body: why }));
-
-/** A task is a LINE in TaskNotes' predecessor model and a NOTE in TaskNotes'.
- *  Kept here so the applier has one place to change when the vault's task
- *  vocabulary finishes moving — see `_meta/Tags.md`. */
-export const taskAtom = (p: Proposal): string =>
-  taskLine({ title: p.title, due: p.due ?? "", priority: p.priority ?? "" });
-
-export { appendTaskLine, containment };
+  compose(funnelById("scope")!.build!({ title: name, body: why }));
 
 /** Does this note ask to be classified? One marker for the whole loop — see
  *  `MARKER` in approval.ts for why arming is a deleted character. */

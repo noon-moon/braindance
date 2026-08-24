@@ -85,19 +85,23 @@ export function taskConfig(): TaskNotesConfig {
   return cfg;
 }
 
-export const invalidateTaskConfig = (): void => { cache = null; };
 
-/** Is a status one this install actually defines? A task carrying a status no
- *  view matches is a task that has vanished, so the answer has to come off the
- *  configured list rather than off a constant here. */
-export function knownStatuses(): string[] {
+
+
+/** The priorities this install actually defines, in its own order.
+ *
+ *  They are USER-CONFIGURED, so a constant here would be a guess. Read from the
+ *  same `data.json` everything else in this file reads, with the plugin's
+ *  defaults as the fallback — a task carrying a priority no view matches is a
+ *  task that has quietly vanished. */
+export function knownPriorities(): string[] {
   try {
     const d = JSON.parse(readFileSync(join(VAULT, CONFIG_REL), "utf8")) as Record<string, unknown>;
-    const list = Array.isArray(d.customStatuses) ? d.customStatuses : [];
-    return list.map((x) => String((x as Record<string, unknown>).value ?? "")).filter(Boolean);
-  } catch {
-    return ["none", "open", "in-progress", "done"];
-  }
+    const list = Array.isArray(d.customPriorities) ? d.customPriorities : [];
+    const vals = list.map((x) => String((x as Record<string, unknown>).value ?? "")).filter(Boolean);
+    if (vals.length) return vals;
+  } catch { /* not installed — the plugin's defaults are the right answer */ }
+  return ["none", "low", "normal", "high"];
 }
 
 export interface TaskInput {

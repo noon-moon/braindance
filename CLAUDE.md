@@ -33,7 +33,7 @@ The common path (a coding task, a vault lookup, a worktree session) is fully ser
 |---|---|
 | making a design call, or wondering whether a feature belongs here at all | [`docs/architecture.md`](docs/architecture.md) — the product definition and the three goals every change is measured against |
 | running a worktree session, landing a PR, coordinating a fleet (full R1–R7 + the `bd` workflow) | [`docs/worktrees.md`](docs/worktrees.md) |
-| orchestrating a fleet of sub-agents (delegation doctrine O1–O9, model right-sizing) | [`docs/orchestration.md`](docs/orchestration.md) |
+| orchestrating a fleet of sub-agents (delegation O1–O9, verification V1–V9, model right-sizing) | [`docs/orchestration.md`](docs/orchestration.md) |
 | searching/creating/restructuring vault notes, or writing scratch (what braindance requires of a vault, triage tree, `_ephemeral` naming, daily notes) | [`docs/vault.md`](docs/vault.md) |
 | working on the classifier, the applier, or the triage loop | [`docs/serving.md`](docs/serving.md) |
 | standing the app up on a host | [`docs/deploy.md`](docs/deploy.md) |
@@ -73,6 +73,35 @@ Multiple agent sessions must **never share the one working tree** — a shared i
 - **One worktree per *agent*, not per lane — verifiers included.** Verifiers are told to mutate the tree, so any two sharing one corrupt each other's runs: a fleet that put four verifiers on a single worktree got three different test totals reported for the same commit, with the tree reporting clean throughout. If an agent runs, it gets its own tree.
 
 Full discipline (R1–R7), the `bd` workflow, and fleet tooling: [`AGENTS.md`](AGENTS.md) + [`docs/worktrees.md`](docs/worktrees.md). Orchestrating a fleet of sub-agents — delegation (O1–O9) and **verifying what comes back (V1–V8: mutation-first, name-set diffs, count-don't-time, drafts before pushes)**: [`docs/orchestration.md`](docs/orchestration.md). Orthogonal ingress: you write a note in Obsidian and arm it with `#capture`; a timer on the VPS proposes a filing, you answer in the note, and it files ([`docs/serving.md`](docs/serving.md)).
+
+## Writing code here
+
+Three rules that hold for a solo session as much as a fleet, which is why they
+are here rather than in the orchestration doc.
+
+- **Mutation-first, or you have not tested anything.** The most common defect in
+  a mature suite is **a test that cannot fail**. Write in this order: *perform
+  the mutation first and confirm the suite stays green; then add the test; then
+  confirm it goes red.* Anything else is hope. It catches the subtle version
+  too — a check whose helper derives its expectation from the implementation,
+  comparing the code to itself and passing under its own mutation. Real
+  examples, all from one session: a test asserting byte-identity with and
+  without a delta that could never write the field it destroyed; a constant set
+  to zero leaving twelve of thirteen tests green; a golden table passing with an
+  entire object missing from collision.
+- **Rename identifiers and paths. Leave DATA alone.** A string is data the moment
+  something outside the code depends on its bytes: tags hashed into an RNG
+  stream (rename one and every world rerolls from every seed), keys that become
+  filenames, format magics compared on read. The proof is two commands, and the
+  second is the one with teeth — a diff showing no touched call sites, **plus a
+  sorted-multiset comparison of the surviving literals per crate**, because a
+  golden fixture is usually a *partial* net that covers some tags and not
+  others. Narrowing the pathspec to a moved path breaks git's rename pairing and
+  shows every literal as added; widen it.
+- **Cite symbols, never line numbers.** Every line citation decays within days,
+  and a rename invalidates the paths too — a brief pointing at `main.rs:498`
+  sends an agent somewhere that no longer exists. Name the symbol and let them
+  find it.
 
 ## Conventions
 

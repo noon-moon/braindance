@@ -8,11 +8,11 @@
 import { readFileSync, writeFileSync, unlinkSync, readdirSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { VAULT } from "./config.js";
-import { suggestFor, scopeCatalogue, type Suggestion } from "./suggest.js";
+import { scopeCatalogue, type Suggestion } from "./suggest.js";
 import { funnelById } from "./funnels.js";
 import { getIngestableScopesStrict, takenRootNames, invalidate } from "./vault.js";
 import { slug, noteName } from "./notes.js";
-import { intentOf, validateAction } from "./intent.js";
+import { validateAction } from "./intent.js";
 import { reviseProposal, fileNote, mintHub, findCaptures } from "./applier.js";
 import { renderTask, taskConfig } from "./tasknotes.js";
 import {
@@ -20,7 +20,7 @@ import {
   markUnclear, alreadyAsked, isAnswered, stripMarker,
   parseFailure, renderFailure, nextFailure, markFailed, clearFailure, holdsCapture, isDue, MAX_ATTEMPTS, type Proposal,
 } from "./approval.js";
-import { TransientError, RefusalError } from "./suggest.js";
+import { TransientError, RefusalError, harness } from "./harness.js";
 import { report, reset } from "./usage.js";
 
 const abs = (rel: string): string => join(VAULT, rel);
@@ -102,7 +102,7 @@ async function propose(captureRel: string): Promise<void> {
   if (!existsSync(abs(captureRel))) { console.log(`skip ${key} — capture is gone`); return; }
   try {
     const text = readFileSync(abs(captureRel), "utf8");
-    const p = asProposal(await suggestFor(text, scopeCatalogue()));
+    const p = asProposal(await (await harness()).classify(text, scopeCatalogue()));
     writeFileSync(abs(out), renderProposal(captureRel, p));
     console.log(`proposed → ${out}`);
   } catch (e) {
@@ -193,7 +193,7 @@ async function pass(dry: boolean, limit: number): Promise<void> {
     let act;
     try {
       act = validateAction(
-        await intentOf(reply, parsed.proposal, scopes, now.slice(0, 10)), scopes, takenRootNames());
+        await (await harness()).readIntent(reply, parsed.proposal, scopes, now.slice(0, 10)), scopes, takenRootNames());
     } catch (e) {
       // The classify path has always done this; the answer path used to warn to
       // the journal and drop it, which is a silent failure by any other name.

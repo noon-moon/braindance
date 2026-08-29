@@ -77,6 +77,15 @@ failure note is how you say "try again".
   live ingestable hub, a proposed hub must not already be a name on disk, a date
   must be a real day, a priority must be one TaskNotes actually defines. Anything
   ambiguous degrades to `unclear` — never to `file`.
+- **There is a ceiling that does not live in the vault.** Every other guard here
+  — `bd_asked`, the failure backoff, the per-pass cap — records itself in a note,
+  which means all of them fail together the moment the notes cannot be written.
+  That happened: something ran as root in the vault, every write raised `EACCES`,
+  and one proposal was re-classified once a minute for 56 hours. The daily token
+  cap (`BD_DAILY_TOKENS`, in `usage.ts`) is the answer to *that* class of
+  failure specifically — it is enforced at the single point where a request
+  leaves the process, it holds no opinion about any note, and the only thing it
+  needs to be writable is its own file outside the vault.
 - **The prose is never rewritten.** The model is asked about metadata. The body
   that lands is the body you captured, verbatim, minus the marker.
 

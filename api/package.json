@@ -5,13 +5,14 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/cli.js",
-    "test": "npm run test:approval && npm run test:intent && npm run test:applier && npm run test:suggest && npm run test:funnels",
+    "test": "npm run test:approval && npm run test:intent && npm run test:applier && npm run test:suggest && npm run test:funnels && npm run test:usage",
     "test:funnels": "tsx test/funnels.test.ts",
     "test:suggest": "tsx test/suggest.test.ts",
     "test:approval": "tsx test/approval.test.ts",
     "test:intent": "tsx test/intent.test.ts",
     "test:applier": "tsx test/applier.test.ts",
-    "dev": "tsx src/cli.ts"
+    "dev": "tsx src/cli.ts",
+    "test:usage": "tsx test/usage.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

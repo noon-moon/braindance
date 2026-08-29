@@ -37,7 +37,7 @@
 // The API key is read from the environment by the SDK and nowhere else in this
 // process. It is never stored, logged, or reported.
 import Anthropic from "@anthropic-ai/sdk";
-import { record, type Usage } from "./usage.js";
+import { record, spentToday, type Usage } from "./usage.js";
 import { aiSuggestConfig } from "./config.js";
 import { FUNNELS, funnelById } from "./funnels.js";
 import { knownPriorities } from "./tasknotes.js";
@@ -124,6 +124,25 @@ export class TransientError extends Error {
   constructor(message: string, readonly status: number | null) {
     super(message);
     this.name = "TransientError";
+  }
+}
+
+/** The day's token ceiling is reached, so this call was never made.
+ *
+ *  A TransientError SUBCLASS, and that is the whole design: being over budget is
+ *  emphatically not a verdict on the note in hand, so it must not spend one of
+ *  its four lives — exactly the judgement `TransientError` already encodes. It
+ *  inherits the backoff, the never-kills-a-note rule, and the reporting for free,
+ *  and every `instanceof TransientError` in the codebase is already correct
+ *  about it. The subclass exists only so the message can say what to do.
+ *
+ *  Unlike its parent it costs nothing because no request is sent at all — which
+ *  is the point. Every other guard in this loop reacts to a call that already
+ *  happened; this is the only one that stops one. */
+export class BudgetError extends TransientError {
+  constructor(readonly spent: number, readonly cap: number) {
+    super(`daily token budget reached: ${spent}/${cap} — raise BD_DAILY_TOKENS or wait for UTC midnight`, null);
+    this.name = "BudgetError";
   }
 }
 
@@ -387,6 +406,11 @@ export async function suggestFor(noteText: string, scopes: ScopeBlurb[]): Promis
  *  that IS about the note (an unparseable answer, one that fails validation, a
  *  truncated response) is thrown as a plain Error further down, and those count. */
 export async function callModel<T>(send: () => Promise<T>): Promise<T> {
+  // THE ONE PLACE A REQUEST LEAVES THIS PROCESS, which is why the ceiling is
+  // enforced here and not in the callers. `suggestFor` and `intentOf` both come
+  // through, a third caller would too, and none of them can forget to ask.
+  const day = spentToday();
+  if (day.over) throw new BudgetError(day.tokens, day.cap);
   try {
     return await send();
   } catch (e) {

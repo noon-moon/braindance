@@ -79,6 +79,16 @@ implementation is those two methods and nothing else. `BD_HARNESS` selects one;
 **The signatures are the least of it.** Three obligations carry the risk, and
 each is something this loop has already been broken by:
 
+- **The failure taxonomy has an OS-level floor.** A harness reached over a
+  process boundary reports an exit code and maybe a signal, none of which is a
+  verdict on anything. `harness-subprocess.ts` settles that generically: every
+  signal the operating system gives — a binary that isn't there, a kill, a
+  crash, a timeout, any non-zero exit — is `transient`, and the only route to
+  blaming a note is a clean exit whose output we then judge ourselves. That
+  asymmetry is deliberate. Blaming a note is irreversible after four attempts;
+  being too patient only costs retries, and `BD_DAILY_TOKENS` bounds those. An
+  implementation may `refine` the verdict harsher (recognising its own refusal
+  format) and may never make it softer.
 - **The failure taxonomy IS the interface.** Every failure must arrive as one of
   three kinds, because `nextFailure` spends a note's four lives on the
   distinction: a `TransientError` (nothing to do with the note — a 5xx, a rate

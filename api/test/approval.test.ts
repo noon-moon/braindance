@@ -15,7 +15,7 @@ import { join } from "node:path";
 import {
   renderProposal, parseProposal, readReply, triageRel, keyOf, safe, markUnclear, alreadyAsked,
   isArmed, disarm, stripMarker, isAnswered, MARKER,
-  nextFailure, isDue, renderFailure, parseFailure, markFailed, clearFailure, MAX_ATTEMPTS,
+  nextFailure, isDue, renderFailure, parseFailure, markFailed, clearFailure, holdsCapture, MAX_ATTEMPTS,
   type Proposal,
 } from "../src/approval.js";
 
@@ -256,6 +256,45 @@ console.log("test: an answer that could not be READ — failure recorded around 
   check("an error message cannot forge a second reply section",
     (forged.match(/^## Your call/gm) ?? []).length === 1);
   check("…and the answer read back is still the person's", readReply(forged) === "file under Songwriting");
+}
+
+console.log("test: a proposal holds its capture — even a failed one");
+{
+  const T0 = Date.parse("2026-08-22T18:00:00.000Z");
+  const LATER = T0 + 60 * 60 * 1000 * 24;
+  const t = renderProposal(CAP, P);
+  const answered = t.replace(/^(## Your call.*)$/m, "$1\n\nfile under Songwriting #capture");
+
+  check("a plain proposal holds — it is waiting on a person", holdsCapture(t, STAMP, T0));
+  check("…and still holds long after any backoff would have lapsed", holdsCapture(t, STAMP, LATER));
+
+  // THE REGRESSION THIS EXISTS FOR. Once an unread ANSWER records
+  // `bd_state: failed` onto the proposal, the note satisfies `parseFailure`.
+  // Releasing it then hands the capture back to `propose()`, which writes
+  // `renderProposal` straight over the answer the person typed — silently.
+  const failed = markFailed(answered, nextFailure(null, "api 400: no credit", true, false, T0));
+  check("a proposal carrying failure state STILL holds", holdsCapture(failed, STAMP, T0));
+  check("…and still holds once its backoff has expired", holdsCapture(failed, STAMP, LATER));
+  check("…which is what protects the answer from being overwritten",
+    readReply(failed) === "file under Songwriting");
+
+  // A dead one too — the answer is no less real for having been given up on.
+  let f = nextFailure(null, "not valid json", false, false, T0);
+  for (let i = 1; i < MAX_ATTEMPTS; i++) f = nextFailure(f, "not valid json", false, false, T0);
+  check("a dead proposal holds as well", holdsCapture(markFailed(answered, f), STAMP, LATER));
+
+  // A pure FAILURE note is the other case, and it must behave as it always did:
+  // patient, not stuck.
+  const note = renderFailure(CAP, nextFailure(null, "api 500", true, false, T0));
+  check("a failure note holds while its backoff runs", holdsCapture(note, STAMP, T0));
+  check("…and RELEASES the capture once it expires", !holdsCapture(note, STAMP, LATER));
+  const dead = renderFailure(CAP, f);
+  check("…but a dead one holds for good", holdsCapture(dead, STAMP, LATER));
+
+  // Conservative on purpose, and unchanged from before: something in `_triage/`
+  // that parses as neither holds its capture rather than releasing it. A file
+  // nobody can read is not evidence that re-classifying is safe.
+  check("something unrecognisable holds, conservatively", holdsCapture("# just a note\n", STAMP, T0));
 }
 
 console.log("test: markers are read in prose, never in code");

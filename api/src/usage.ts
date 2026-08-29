@@ -17,13 +17,23 @@ export interface Usage {
   cache_creation_input_tokens?: number;
 }
 
-interface Tally { calls: number; input: number; output: number; cacheRead: number; cacheWrite: number }
+interface Tally { calls: number; input: number; output: number; cacheRead: number; cacheWrite: number; estimated: boolean }
 
 const byLabel = new Map<string, Tally>();
 
-export function record(label: string, u: Usage | undefined): void {
+/** Record what a call used.
+ *
+ *  `estimated` is for a harness that cannot report real numbers. It is allowed,
+ *  and it is MARKED — an estimate that looks like a measurement is worse than no
+ *  number, because the ceiling is computed from these and a silent guess makes
+ *  the ceiling a guess too. Estimates must also be generous: see `estimateUsage`.
+ *  Prefer real numbers wherever the harness will give them, which is more often
+ *  than it looks — a CLI that says nothing on stdout may still be reporting
+ *  usage on stderr. */
+export function record(label: string, u: Usage | undefined, estimated = false): void {
   if (!u) return;
-  const t = byLabel.get(label) ?? { calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  const t = byLabel.get(label) ?? { calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, estimated: false };
+  if (estimated) t.estimated = true;
   t.calls += 1;
   t.input += u.input_tokens ?? 0;
   t.output += u.output_tokens ?? 0;
@@ -44,7 +54,7 @@ export function report(): string {
   let calls = 0, input = 0, output = 0, cacheRead = 0;
   for (const [label, t] of [...byLabel].sort()) {
     calls += t.calls; input += t.input; output += t.output; cacheRead += t.cacheRead;
-    lines.push(`  ${label.padEnd(10)} ${String(t.calls).padStart(3)} calls  ${String(t.input).padStart(7)} in  ${String(t.output).padStart(6)} out${t.cacheRead ? `  ${t.cacheRead} cached` : ""}`);
+    lines.push(`  ${label.padEnd(10)} ${String(t.calls).padStart(3)} calls  ${t.estimated ? "≈" : " "}${String(t.input).padStart(6)} in  ${t.estimated ? "≈" : " "}${String(t.output).padStart(5)} out${t.cacheRead ? `  ${t.cacheRead} cached` : ""}`);
   }
   lines.push(`  ${"total".padEnd(10)} ${String(calls).padStart(3)} calls  ${String(input).padStart(7)} in  ${String(output).padStart(6)} out${cacheRead ? `  ${cacheRead} cached` : ""}`);
   // THE DAY, on every pass. A per-pass figure is what made the runaway
@@ -154,3 +164,21 @@ function charge(u: Usage): void {
 
 /** Only for tests, and named so nobody reaches for it by accident. */
 export const __resetLedgerForTests = (): void => persist(emptyLedger());
+
+
+/** A DELIBERATELY GENEROUS token estimate, for a harness that will not report
+ *  real usage.
+ *
+ *  Four characters per token is the usual rule of thumb and it is an average;
+ *  code, punctuation and non-Latin scripts all run denser. An estimate that
+ *  averages correctly is the wrong tool here, because this number feeds a
+ *  CEILING: guessing low means the cap trips late, which is precisely the
+ *  failure it exists to prevent, while guessing high means it trips early and
+ *  says so in the vault. So this rounds up and adds a third again.
+ *
+ *  It is a governor, not an accounting record. Anyone reconciling against a bill
+ *  should use the provider's numbers. */
+export const estimateUsage = (promptChars: number, replyChars: number): Usage => ({
+  input_tokens: Math.ceil((promptChars / 4) * 1.33),
+  output_tokens: Math.ceil((replyChars / 4) * 1.33),
+});

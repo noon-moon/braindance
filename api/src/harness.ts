@@ -38,14 +38,33 @@
 //     MAP that onto these three. That mapping is the risky part of any new
 //     implementation, and it is the part to write tests for first.
 //
-//  2. USAGE MUST BE REAL. Call `record()` with what the provider actually
-//     reported, never an estimate. `usage.ts` says why: every guard in this loop
-//     is a guess until something counts, and the daily ceiling is computed from
-//     these numbers. A harness that cannot report usage cannot be metered, and
-//     an unmetered harness is the exact shape of the incident that put the
-//     ceiling here in the first place.
+//  2. USAGE MUST BE COUNTED, AND SAID TO BE WHAT IT IS. Call `record()` with
+//     what the provider reported. Look harder than seems necessary before
+//     concluding a harness cannot tell you: `polytoken exec` prints nothing
+//     about usage on stdout and reports it in full on stderr under
+//     `--print-session-logs`, as `agent.invocation.usage`. A harness that is
+//     genuinely silent may be estimated with `estimateUsage`, passing
+//     `estimated: true` so the pass report marks it `≈` — an estimate that
+//     looks like a measurement makes the ceiling a guess without saying so.
+//     Estimates round UP, because this number feeds a cap: guessing low means
+//     the cap trips late, which is the failure it exists to prevent.
 //
-//  3. UNTRUSTED TEXT STAYS DATA. `classify` receives a capture someone may have
+//  3. SEND ONLY WHAT THE CALLER GAVE YOU. No ambient context — no project
+//     files, no repo conventions, no working-directory-dependent preamble.
+//     `classify` gets a note and a scope catalogue, and anything else in that
+//     request is something nobody chose to put there.
+//
+//     Not hypothetical. Polytoken injects `AGENTS.md` from the project root on
+//     every turn (falling back to `CLAUDE.md`, then `GEMINI.md`), and this repo
+//     has both. Those files instruct a CODING agent about worktree discipline
+//     and commit conventions; in a prompt whose job is choosing which hub a note
+//     belongs under they are noise at best, and the damage would be invisible —
+//     the classifications would simply get slightly worse. Measured cost of a
+//     harness's own preamble on a trivial classify: 14467 cache-creation tokens
+//     from a directory containing nothing at all, against ~3350 total for the
+//     same work through a direct API call.
+//
+//  4. UNTRUSTED TEXT STAYS DATA. `classify` receives a capture someone may have
 //     pasted from the internet; it must reach the model fenced and neutralised,
 //     and nothing in the response may be trusted before `validate`. `readIntent`
 //     must NOT be handed the capture at all — it is the call whose output can
@@ -149,3 +168,12 @@ export async function harness(name = process.env.BD_HARNESS?.trim() || "anthropi
       throw new Error(`unknown BD_HARNESS "${name}" — known: anthropic`);
   }
 }
+
+// The OS-level half of obligation 1 lives in `harness-subprocess.ts`, and is
+// worth reading before writing any harness reached over a process boundary: it
+// establishes that every signal the operating system gives is `transient`, so
+// the only route to blaming a note is output that actually arrived. That makes
+// a subprocess harness unable to kill a note by accident, which is the failure
+// worth designing against — being too patient merely costs retries, and the
+// daily ceiling bounds those.
+export { throwIfTransient, transientReason, type ExitFacts } from "./harness-subprocess.js";

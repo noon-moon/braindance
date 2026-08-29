@@ -65,8 +65,10 @@ throughout: `api/` and `ops/` are siblings, and every `cp` below reads from
 ```console
 $ cd /srv/braindance && git pull
 $ (cd api && npm ci && npm run build)
-$ sudo cp /srv/braindance/ops/braindance-applier.{service,timer} /etc/systemd/system/
-$ sudoedit /etc/systemd/system/braindance-applier.service   # set User= and the paths
+$ sudo ln -sf /srv/braindance/ops/braindance-applier.service /etc/systemd/system/
+$ sudo ln -sf /srv/braindance/ops/braindance-applier.timer   /etc/systemd/system/
+$ sudo mkdir -p /etc/systemd/system/braindance-applier.service.d
+$ printf '[Service]\nUser=YOUR_USER\n' | sudo tee /etc/systemd/system/braindance-applier.service.d/user.conf
 $ sudo systemctl daemon-reload
 $ sudo systemctl enable --now braindance-applier.timer
 $ systemctl list-timers braindance-applier.timer
@@ -81,6 +83,36 @@ $ docker ps          # the old api container is a second writer; stop it first
 ```
 ```
 
+### Symlink the units; put the instance-specific line in a drop-in
+
+**`ln -sf`, not `cp`.** This used to say `cp`, and the copy is a trap that hides
+for as long as nobody changes a unit. The units in `/etc/systemd/system/` then
+have no relationship to the ones in the repo: `git pull` updates the repo,
+`daemon-reload` re-reads the copy, and everything reports success while the box
+goes on running whatever was copied there months ago. It cost six days here —
+a timer interval that had been changed, landed, pulled, and reloaded, and was
+still firing at the old cadence, with `systemctl cat` cheerfully printing the
+stale comment that explained why.
+
+The reason it was ever a copy is real, though: `braindance-applier.service`
+ships `User=deploy`, and no box runs as `deploy`. That one line is
+instance-specific, so it cannot live in the template — and editing the installed
+copy is what breaks the link to the repo.
+
+A **drop-in** is what systemd provides for exactly this. Anything in
+`braindance-applier.service.d/*.conf` overrides the unit without touching it, so
+the unit stays a symlink and `git pull` becomes a real deploy again:
+
+```console
+$ systemctl cat braindance-applier.service   # unit + every drop-in, in order
+$ systemctl show braindance-applier.service -p User --value
+```
+
+The second command is the one to trust — it reports what systemd resolved, not
+what any single file says. `ls -l /etc/systemd/system/braindance-applier.*`
+answers the other half: a `->` means a unit change deploys itself, a `-rw-`
+means it does not.
+
 Knobs, all environment (`/srv/.env` via `EnvironmentFile`):
 
 | | |
@@ -89,12 +121,26 @@ Knobs, all environment (`/srv/.env` via `EnvironmentFile`):
 | `VAULT_PATH` | the vault checkout (default `/srv/vault`) |
 | `BD_API` | where `src/cli.ts` lives (default `/srv/braindance/api`) |
 | `BD_LIMIT` | captures per pass (default 10) |
+| `BD_DAILY_TOKENS` | input+output tokens per UTC day (default 500000) |
+| `BD_STATE_DIR` | where the spend ledger lives (default `$HOME/.local/state/braindance`) |
 
-**Every minute is nearly free.** A pass with nothing armed makes no model call —
-it is a filesystem scan and a `git pull`. The cadence buys latency: arm a
-capture on a phone and the proposal is waiting by the time you put it down. The
-spending ceiling is `BD_LIMIT`, not the interval; lengthening an interval makes
-a runaway slower without making it smaller.
+**Every five minutes is nearly free.** A pass with nothing armed makes no model
+call — it is a filesystem scan and a `git pull`. The cadence buys latency: arm a
+capture on a phone and the proposal is waiting by the time you put it down.
+
+It used to be every minute, and this section used to say the ceiling was
+`BD_LIMIT` rather than the interval, because "lengthening an interval makes a
+runaway slower without making it smaller". The first half is true and the
+conclusion was wrong. `BD_LIMIT` bounds a PASS, and the failure that came was
+1440 passes: a write the applier could not make meant no guard could persist, so
+one proposal was re-classified once a minute for 56 hours, 3189 billed calls,
+stopping only when the account hit zero.
+
+So there are two ceilings now and they do different jobs. `BD_DAILY_TOKENS`
+makes a runaway **smaller** — enforced where the request leaves the process,
+recorded outside the vault so it survives the vault being unwritable. The
+interval makes it **slower**, which is what buys you time to notice. Neither
+replaces the other.
 
 **Tests: `bash ops/test_applier.sh`.** Throwaway repos and a stub tool — no
 network, no key, no vault. Every case in it is a failure that actually happened

@@ -60,6 +60,46 @@ What lingers is deliberate: a proposal awaiting your answer, one marked
 kept because it is the only record that a capture was abandoned. Deleting a
 failure note is how you say "try again".
 
+## The harness seam
+
+The loop asks a model exactly two questions, and `api/src/harness.ts` is their
+contract:
+
+```
+classify(note, scopes)                    →  where does this belong?
+readIntent(reply, proposal, scopes, day)  →  what did they just tell me to do?
+```
+
+Everything else is already independent of who answers them — `validate` and
+`validateAction` check values against the live vault, `nextFailure` decides what
+a failure costs a note, every write goes through `approval.ts`. So a second
+implementation is those two methods and nothing else. `BD_HARNESS` selects one;
+`anthropic` is the only entry today.
+
+**The signatures are the least of it.** Three obligations carry the risk, and
+each is something this loop has already been broken by:
+
+- **The failure taxonomy IS the interface.** Every failure must arrive as one of
+  three kinds, because `nextFailure` spends a note's four lives on the
+  distinction: a `TransientError` (nothing to do with the note — a 5xx, a rate
+  limit, a dead subprocess) never spends one; a `RefusalError` is fatal at once;
+  a plain `Error` is a verdict on the note and spends one. Getting this backwards
+  is what once turned a fifteen-minute outage into a permanently dead queue. A
+  harness that reports failure as an exit code and a line of stderr has to map
+  that onto these three, and **that mapping is what to test first**.
+- **Usage must be real.** `record()` takes what the provider reported, never an
+  estimate — the daily ceiling is computed from those numbers, and an unmetered
+  harness is the exact shape of the incident that put the ceiling there.
+- **Untrusted text stays data.** `classify` gets a capture someone may have
+  pasted from the internet, fenced and neutralised. `readIntent` must not be
+  handed the capture at all: it is the call whose output can delete a note, and
+  keeping those bytes out of that request is a stated property here, not an
+  accident of the current prompt.
+
+One thing is deliberately not abstracted: the daily ceiling is enforced in
+`withBudget`, which wraps everything the registry returns. Being a new
+implementation is not a way to become unmetered.
+
 ## What is enforced by shape
 
 - **The reply boundary is `safe()`.** The reply is the `## Your call` section, so

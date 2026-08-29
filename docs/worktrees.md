@@ -34,7 +34,7 @@ Agent sessions work in sibling worktrees under `$BD_WT/<task>` — **outside** t
 
 **Always address a worktree by its ABSOLUTE path** (`$BD_WT/<task>/…`); never rely on an ambient `cwd` or repo-relative paths that could resolve into the sacred main tree. A session is: `bd new fix-tags` → work → `bd land` → `bd rm fix-tags`. Because the flat vault is file-per-note, disjoint-file sessions rebase and land with no conflict.
 
-Orthogonal ingress: VPS/`api` captures land directly on `main` in `$VAULT_PATH/inbox/` (funnel-shaped, triaged in-vault at the desk) — a separate ingress from this worktree flow, but now sharing `main` as the target. See [`serving.md`](serving.md).
+Orthogonal ingress: captures land on `main` wherever Obsidian's "default location for new notes" points — usually the vault root — and the VPS applier triages them there. A separate ingress from this worktree flow, sharing `main` as the target. See [`serving.md`](serving.md). (It used to be a dedicated `$VAULT_PATH/inbox/`, written by the api's capture endpoint. Both are gone: Obsidian writes the note now, and the applier's scan walks the whole vault.)
 
 ## Tooling (source of truth for the rules above)
 

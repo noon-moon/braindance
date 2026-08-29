@@ -38,6 +38,10 @@ mid-writing. No quiescence window, no clock to get wrong.
 Armed it is a real tag on purpose — Obsidian's own search and tag pane show you
 everything waiting, with no view to build.
 
+The pair is for **captures**, which is where it earns its keep. A proposal stamps
+no marker at all: an answer is one line typed in one go, so you type `#capture`
+after it, and the note carries no machine text you did not put there.
+
 ## Nothing files unattended
 
 Every capture gets a proposal; every filing is one you approved. The alternative
@@ -51,7 +55,7 @@ proposal are deleted in the same commit as the filed note. An empty `_triage/`
 means nothing is pending.
 
 What lingers is deliberate: a proposal awaiting your answer, one marked
-`unclear` (with the question on its heading and the marker disarmed), one
+`unclear` (with the question on its heading and your marker disarmed), one
 `failed` (with a retry time), and one `dead` — four failed attempts, given up,
 kept because it is the only record that a capture was abandoned. Deleting a
 failure note is how you say "try again".

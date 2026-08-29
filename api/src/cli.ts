@@ -18,7 +18,7 @@ import { renderTask, taskConfig } from "./tasknotes.js";
 import {
   parseProposal, readReply, renderProposal, triageRel, keyOf, TRIAGE_DIR,
   markUnclear, alreadyAsked, isAnswered, stripMarker,
-  parseFailure, renderFailure, nextFailure, markFailed, clearFailure, isDue, MAX_ATTEMPTS, type Proposal,
+  parseFailure, renderFailure, nextFailure, markFailed, clearFailure, holdsCapture, isDue, MAX_ATTEMPTS, type Proposal,
 } from "./approval.js";
 import { TransientError, RefusalError } from "./suggest.js";
 import { report, reset } from "./usage.js";
@@ -265,11 +265,9 @@ function pending(): { due: string[]; held: number } {
     for (const f of readdirSync(abs(TRIAGE_DIR))) {
       if (!f.endsWith(".triage.md")) continue;
       const key = f.replace(/\.triage\.md$/, "");
-      const fail = parseFailure(readFileSync(abs(`${TRIAGE_DIR}/${f}`), "utf8"));
-      // A proposal holds its capture (it is waiting on a person). A FAILURE
-      // holds it only until the backoff expires, and a dead one holds it for
-      // good — that is the difference between patient and stuck.
-      if (!fail || !isDue(fail, now)) held.add(key);
+      // See `holdsCapture` — a PROPOSAL holds regardless of failure state, and
+      // conflating the two would re-propose over a typed answer.
+      if (holdsCapture(readFileSync(abs(`${TRIAGE_DIR}/${f}`), "utf8"), key, now)) held.add(key);
     }
   } catch { /* no queue yet */ }
   const armed = findCaptures(VAULT);

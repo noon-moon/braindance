@@ -531,6 +531,30 @@ export function clearFailure(text: string): string {
   return out.replace(HEADING_LINE, REPLY_HEADING);
 }
 
+/** Does this triage note hold its capture back from being classified again?
+ *
+ *  Three states, and the middle one is the one that bites:
+ *
+ *    a PROPOSAL              holds, always. It is waiting on a person, and
+ *                            `pass()` owns whatever happens next.
+ *    a FAILURE NOTE          holds until its backoff expires — patient, not
+ *                            stuck — and forever once it is dead.
+ *    nothing recognisable    does not hold.
+ *
+ *  The proposal check comes FIRST and ignores failure state entirely, which is
+ *  the whole reason this is a function rather than one line at the call site.
+ *  Once an unread ANSWER started recording `bd_state: failed` onto the proposal
+ *  itself, a proposal became something `parseFailure` accepts — so the old test
+ *  (`!fail || !isDue(fail)`) released the capture the moment the backoff
+ *  expired, and `propose()` would then write `renderProposal` straight over the
+ *  answer the person had typed. Nothing would have said so; the note would
+ *  simply have gone back to unanswered. */
+export function holdsCapture(text: string, key: string, nowMs: number): boolean {
+  if (parseProposal(text, key)) return true;
+  const f = parseFailure(text);
+  return !f || !isDue(f, nowMs);
+}
+
 /** Has this answer already been judged unreadable? Cheap, local, no model call. */
 export const alreadyAsked = (text: string, reply: string): boolean => {
   const m = text.match(/^bd_asked:\s*(\S+)\s*$/m);

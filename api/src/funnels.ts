@@ -136,7 +136,7 @@ export const FUNNELS: Funnel[] = [
     // {funnel, title, body} to /ingest, keeps landing titled notes.
     build: (i) => ({
       title: i.title,
-      frontmatter: { tags: ["memo"], ...containment(i) },
+      frontmatter: { tags: ["memo"], ...(i.url ? { url: i.url } : {}), ...containment(i) },
       body: `${i.title ? `# ${i.title}\n` : ""}\n${i.body}`,
     }),
   },
@@ -158,6 +158,7 @@ export const FUNNELS: Funnel[] = [
       title: i.title,
       frontmatter: {
         tags: i.ingestable ? ["scope", "ingestable"] : ["scope"],
+        ...(i.url ? { url: i.url } : {}),
         ...containment(i),
       },
       body: i.body ?? "",

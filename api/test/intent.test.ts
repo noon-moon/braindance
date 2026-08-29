@@ -94,4 +94,30 @@ console.log("test: the receipt note is bounded");
   check("newlines are collapsed", (V({ note: "a\nb" }) as { note: string }).note === "a b");
 }
 
+console.log("test: a link the reply supplied");
+{
+  const u = (url: unknown): Action => V({ url });
+
+  check("an https link is kept", (u("https://www.baen.com/Chapters/x.htm") as any).revised.url === "https://www.baen.com/Chapters/x.htm");
+  check("http is fine too", (u("http://example.com/a") as any).revised.url === "http://example.com/a");
+  check("no link means no change", u(null).kind === "file" && (u(null) as any).revised.url === undefined);
+
+  // THE POINT OF PARSING RATHER THAN PATTERN-MATCHING. This value lands in
+  // frontmatter and gets tapped on a phone, so the schemes that matter are the
+  // ones a link is dangerous as.
+  for (const bad of ["javascript:alert(1)", "file:///etc/passwd", "data:text/html;base64,PHNjcmlwdD4="]) {
+    check(`${bad.split(":")[0]}: links are refused`, u(bad).kind === "unclear");
+  }
+  check("…and the refusal says which scheme", u("javascript:alert(1)").note.includes("javascript:"));
+  check("something that is not a URL at all asks again", u("add the baen link please").kind === "unclear");
+
+  // Normalised by the parser, so what lands is what a browser would resolve.
+  check("it is normalised, not echoed", (u("HTTPS://Example.COM") as any).revised.url === "https://example.com/");
+
+  // The reply channel carries INSTRUCTIONS; prose is not one of them, and the
+  // schema says so. This is the boundary the url field must not become a hole in.
+  check("a reply asking for body text is still unclear, not a url",
+    V({ url: null, note: "add a paragraph about Butler" }).kind === "file");
+}
+
 console.log(`\n${passed} checks passed`);

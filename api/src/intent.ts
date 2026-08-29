@@ -53,6 +53,9 @@ export interface Revision {
   newScopeWhy?: string;
   due?: string | null;
   priority?: string | null;
+  /** A link the reply supplied. See `Proposal.url` for why this one piece of
+   *  content is allowed down an instruction channel and prose is not. */
+  url?: string | null;
 }
 
 // THE VAULT'S priorities, not Obsidian Tasks'. This read `PRIORITY_SIGNIFIER`
@@ -90,6 +93,13 @@ export const ACTION_SCHEMA = {
     },
     due: { anyOf: [{ type: "string" }, { type: "null" }], description: "YYYY-MM-DD, or null to keep." },
     priority: { anyOf: [{ type: "string", enum: PRIORITIES }, { type: "null" }], description: "Or null to keep." },
+    url: {
+      anyOf: [{ type: "string" }, { type: "null" }],
+      description:
+        "A single http(s) URL the reply gives for this note, or null. ONLY when the reply supplies a link for " +
+        "THIS note — not a link merely mentioned in passing, and never one invented. Prose the reply asks to add " +
+        "is not a URL and is not this field: if the reply asks for body text, that is `unclear`.",
+    },
     note: { type: "string", description: "One short clause paraphrasing what the reply asked for, for the receipt." },
   },
   required: ["action", "title", "funnel", "scope", "newScope", "newScopeWhy", "due", "priority", "note"],
@@ -224,6 +234,19 @@ export function validateAction(raw: unknown, liveScopes: string[], takenNames: S
   if (pri) {
     if (!PRIORITIES.includes(pri)) return unclear(`“${pri}” is not a priority`);
     revised.priority = pri;
+  }
+
+  // Parsed, not pattern-matched, and http(s) ONLY. This value lands in a note's
+  // frontmatter and will be clicked from a phone, so the shapes that matter are
+  // the ones a link can be dangerous as: `javascript:` runs, `file:` reads the
+  // disk, `data:` carries a payload. A URL that will not parse is a misreading of
+  // the reply rather than a URL, and misreadings ask again.
+  const url = str(r.url, 2000);
+  if (url) {
+    let u: URL;
+    try { u = new URL(url); } catch { return unclear(`“${url.slice(0, 60)}” is not a URL`); }
+    if (u.protocol !== "http:" && u.protocol !== "https:") return unclear(`“${u.protocol}” links are not allowed`);
+    revised.url = u.toString();
   }
 
   return { kind: "file", revised, note };

@@ -162,7 +162,13 @@ code here can check that claim, and none pretends to.
   leaves the process, it holds no opinion about any note, and the only thing it
   needs to be writable is its own file outside the vault.
 - **The prose is never rewritten.** The model is asked about metadata. The body
-  that lands is the body you captured, verbatim, minus the marker.
+  that lands is the body you captured, verbatim, minus the marker. The reply
+  channel carries *instructions about filing*, never *content* — which is why the
+  revision vocabulary is title, funnel, hubs, due, priority and nothing else.
+  `url` is the single exception and only because a link is metadata: it lands in
+  frontmatter beside `due`, is parsed rather than pattern-matched, and is
+  restricted to `http`/`https` because it will be tapped from a phone. A reply
+  asking for body text is `unclear`, and should stay that way.
 
 `suggest.ts` names the one guarantee that was **given up**: it used to write only
 to a sidecar outside the vault, so nothing it produced could reach the vault

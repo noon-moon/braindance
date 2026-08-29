@@ -194,6 +194,7 @@ const K = {
   newScope: "bd_new_scope",
   tags: "bd_tags",
   due: "bd_due",
+  url: "bd_url",
   priority: "bd_priority",
   asked: "bd_asked",
   attempts: "bd_attempts",
@@ -359,6 +360,18 @@ export interface Proposal {
   tags: string[];
   due: string | null;
   priority: string | null;
+  /** A link the note is ABOUT, landing in frontmatter.
+   *
+   *  The one piece of content the reply channel may set, and it is allowed
+   *  precisely because it is not prose. `docs/serving.md` promises the body that
+   *  lands is the body you captured, verbatim — that is a security property, not
+   *  a preference, and it stays intact because a URL goes in the frontmatter
+   *  beside `due` and `priority` rather than into the text.
+   *
+   *  Not a new idea in this vault either: `_meta/Tags.md` already defines `url`
+   *  on the reference schema, and the legacy media/resource funnels already
+   *  write it. This makes it reachable from the two funnels people actually use. */
+  url: string | null;
   rationale: string;
 }
 
@@ -389,6 +402,7 @@ export function renderProposal(captureRel: string, p: Proposal): string {
   if (p.newScope) fm.push(`${K.newScope}: ${scalar(safe(p.newScope.name))}`);
   if (p.tags.length) fm.push(`${K.tags}: [${p.tags.map((t) => scalar(safe(t))).join(", ")}]`);
   if (p.due) fm.push(`${K.due}: ${safe(p.due)}`);
+  if (p.url) fm.push(`${K.url}: ${scalar(safe(p.url))}`);
   if (p.priority) fm.push(`${K.priority}: ${safe(p.priority)}`);
   fm.push("---", "");
 
@@ -401,6 +415,7 @@ export function renderProposal(captureRel: string, p: Proposal): string {
     p.tags.length ? p.tags.map((t) => `\`${safe(t)}\``).join(" ") : "",
     p.due ? `due ${safe(p.due)}` : "",
     p.priority ? `priority ${safe(p.priority)}` : "",
+    p.url ? `[link](${safe(p.url)})` : "",
   ].filter(Boolean);
 
   const body: string[] = [
@@ -476,6 +491,7 @@ export function parseProposal(text: string, key: string): ParsedProposal | null 
       newScope: newScopeName ? { name: newScopeName, why: "" } : null,
       tags: Array.isArray(data[K.tags]) ? (data[K.tags] as unknown[]).map(String) : [],
       due: str(K.due) || null,
+      url: str(K.url) || null,
       priority: str(K.priority) || null,
       rationale: "",
     },

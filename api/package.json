@@ -5,7 +5,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/cli.js",
-    "test": "npm run test:approval && npm run test:intent && npm run test:applier && npm run test:suggest && npm run test:funnels && npm run test:usage && npm run test:harness && npm run test:subprocess",
+    "test": "npm run test:approval && npm run test:intent && npm run test:applier && npm run test:suggest && npm run test:funnels && npm run test:usage && npm run test:harness && npm run test:subprocess && npm run test:routing",
     "test:funnels": "tsx test/funnels.test.ts",
     "test:suggest": "tsx test/suggest.test.ts",
     "test:approval": "tsx test/approval.test.ts",
@@ -14,7 +14,8 @@
     "dev": "tsx src/cli.ts",
     "test:usage": "tsx test/usage.test.ts",
     "test:harness": "tsx test/harness.test.ts",
-    "test:subprocess": "tsx test/harness-subprocess.test.ts"
+    "test:subprocess": "tsx test/harness-subprocess.test.ts",
+    "test:routing": "tsx test/routing.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

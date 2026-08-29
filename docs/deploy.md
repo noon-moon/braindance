@@ -34,6 +34,36 @@ left in `docker-compose.yml`, and it is unrelated to this loop.
 ~/.local/state/braindance/spend.json   the daily token ledger
 ```
 
+### Choosing a harness
+
+`BD_HARNESS` selects the implementation — `anthropic` (default, native SDK,
+structured outputs) or `openai` for any OpenAI-compatible endpoint:
+
+```
+BD_HARNESS=openai
+BD_BASE_URL=https://inference.do-ai.run/v1     # DigitalOcean Gradient
+BD_API_KEY_ENV=DO_MODEL_ACCESS_KEY             # names the var holding the key
+BD_MODEL=<model id>
+BD_JSON_MODE=json_schema                       # or json_object | tool_call
+```
+
+`BD_JSON_MODE` matters more than it looks. Providers disagree about how to ask
+for JSON and frequently **ignore** the wrong spelling rather than refusing it —
+Anthropic's own OpenAI-compatibility layer documents `response_format` as
+"Ignored", so you would get prose where you expected an object and no error
+saying why. Pick the mode the provider actually supports; `tool_call` is the
+widest-supported fallback.
+
+Only `json_schema` constrains decoding, so only it sets `strictSchema`. On the
+looser modes an unparseable response is treated as a service failure rather than
+a verdict on the note — which is what stops a provider's JSON mode from killing
+captures in four passes.
+
+### `BD_LOCAL_HARNESS` — where private notes may go
+
+Names the harness allowed to answer notes tagged `#private`. Unset, those notes
+are held rather than sent. See [`serving.md`](serving.md).
+
 ### `BD_DAILY_TOKENS` — the ceiling
 
 Input + output tokens the loop may spend in one UTC day, default `500_000`.

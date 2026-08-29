@@ -132,6 +132,20 @@ export class BudgetError extends TransientError {
 export interface Harness {
   /** For logs and failure messages — which harness answered, or didn't. */
   readonly name: string;
+  /** Does this harness GUARANTEE schema conformance, or merely ask for it?
+   *
+   *  It changes what unparseable output MEANS, which changes what it costs. From
+   *  a strict harness — constrained decoding, whether that is Anthropic's
+   *  structured outputs or llama.cpp's GBNF grammar — output that will not parse
+   *  is a genuine surprise, and blaming the note is fair. From a loose one it is
+   *  the expected occasional price of portability, and blaming the note for it
+   *  would kill a perfectly good capture in four passes because of a provider's
+   *  JSON mode.
+   *
+   *  So this is the flag that makes "portability over strictness" safe rather
+   *  than merely possible: `pass()` and `propose()` read it to decide whether a
+   *  parse failure spends one of a note's four lives. */
+  readonly strictSchema: boolean;
   classify(noteText: string, scopes: ScopeBlurb[]): Promise<Suggestion>;
   readIntent(reply: string, proposal: Proposal, liveScopes: string[], today: string): Promise<unknown>;
 }
@@ -146,6 +160,7 @@ export function withBudget(h: Harness): Harness {
   };
   return {
     name: h.name,
+    strictSchema: h.strictSchema,
     classify: (note, scopes) => { guard(); return h.classify(note, scopes); },
     readIntent: (reply, p, scopes, today) => { guard(); return h.readIntent(reply, p, scopes, today); },
   };
@@ -164,8 +179,12 @@ export async function harness(name = process.env.BD_HARNESS?.trim() || "anthropi
       const { anthropicHarness } = await import("./harness-anthropic.js");
       return withBudget(anthropicHarness());
     }
+    case "openai": {
+      const { openaiHarness } = await import("./harness-openai.js");
+      return withBudget(openaiHarness());
+    }
     default:
-      throw new Error(`unknown BD_HARNESS "${name}" — known: anthropic`);
+      throw new Error(`unknown BD_HARNESS "${name}" — known: anthropic, openai`);
   }
 }
 
@@ -177,3 +196,59 @@ export async function harness(name = process.env.BD_HARNESS?.trim() || "anthropi
 // worth designing against — being too patient merely costs retries, and the
 // daily ceiling bounds those.
 export { throwIfTransient, transientReason, type ExitFacts } from "./harness-subprocess.js";
+
+
+// ── ROUTING: WHICH HARNESS SEES WHICH NOTE ──────────────────────────────────
+//
+// The seam already chooses an implementation. Once one of them runs on your own
+// machine and another is somebody else's API, that choice stops being a
+// deployment detail and becomes a PRIVACY decision — so it is made per note,
+// here, rather than once in a config file.
+//
+// The rule is small: a note tagged `#private` may only be answered by a harness
+// that does not leave this machine. Everything else goes to the default.
+//
+// ── FAIL CLOSED ─────────────────────────────────────────────────────────────
+//
+// The load-bearing half, and the reason this is a function rather than a
+// setting. If a note is private and no local harness is configured, it is NOT
+// classified. It is not quietly sent to the cloud one; it waits in `_triage/`
+// saying exactly why, and it waits forever if nobody acts.
+//
+// A privacy control that degrades to "send it anyway" when misconfigured is not
+// a control, it is a preference — and the failure would be silent and
+// unrecoverable, which is the pair of properties this codebase treats as
+// disqualifying everywhere else. Compare `safe()`: the reply boundary is one
+// function that cannot be satisfied halfway.
+import { isPrivate } from "./approval.js";
+
+/** Thrown when a note may not be sent anywhere available. Deliberately NOT a
+ *  TransientError: nothing about this will fix itself, and backing off would
+ *  imply otherwise. It is also not a verdict on the note — it must never spend
+ *  one of its four lives, because the note is fine and the DEPLOYMENT is what
+ *  is missing. It is its own thing, and it stops the loop for that note until a
+ *  person changes something. */
+export class NoRouteError extends Error {
+  constructor(readonly why: string) {
+    super(why);
+    this.name = "NoRouteError";
+  }
+}
+
+/** Which harness may see this note.
+ *
+ *  `BD_LOCAL_HARNESS` names the implementation trusted with private notes —
+ *  trusted because it does not leave the machine, which is a claim about the
+ *  deployment that this code cannot verify and does not pretend to. Naming a
+ *  remote provider there is a way to lie to yourself, and no amount of code
+ *  here prevents it. */
+export async function routeFor(noteText: string): Promise<Harness> {
+  if (!isPrivate(noteText)) return harness();
+  const local = process.env.BD_LOCAL_HARNESS?.trim();
+  if (!local) {
+    throw new NoRouteError(
+      "note is tagged #private and BD_LOCAL_HARNESS is not set — refusing to send it to the default harness",
+    );
+  }
+  return harness(local);
+}

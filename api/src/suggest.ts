@@ -129,7 +129,7 @@ const FUNNEL_IDS = FUNNELS.map((f) => f.id);
 // written, invisible.
 const PRIORITIES = knownPriorities();
 
-const SUGGESTION_SCHEMA = {
+export const SUGGESTION_SCHEMA = {
   type: "object",
   properties: {
     title: {
@@ -244,7 +244,7 @@ function blurbFor(name: string): string {
 
 /** How much of a note goes out. A capture is a thought, not a document, so this
  *  is a guard against a pasted article rather than a real limit. */
-const MAX_NOTE_CHARS = 8000;
+export const MAX_NOTE_CHARS = 8000;
 
 /** The block delimiter. Both tags are neutralised in the note body before it goes
  *  in (below), so a note can't close its own block and continue as if it were
@@ -252,8 +252,8 @@ const MAX_NOTE_CHARS = 8000;
  *  there being no tools and a schema-constrained answer, so the worst a note that
  *  did escape its fence could achieve is a wrong title in a field the user reads
  *  before using. A fence is a hint to the model, and hints are best-effort. */
-const NOTE_OPEN = "<captured-note>";
-const NOTE_CLOSE = "</captured-note>";
+export const NOTE_OPEN = "<captured-note>";
+export const NOTE_CLOSE = "</captured-note>";
 
 /** Both delimiters, however they are spelt: case-insensitive, tolerant of the
  *  whitespace an XML parser would ignore (`< / captured-note >`), and matching
@@ -267,7 +267,7 @@ const NOTE_TAG_RE = /<\s*\/?\s*captured-note\s*>/gi;
  *  characters long and the interesting part is entirely in the pattern. */
 export const neutraliseFences = (text: string): string => text.replace(NOTE_TAG_RE, "[captured-note]");
 
-function systemPrompt(scopes: ScopeBlurb[], today: string): string {
+export function classifySystemPrompt(scopes: ScopeBlurb[], today: string): string {
   const catalogue = scopes.map((s) => `- ${s.name}${s.blurb ? ` — ${s.blurb}` : ""}`).join("\n");
   return [
     "You pre-fill the triage form for a personal knowledge vault. You are given ONE captured note",
@@ -325,7 +325,7 @@ export async function suggestFor(noteText: string, scopes: ScopeBlurb[]): Promis
     // tight around it, because a truncated response is a wasted call. Thinking
     // counts against it on the default model, which is why it is not tight.
     max_tokens: 8192,
-    system: systemPrompt(scopes, new Date().toISOString().slice(0, 10)),
+    system: classifySystemPrompt(scopes, new Date().toISOString().slice(0, 10)),
     // The ONLY untrusted content in the request, and it is fenced.
     messages: [{ role: "user", content: `${NOTE_OPEN}\n${body}\n${NOTE_CLOSE}` }],
     output_config: {

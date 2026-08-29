@@ -99,19 +99,47 @@ function overProse(text: string, fn: (s: string) => string): string {
 /** Armed? `#capture` in prose (never preceded by another hash — that is the
  *  disarmed form) or as a frontmatter tag, which is the same real tag by another
  *  spelling. Never inside code. */
-export function isArmed(text: string): boolean {
+export function hasTag(text: string, name: string): boolean {
   let data: Record<string, unknown> = {};
   try {
     data = (matter(text).data ?? {}) as Record<string, unknown>;
   } catch { /* unparseable frontmatter — the body still decides */ }
   const raw = data.tags;
   const tags = Array.isArray(raw) ? raw.map(String) : typeof raw === "string" ? [raw] : [];
-  if (tags.some((t) => t.replace(/^#+/, "").toLowerCase() === MARKER)) return true;
-  const re = new RegExp(`(^|[^\\w/#-])#${MARKER}(?![\\w/-])`, "u");
+  if (tags.some((t) => t.replace(/^#+/, "").toLowerCase() === name)) return true;
+  const re = new RegExp(`(^|[^\\w/#-])#${name}(?![\\w/-])`, "u");
   let found = false;
   overProse(matter(text).content ?? text, (part) => { if (re.test(part)) found = true; return part; });
   return found;
 }
+
+export const isArmed = (text: string): boolean => hasTag(text, MARKER);
+
+/** The one note that must not leave this machine.
+ *
+ *  ── WHY THIS IS A SECOND KEYWORD, WHICH THIS FILE OTHERWISE FORBIDS ─────────
+ *
+ *  `MARKER` above is emphatic that there is one keyword for the whole loop and
+ *  no second word to remember. That rule is about LOOP STEPS: "proceed" must
+ *  mean the same thing on a capture and on a proposal, so there is never a wrong
+ *  word to reach for. This is not a step. It is a property of the note, on a
+ *  different axis entirely, and it is read rather than consumed — nothing here
+ *  ever writes, arms, or disarms it.
+ *
+ *  A TAG rather than a frontmatter field because the note is often written on a
+ *  phone: `#private` is four characters more, shows up in Obsidian's tag pane
+ *  beside everything else marked that way, and needs no properties editor. It
+ *  reuses `hasTag`, so it is recognised in exactly the places `#capture` is —
+ *  prose or the frontmatter `tags` list, never inside code.
+ *
+ *  IT DOES NOT NEED ARMING, and must not have a disarmed spelling. The pair
+ *  exists so a half-written thought is not acted on; the failure this guards
+ *  against is the opposite — a note leaving the machine before you finished
+ *  deciding it was private. `##private` in a draft would mean "send it", which
+ *  is precisely the wrong default for a safety marker. */
+export const PRIVATE = "private";
+
+export const isPrivate = (text: string): boolean => hasTag(text, PRIVATE);
 
 /** Put the safety back on: `#capture` → `##capture`, in prose only.
  *
@@ -242,6 +270,39 @@ export function renderFailure(captureRel: string, f: Failure): string {
     f.dead
       ? `Given up after ${f.noteAttempts} attempts on the note itself. It will not be tried again — delete this note to let it try once more.`
       : `Attempt ${f.attempts}. Next try after ${f.nextAt.slice(0, 16).replace("T", " ")}.`,
+    "",
+    "The capture is untouched and still where you left it:",
+    "",
+    `![[${link}]]`,
+    "",
+  ].join("\n");
+}
+
+/** A private capture with nowhere to send it.
+ *
+ *  Deliberately NOT a `Failure`: it carries no attempt count and no retry time,
+ *  because neither is true. Nothing about this improves by waiting, and a
+ *  backoff would say otherwise on a note the person is meant to act on. It says
+ *  what is wrong and what would fix it, and then it waits — indefinitely, and
+ *  visibly, which is the whole point of failing closed. */
+export function renderNoRoute(captureRel: string, why: string): string {
+  const link = captureRel.replace(/\.md$/, "");
+  return [
+    "---",
+    `${K.state}: held`,
+    `${K.capture}: "[[${link}]]"`,
+    `${K.error}: ${scalar(safe(why))}`,
+    "---",
+    "",
+    `# Held — ${keyOf(captureRel)}`,
+    "",
+    `This note is tagged \`#${PRIVATE}\`, so it was not sent anywhere.`,
+    "",
+    `\`${safe(why)}\``,
+    "",
+    "Nothing is retrying. To move it, either configure a local harness"
+      + " (`BD_LOCAL_HARNESS`), remove the tag if the note is not actually private,"
+      + " or file it by hand and delete both notes.",
     "",
     "The capture is untouched and still where you left it:",
     "",

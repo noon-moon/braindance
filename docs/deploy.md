@@ -17,6 +17,10 @@ was left with one job: classify what you armed, and file what you answered.
 - **node**, and the tool built once (`npm ci && npm run build`).
 - **`ANTHROPIC_API_KEY`** in `/srv/.env`.
 - **Git push credentials** for the vault remote.
+- **A writable state dir** for the spend ledger — `$HOME/.local/state/braindance`
+  by default, or `BD_STATE_DIR` / `BD_STATE_FILE`. Deliberately outside the
+  vault and outside this checkout: it is the one guard that has to survive both
+  a vault the unit cannot write and a redeploy.
 
 No Docker, unless you also serve a public site — Caddy is the only container
 left in `docker-compose.yml`, and it is unrelated to this loop.
@@ -27,7 +31,20 @@ left in `docker-compose.yml`, and it is unrelated to this loop.
 /srv/vault          the vault checkout — the applier is the only writer here
 /srv/braindance     this repo: ops/applier.sh, and api/ built to api/dist
 /srv/.env           ANTHROPIC_API_KEY, and any BD_* overrides
+~/.local/state/braindance/spend.json   the daily token ledger
 ```
+
+### `BD_DAILY_TOKENS` — the ceiling
+
+Input + output tokens the loop may spend in one UTC day, default `500_000`.
+Reached, `callModel` stops sending and every note backs off as though the
+service were down; it lifts by itself at midnight.
+
+Set it in `/srv/.env`. It is the backstop for the case where every other guard
+is gone, so it is worth leaving on even when it looks redundant — the incident
+it exists for is the one where the guards that live in the vault could not be
+written, and 3189 billed calls went out over 56 hours before an empty balance
+stopped it.
 
 Both checkouts must be **owned by the user the timer runs as**. A root-owned
 directory under a user-owned vault is a real failure mode and cost an evening:

@@ -38,6 +38,10 @@ mid-writing. No quiescence window, no clock to get wrong.
 Armed it is a real tag on purpose — Obsidian's own search and tag pane show you
 everything waiting, with no view to build.
 
+The pair is for **captures**, which is where it earns its keep. A proposal stamps
+no marker at all: an answer is one line typed in one go, so you type `#capture`
+after it, and the note carries no machine text you did not put there.
+
 ## Nothing files unattended
 
 Every capture gets a proposal; every filing is one you approved. The alternative
@@ -51,7 +55,7 @@ proposal are deleted in the same commit as the filed note. An empty `_triage/`
 means nothing is pending.
 
 What lingers is deliberate: a proposal awaiting your answer, one marked
-`unclear` (with the question on its heading and the marker disarmed), one
+`unclear` (with the question on its heading and your marker disarmed), one
 `failed` (with a retry time), and one `dead` — four failed attempts, given up,
 kept because it is the only record that a capture was abandoned. Deleting a
 failure note is how you say "try again".
@@ -73,6 +77,15 @@ failure note is how you say "try again".
   live ingestable hub, a proposed hub must not already be a name on disk, a date
   must be a real day, a priority must be one TaskNotes actually defines. Anything
   ambiguous degrades to `unclear` — never to `file`.
+- **There is a ceiling that does not live in the vault.** Every other guard here
+  — `bd_asked`, the failure backoff, the per-pass cap — records itself in a note,
+  which means all of them fail together the moment the notes cannot be written.
+  That happened: something ran as root in the vault, every write raised `EACCES`,
+  and one proposal was re-classified once a minute for 56 hours. The daily token
+  cap (`BD_DAILY_TOKENS`, in `usage.ts`) is the answer to *that* class of
+  failure specifically — it is enforced at the single point where a request
+  leaves the process, it holds no opinion about any note, and the only thing it
+  needs to be writable is its own file outside the vault.
 - **The prose is never rewritten.** The model is asked about metadata. The body
   that lands is the body you captured, verbatim, minus the marker.
 

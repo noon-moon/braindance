@@ -45,14 +45,23 @@ import matter from "gray-matter";
  *  gitignored: the whole point is that it reaches the phone. */
 export const TRIAGE_DIR = "_triage";
 
-/** The reply section's heading. Matched by PREFIX, and the prompt text lives on
- *  this line rather than under it — anything below the heading is yours, so a
- *  prompt sitting there would be read back as if you had written it. (The first
- *  version put two lines of instructions in the section. The user deleted them
- *  and typed in their place, which is exactly the right instinct and exactly
- *  what a parser must not have to guess about.) */
+/** The reply section's heading, and the whole of it: no instructions under it,
+ *  and none appended to it either.
+ *
+ *  Nothing goes UNDER it because anything below the heading is yours — a prompt
+ *  sitting there is read back as if you had written it. (The first version put
+ *  two lines of instructions in the section. The user deleted them and typed in
+ *  their place, which is exactly the right instinct and exactly what a parser
+ *  must not have to guess about.)
+ *
+ *  Nothing goes ON it because the instructions that used to — "reply below, then
+ *  delete one `#` from the marker below" — narrate a loop the one person running
+ *  it does by reflex. A reminder nobody reads is furniture, and this note is read
+ *  on a phone. What is left is a label.
+ *
+ *  Still matched by PREFIX: `markUnclear` writes a question onto this line, which
+ *  is the note saying something back to you rather than a standing reminder. */
 const REPLY_HEADING = "## Your call";
-const REPLY_PROMPT = `${REPLY_HEADING} — reply below, then delete one \`#\` from the marker below`;
 
 /** ONE keyword for the whole loop, and it means **proceed**. Which step that is
  *  depends on the file it appears in: on a capture it means "classify this", on
@@ -342,10 +351,14 @@ export function renderProposal(captureRel: string, p: Proposal): string {
   if (p.rationale) body.push("", `*${safe(p.rationale)}*`);
   body.push(
     "",
-    REPLY_PROMPT,
+    REPLY_HEADING,
     "",
     "",
-    `##${MARKER}`,
+    // No marker stamped here, disarmed or otherwise. The pair earns its keep on
+    // a CAPTURE, which is written over minutes and must not be read mid-thought.
+    // An answer is one line typed in one go, and the person types the marker
+    // after it either way — so a pre-stamped one is machine text in a note you
+    // read on a phone, saving a keystroke nobody was spending.
     "---",
     "",
     "### The capture",
@@ -452,14 +465,70 @@ export function markUnclear(text: string, question: string, reply: string): stri
   out = /^bd_asked:/m.test(out)
     ? out.replace(/^bd_asked:.*$/m, `${K.asked}: ${fp}`)
     : out.replace(/^bd_state:.*$/m, (m) => `${m}\n${K.asked}: ${fp}`);
-  out = out.replace(
-    new RegExp(`^${REPLY_HEADING.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*$`, "m"),
-    `${REPLY_HEADING} — ${safe(question)} · re-arm the marker when you have`,
-  );
+  out = out.replace(HEADING_LINE, `${REPLY_HEADING} — ${safe(question)} · re-arm the marker when you have`);
   // The marker means "finished". Asking again makes that untrue, so the safety
   // goes back on — otherwise the next keystroke of a corrected answer is read
   // mid-edit, which is the whole thing the marker exists to prevent.
   return disarm(out);
+}
+
+/** The reply heading as a matcher — `markUnclear` and `markFailed` both write
+ *  onto that line, and both must find one that another already annotated. */
+const HEADING_LINE = new RegExp(`^${REPLY_HEADING.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*$`, "m");
+
+/** Upsert a `bd_` key, placing a new one directly after `bd_state` so the
+ *  machine block stays together in Obsidian's properties panel. */
+const upsert = (text: string, key: string, value: string): string =>
+  new RegExp(`^${key}:`, "m").test(text)
+    ? text.replace(new RegExp(`^${key}:.*$`, "m"), `${key}: ${value}`)
+    : text.replace(/^bd_state:.*$/m, (m) => `${m}\n${key}: ${value}`);
+
+/** The ANSWER could not be read — record it ON the proposal.
+ *
+ *  The classify path has had this since the beginning: count the attempt, back
+ *  off, and say so in the vault. The answer path did not, and the asymmetry was
+ *  invisible until an API outage stalled seven answered proposals while only the
+ *  one that happened to fail at CLASSIFY time showed anything in Obsidian. The
+ *  applier's own header says a timer that fails silently is the problem this
+ *  loop exists to prevent; this is that promise applied to the second half.
+ *
+ *  Why this is not `renderFailure`: that renders a whole note, and the whole
+ *  note here contains something irreplaceable — what the person typed. The
+ *  failure is recorded AROUND their answer, never over it.
+ *
+ *  ── WHY IT DOES NOT DISARM ──────────────────────────────────────────────────
+ *
+ *  `markUnclear` disarms, because there the answer WAS read and found wanting:
+ *  the person has to change it, and a half-rewritten one must not be re-read
+ *  mid-edit. Here the answer was never read at all — the transport failed. It is
+ *  still exactly as good as it was, and disarming would mean hand-re-arming
+ *  every queued note after an outage clears. The marker means "I have finished
+ *  answering", and that is still true. */
+export function markFailed(text: string, f: Failure): string {
+  let out = text.replace(/^bd_state:.*$/m, `${K.state}: ${f.dead ? "dead" : "failed"}`);
+  out = upsert(out, K.attempts, String(f.attempts));
+  out = upsert(out, K.noteAttempts, String(f.noteAttempts));
+  // Quoted for the same reason renderFailure quotes it: unquoted, YAML parses an
+  // ISO timestamp into a Date and every slice of it lands somewhere else.
+  out = upsert(out, K.nextAt, `"${f.nextAt}"`);
+  out = upsert(out, K.error, scalar(f.error));
+  return out.replace(
+    HEADING_LINE,
+    f.dead
+      ? `${REPLY_HEADING} — could not read this answer after ${f.noteAttempts} attempts · set \`bd_state\` back to \`proposed\` to retry`
+      : `${REPLY_HEADING} — could not reach the model (attempt ${f.attempts}) · retrying after ${f.nextAt.slice(11, 16)}`,
+  );
+}
+
+/** Put a proposal back the way it was once a retry gets through. Without this a
+ *  note that recovered still reads `bd_state: failed` in the properties panel —
+ *  a stale accusation the person has no way to distinguish from a live one. */
+export function clearFailure(text: string): string {
+  let out = text.replace(/^bd_state:.*$/m, `${K.state}: proposed`);
+  for (const k of [K.attempts, K.noteAttempts, K.nextAt, K.error]) {
+    out = out.replace(new RegExp(`^${k}:.*\n`, "m"), "");
+  }
+  return out.replace(HEADING_LINE, REPLY_HEADING);
 }
 
 /** Has this answer already been judged unreadable? Cheap, local, no model call. */

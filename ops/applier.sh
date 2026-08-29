@@ -100,6 +100,34 @@ for d in "$VAULT" "$VAULT/_triage"; do
   fi
 done
 
+# AND THE NOTES THEMSELVES. A writable directory is not a writable note, and
+# this loop REWRITES notes in place — the marker, the backoff, `bd_asked`.
+#
+# That distinction cost $20 and two days. Something ran once as root and left
+# the FILES in `_triage/` owned by root under a `_triage/` that was still owned
+# by the unit's user. The directory check above passed. Every write then failed
+# with EACCES, which meant `markUnclear` could not record `bd_asked` and could
+# not disarm the marker — the two things that stop a note being re-read — so the
+# same note was re-classified every sixty seconds, at a real billed model call
+# each time, 3189 of them, until the account ran dry and the errors turned free
+# and started looking like a billing problem instead of a permissions one.
+#
+# Checked as a sample rather than a loop over everything: they fail together,
+# because they fail for the one reason.
+for f in "$VAULT/_triage"/*.md; do
+  [ -e "$f" ] || continue
+  if [ ! -w "$f" ]; then
+    me="$(id -un)"
+    owner="$(stat -c %U "$f" 2>/dev/null || stat -f %Su "$f" 2>/dev/null)"
+    echo "cannot write the notes in $VAULT/_triage (e.g. $(basename "$f"))" >&2
+    echo "  running as: $me   owner: ${owner:-?}" >&2
+    echo "  the directory is writable but its notes are not — something ran as root here" >&2
+    echo "  fix: sudo chown -R $me $VAULT" >&2
+    exit 1
+  fi
+  break
+done
+
 # How long it has been broken, carried across runs so the note can say.
 prev_failures=0
 prev_since=""

@@ -18,7 +18,7 @@ import { renderTask, taskConfig } from "./tasknotes.js";
 import {
   parseProposal, readReply, renderProposal, triageRel, keyOf, TRIAGE_DIR,
   markUnclear, alreadyAsked, isAnswered, stripMarker,
-  parseFailure, renderFailure, nextFailure, isDue, MAX_ATTEMPTS, type Proposal,
+  parseFailure, renderFailure, nextFailure, markFailed, clearFailure, isDue, MAX_ATTEMPTS, type Proposal,
 } from "./approval.js";
 import { TransientError, RefusalError } from "./suggest.js";
 import { report, reset } from "./usage.js";
@@ -134,11 +134,26 @@ async function pass(dry: boolean, limit: number): Promise<void> {
     const key = f.replace(/\.triage\.md$/, "");
     const raw = readFileSync(abs(rel), "utf8");
     const fail = parseFailure(raw);
-    if (fail) { console.log(`skip ${key} — ${fail.dead ? "given up" : `failed, retry after ${fail.nextAt.slice(11, 16)}`}`); continue; }
     const parsed = parseProposal(raw, key);
-    if (!parsed) { console.log(`skip ${key} — not a proposal`); continue; }
+    // TWO KINDS OF FAILED NOTE share this directory, and they retry differently.
+    //
+    // A pure failure note never became a proposal — classify itself failed —
+    // so there is nothing here to act on and `propose()` owns its retry.
+    // A PROPOSAL carrying failure state is one whose answer could not be read;
+    // this loop owns that retry, so it must come back when the backoff expires
+    // rather than being skipped forever.
+    if (!parsed) {
+      console.log(fail
+        ? `skip ${key} — ${fail.dead ? "given up" : `failed, retry after ${fail.nextAt.slice(11, 16)}`}`
+        : `skip ${key} — not a proposal`);
+      continue;
+    }
+    if (fail && !isDue(fail, Date.now())) {
+      console.log(`skip ${key} — ${fail.dead ? "given up on this answer" : `answer unread, retry after ${fail.nextAt.slice(11, 16)}`}`);
+      continue;
+    }
 
-    const text = raw;
+    let text = raw;
     const reply = readReply(text);
     if (!reply) { console.log(`wait ${key} — no answer yet`); continue; }
     // An answer is finished when it says so. Without this, obsidian-git commits
@@ -180,9 +195,21 @@ async function pass(dry: boolean, limit: number): Promise<void> {
       act = validateAction(
         await intentOf(reply, parsed.proposal, scopes, now.slice(0, 10)), scopes, takenRootNames());
     } catch (e) {
-      console.warn(`   ✗ could not read the answer: ${(e as Error).message}`);
+      // The classify path has always done this; the answer path used to warn to
+      // the journal and drop it, which is a silent failure by any other name.
+      const err = e as Error;
+      const f = nextFailure(fail, err.message, err instanceof TransientError, err instanceof RefusalError, Date.now());
+      if (!dry) writeFileSync(abs(rel), markFailed(text, f));
+      console.warn(
+        `   ✗ could not read the answer (attempt ${f.attempts}` +
+        `${err instanceof TransientError ? ", service" : `, note ${f.noteAttempts}/${MAX_ATTEMPTS}`}` +
+        `${f.dead ? ", giving up" : `, next ${f.nextAt.slice(11, 16)}`}): ${err.message}`,
+      );
       continue;
     }
+    // Got through. Clear any failure this note was carrying, so a recovered
+    // proposal does not keep reading `failed` in Obsidian's properties panel.
+    if (fail) text = clearFailure(text);
     console.log(`   action: ${act.kind}${act.note ? ` — ${act.note}` : ""}`);
     if (act.kind === "unclear") {
       const q = act.note || "I could not tell what you meant";

@@ -18,9 +18,9 @@ import { renderTask, taskConfig } from "./tasknotes.js";
 import {
   parseProposal, readReply, renderProposal, triageRel, keyOf, TRIAGE_DIR,
   markUnclear, alreadyAsked, isAnswered, stripMarker,
-  parseFailure, renderFailure, nextFailure, markFailed, clearFailure, holdsCapture, isDue, MAX_ATTEMPTS, type Proposal,
+  parseFailure, renderFailure, renderNoRoute, nextFailure, markFailed, clearFailure, holdsCapture, isDue, MAX_ATTEMPTS, type Proposal,
 } from "./approval.js";
-import { TransientError, RefusalError, harness } from "./harness.js";
+import { TransientError, RefusalError, NoRouteError, harness, routeFor } from "./harness.js";
 import { report, reset } from "./usage.js";
 
 const abs = (rel: string): string => join(VAULT, rel);
@@ -100,15 +100,32 @@ async function propose(captureRel: string): Promise<void> {
   // Gone between the scan and now — filed by hand, renamed, unsynced. Nothing
   // to classify and nothing worth remembering about it.
   if (!existsSync(abs(captureRel))) { console.log(`skip ${key} — capture is gone`); return; }
+  // Hoisted out of the try so the catch knows which harness answered — a loose
+  // one changes what a parse failure costs, and re-reading the capture to work
+  // that out again is a second chance to fail.
+  let loose = false;
   try {
     const text = readFileSync(abs(captureRel), "utf8");
-    const p = asProposal(await (await harness()).classify(text, scopeCatalogue()));
+    const h = await routeFor(text);
+    loose = !h.strictSchema;
+    const p = asProposal(await h.classify(text, scopeCatalogue()));
     writeFileSync(abs(out), renderProposal(captureRel, p));
     console.log(`proposed → ${out}`);
   } catch (e) {
     const err = e as Error;
+    // A note tagged #private with nowhere to send it is neither the note's fault
+    // nor something a retry fixes. It is reported and left alone — no counter, no
+    // backoff pretending time will help.
+    if (err instanceof NoRouteError) {
+      writeFileSync(abs(out), renderNoRoute(captureRel, err.why));
+      console.warn(`held ${key} — ${err.why}`);
+      return;
+    }
     const prior = existsSync(abs(out)) ? parseFailure(readFileSync(abs(out), "utf8")) : null;
-    const f = nextFailure(prior, err.message, err instanceof TransientError, err instanceof RefusalError, Date.now());
+    // `strictSchema` decides what unparseable output MEANS. From a harness that
+    // guarantees the schema it is a surprise worth blaming the note for; from one
+    // that merely asks, it is the price of portability and blames nobody.
+    const f = nextFailure(prior, err.message, err instanceof TransientError || loose, err instanceof RefusalError, Date.now());
     writeFileSync(abs(out), renderFailure(captureRel, f));
     console.warn(
       `failed ${key} (attempt ${f.attempts}` +

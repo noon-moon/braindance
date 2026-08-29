@@ -64,7 +64,7 @@ const PRIORITIES = knownPriorities();
 const FUNNEL_IDS = ["memo", "scope", "todo"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-const ACTION_SCHEMA = {
+export const ACTION_SCHEMA = {
   type: "object",
   properties: {
     action: {
@@ -99,7 +99,7 @@ const ACTION_SCHEMA = {
 const REPLY_OPEN = "<your-reply>";
 const REPLY_CLOSE = "</your-reply>";
 
-function systemPrompt(p: Proposal, scopes: string[], today: string): string {
+export function intentSystemPrompt(p: Proposal, scopes: string[], today: string): string {
   return [
     "A person captured a note. An earlier pass proposed how to file it, and they have replied.",
     "Turn their reply into an action. You are not re-deciding the filing — you are reading an instruction.",
@@ -133,6 +133,11 @@ function systemPrompt(p: Proposal, scopes: string[], today: string): string {
 
 /** Ask the model what the reply meant. Throws like `suggestFor` does, so the
  *  caller's retry/dead handling is the one that already exists. */
+/** The reply, fenced. Shared so every implementation wraps it identically — a
+ *  second harness inventing its own fencing is a second trust boundary nobody
+ *  reviewed. */
+export const intentUserPrompt = (reply: string): string => `${REPLY_OPEN}\n${reply.slice(0, 2000)}\n${REPLY_CLOSE}`;
+
 export async function intentOf(
   reply: string,
   p: Proposal,
@@ -143,8 +148,8 @@ export async function intentOf(
   const res = await callModel(() => client().messages.create({
     model,
     max_tokens: 4096,
-    system: systemPrompt(p, liveScopes, today),
-    messages: [{ role: "user", content: `${REPLY_OPEN}\n${reply.slice(0, 2000)}\n${REPLY_CLOSE}` }],
+    system: intentSystemPrompt(p, liveScopes, today),
+    messages: [{ role: "user", content: intentUserPrompt(reply) }],
     output_config: {
       effort: "low",
       format: { type: "json_schema", schema: ACTION_SCHEMA as unknown as Record<string, unknown> },

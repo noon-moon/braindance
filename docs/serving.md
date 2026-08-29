@@ -110,6 +110,31 @@ One thing is deliberately not abstracted: the daily ceiling is enforced in
 `withBudget`, which wraps everything the registry returns. Being a new
 implementation is not a way to become unmetered.
 
+## Routing — which harness sees which note
+
+The seam chooses an implementation. Once one of them runs on your own machine
+and another is somebody else's API, that choice stops being a deployment detail
+and becomes a privacy decision — so it is made **per note**.
+
+A note tagged `#private` may only be answered by the harness named in
+`BD_LOCAL_HARNESS`. Everything else goes to the default.
+
+**And if there isn't one, nothing happens.** The capture is not quietly sent to
+the cloud harness instead; a `bd_state: held` note appears in `_triage/` saying
+what is missing and naming the three ways out, and it waits indefinitely. A
+privacy control that degrades to "send it anyway" when misconfigured is a
+preference rather than a control, and the failure would be both silent and
+unrecoverable.
+
+`#private` is the one place this loop has a second keyword, and the exception is
+deliberate: `#capture` is a *loop step*, where a second word would be a wrong
+word to reach for, while this is a property of the note on an unrelated axis,
+read and never written. It has no disarmed spelling — `##private` in a draft
+would mean "send it", which is the wrong default for a safety marker.
+
+Naming a remote provider in `BD_LOCAL_HARNESS` is a way to lie to yourself. No
+code here can check that claim, and none pretends to.
+
 ## What is enforced by shape
 
 - **The reply boundary is `safe()`.** The reply is the `## Your call` section, so

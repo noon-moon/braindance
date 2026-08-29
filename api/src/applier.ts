@@ -29,6 +29,7 @@ export function reviseProposal(p: Proposal, r: Revision): Proposal {
     newScope: r.newScope ? { name: r.newScope, why: r.newScopeWhy ?? "" } : (r.scopes ? null : p.newScope),
     due: r.due !== undefined ? r.due : p.due,
     priority: r.priority !== undefined ? r.priority : p.priority,
+    url: r.url !== undefined ? r.url : p.url,
   };
 }
 
@@ -59,6 +60,7 @@ export function fileNote(p: Proposal, captureBody: string): BuiltNote & { conten
     body: stripMarker(captureBody),
     containedBy: scope,
     due: p.due ?? "",
+    url: p.url ?? "",
     priority: p.priority ?? "",
   });
   return { ...built, content: `${compose(built).trimEnd()}\n` };

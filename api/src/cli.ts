@@ -46,6 +46,9 @@ const asProposal = (s: Suggestion): Proposal => ({
   scopes: s.scope ? [s.scope] : [],
   newScope: s.newScope,
   tags: s.tags,
+  // The classifier does not propose a link — only a reply can set one. A capture
+  // that IS a URL keeps it in its body, where it already was.
+  url: null,
   due: s.due,
   priority: s.priority,
   rationale: s.rationale,

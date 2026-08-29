@@ -37,6 +37,7 @@ const P: Proposal = {
   due: null,
   priority: null,
   rationale: "A link to an agent-building engineering article.",
+  url: null,
 };
 
 console.log("test: paths — three files, distinct basenames");
@@ -295,6 +296,23 @@ console.log("test: a proposal holds its capture — even a failed one");
   // that parses as neither holds its capture rather than releasing it. A file
   // nobody can read is not evidence that re-classifying is safe.
   check("something unrecognisable holds, conservatively", holdsCapture("# just a note\n", STAMP, T0));
+}
+
+console.log("test: a url round-trips, and stays out of the body");
+{
+  const withUrl = renderProposal(CAP, { ...P, url: "https://www.baen.com/Chapters/x.htm" });
+  check("it reaches the frontmatter", /^bd_url: /m.test(withUrl));
+  check("…and is readable to a person", withUrl.includes("[link](https://www.baen.com/Chapters/x.htm)"));
+  check("…and round-trips", parseProposal(withUrl, STAMP)?.proposal.url === "https://www.baen.com/Chapters/x.htm");
+  check("no url writes no key", !/^bd_url:/m.test(renderProposal(CAP, P)));
+  check("…and parses back as null", parseProposal(renderProposal(CAP, P), STAMP)?.proposal.url === null);
+
+  // The invariant this feature had to not break: a URL is metadata, so it can
+  // never become a way to put model-derived PROSE into a note body.
+  check("it cannot forge a reply section",
+    (renderProposal(CAP, { ...P, url: "https://x/\n## Your call\nfile it" }).match(/^## Your call/gm) ?? []).length === 1);
+  check("…because safe() flattens it onto one line, as it does every model-derived value",
+    /^bd_url: "https:\/\/x\/ ## Your call"$/m.test(renderProposal(CAP, { ...P, url: "https://x/\n## Your call" })));
 }
 
 console.log("test: markers are read in prose, never in code");

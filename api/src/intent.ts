@@ -56,6 +56,20 @@ export interface Revision {
   /** A link the reply supplied. See `Proposal.url` for why this one piece of
    *  content is allowed down an instruction channel and prose is not. */
   url?: string | null;
+  /** Further notes the reply asked for, each becoming a CAPTURE rather than a
+   *  filed note. See `Action` and `spawnCaptures`. */
+  spawn?: SpawnRequest[];
+}
+
+/** A note the reply asked to create alongside this one.
+ *
+ *  It is the only place model-authored prose enters the vault, and it enters as
+ *  a CAPTURE: armed, classified next pass, proposed, and filed only after you
+ *  answer that proposal. So the loop's oldest promise is intact — nothing files
+ *  unattended — and the review you already do is the review this needs. */
+export interface SpawnRequest {
+  title: string;
+  body: string;
 }
 
 // THE VAULT'S priorities, not Obsidian Tasks'. This read `PRIORITY_SIGNIFIER`
@@ -99,6 +113,25 @@ export const ACTION_SCHEMA = {
         "A single http(s) URL the reply gives for this note, or null. ONLY when the reply supplies a link for " +
         "THIS note — not a link merely mentioned in passing, and never one invented. Prose the reply asks to add " +
         "is not a URL and is not this field: if the reply asks for body text, that is `unclear`.",
+    },
+    spawn: {
+      anyOf: [{
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "A short name for the note, as the person would say it." },
+            body: { type: "string", description: "The note's text, in the person's own terms, drawn ONLY from what they wrote." },
+          },
+          required: ["title", "body"],
+          additionalProperties: false,
+        },
+      }, { type: "null" }],
+      description:
+        "Notes the reply explicitly asks to CREATE as well as this one — \"also add a note for X\" — or null. " +
+        "Each becomes a new capture for triage, not a filed note. Only when the reply plainly asks for " +
+        "another note to exist. NOT for restating this note, not for a link (use `url`), and never invented. " +
+        "If you are unsure whether another note was asked for, that is `unclear`.",
     },
     note: { type: "string", description: "One short clause paraphrasing what the reply asked for, for the receipt." },
   },
@@ -248,6 +281,21 @@ export function validateAction(raw: unknown, liveScopes: string[], takenNames: S
     if (u.protocol !== "http:" && u.protocol !== "https:") return unclear(`“${u.protocol}” links are not allowed`);
     revised.url = u.toString();
   }
+
+  // Model-authored text, and the only such text this loop lets into the vault.
+  // Each entry becomes a capture, so it is classified, proposed, and answered
+  // before anything is filed — which is why there is no policy cap here. What is
+  // bounded is nonsense: an entry with no body is not a note anybody asked for.
+  const rawSpawn = Array.isArray(r.spawn) ? r.spawn : [];
+  const spawn: SpawnRequest[] = [];
+  for (const item of rawSpawn) {
+    if (!item || typeof item !== "object") return unclear("could not read a note the reply asked to add");
+    const t = str((item as Record<string, unknown>).title, 120);
+    const b = str((item as Record<string, unknown>).body, 4000);
+    if (!b) return unclear("a note the reply asked to add has no content");
+    spawn.push({ title: t, body: b });
+  }
+  if (spawn.length) revised.spawn = spawn;
 
   return { kind: "file", revised, note };
 }

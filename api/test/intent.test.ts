@@ -120,4 +120,29 @@ console.log("test: a link the reply supplied");
     V({ url: null, note: "add a paragraph about Butler" }).kind === "file");
 }
 
+console.log("test: notes the reply asks to create");
+{
+  const sp = (spawn: unknown): Action => V({ spawn });
+  const one = [{ title: "Parable of the Sower", body: "Octavia Butler." }];
+
+  check("a note the reply asks for is carried", (sp(one) as any).revised.spawn?.length === 1);
+  check("…with its text intact", (sp(one) as any).revised.spawn[0].body === "Octavia Butler.");
+  check("no spawn is the ordinary case", (sp(null) as any).revised.spawn === undefined);
+  check("…as is an empty list", (sp([]) as any).revised.spawn === undefined);
+
+  // No policy cap: each one becomes a capture, gets classified, and comes back
+  // as a proposal to answer. The review is the bound.
+  const many = Array.from({ length: 9 }, (_, i) => ({ title: `n${i}`, body: `b${i}` }));
+  check("several are allowed — every one is reviewed before it is filed",
+    (sp(many) as any).revised.spawn?.length === 9);
+
+  // What IS refused is nonsense, because a note with no content is not a note
+  // anyone asked for and would land in the vault as an empty armed capture.
+  check("an entry with no body asks again", sp([{ title: "x", body: "" }]).kind === "unclear");
+  check("…saying so", sp([{ title: "x", body: "" }]).note.includes("no content"));
+  check("a non-object entry asks again", sp(["just a string"]).kind === "unclear");
+  check("an untitled one is fine — the body is what matters",
+    (sp([{ title: "", body: "a thought" }]) as any).revised.spawn?.length === 1);
+}
+
 console.log(`\n${passed} checks passed`);

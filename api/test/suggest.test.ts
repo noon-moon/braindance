@@ -35,6 +35,10 @@ writeFileSync(join(VAULT, "Writers.md"), "---\ntags: [scope]\n---\n\n# Writers\n
 // An ordinary note that is NOT a scope. A proposed hub has to be refused against
 // this too: it is a name already on disk, so minting it would truncate a note.
 writeFileSync(join(VAULT, "Readme.md"), "---\ntags: [memo]\n---\n\n# Readme\n");
+// A memo that other notes are legitimately contained BY — an author gathers
+// books without being an index. `scope` marks structural purpose, not
+// eligibility to contain.
+writeFileSync(join(VAULT, "Octavia Butler.md"), "---\ntags: [memo]\n---\n\n# Octavia Butler\n");
 
 const { validate: validateRaw, isHubName, neutraliseFences } = await import("../src/suggest.js");
 const { knownPriorities } = await import("../src/tasknotes.js");
@@ -241,6 +245,21 @@ console.log("test: the egress allowlist is opt-in, under either spelling");
   check("a plain `scope` is NOT — a hub is not egress", !live.includes("Writers"));
   check("nor is a memo", !live.includes("Readme"));
   check("the list is exactly the two marked hubs", live.length === 2);
+}
+
+console.log("test: names on disk keep the casing they were written with");
+{
+  const { takenRootNames } = await import("../src/vault.js");
+  const taken = takenRootNames();
+
+  // Lookups are case-insensitive because a reply is typed by a person...
+  check("a name is found however it is typed", taken.has("octavia butler"));
+  // ...but the VALUE is the name as written, because a match usually becomes a
+  // `[[wikilink]]` and Obsidian resolves those by basename.
+  check("…and comes back with the casing the note has", taken.get("octavia butler") === "Octavia Butler");
+  check("a note that is not a scope is still on disk, and still findable",
+    taken.get("readme") === "Readme");
+  check("something absent is absent", !taken.has("woodworking"));
 }
 
 console.log(`\n${passed} checks passed`);

@@ -96,7 +96,10 @@ export const ACTION_SCHEMA = {
     funnel: { anyOf: [{ type: "string", enum: FUNNEL_IDS }, { type: "null" }], description: "New type, or null to keep." },
     scope: {
       anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }],
-      description: "EVERY hub the reply names, in the order it names them, or null to keep what was proposed. The first is primary.",
+      description:
+        "EVERY note the reply names as a place this one belongs, in the order it names them, or null to keep " +
+        "what was proposed. The first is primary. These need not be hubs from the list above — a reply may name " +
+        "any note in the vault, including an ordinary one like an author or a record.",
     },
     newScope: { anyOf: [{ type: "string" }, { type: "null" }], description: "A hub the reply asks to CREATE, or null." },
     newScopeWhy: {
@@ -214,7 +217,7 @@ export async function intentOf(
  *  and for the same reason: what survives here is what gets written.
  *
  *  Anything it cannot make sense of degrades to `unclear`, never to `file`. */
-export function validateAction(raw: unknown, liveScopes: string[], takenNames: Set<string>): Action {
+export function validateAction(raw: unknown, liveScopes: string[], takenNames: ReadonlyMap<string, string>): Action {
   const unclear = (why: string): Action => ({ kind: "unclear", note: why });
   if (!raw || typeof raw !== "object") return unclear("no answer");
   const r = raw as Record<string, unknown>;
@@ -245,10 +248,25 @@ export function validateAction(raw: unknown, liveScopes: string[], takenNames: S
   for (const n of named) {
     const live = liveScopes.find((sc) => sc.toLowerCase() === n.toLowerCase());
     if (live) { if (!resolved.includes(live)) resolved.push(live); continue; }
-    // Not a hub that exists. One such name is a creation request; more than one
-    // is a reply we have misread, and inventing two hubs off a misreading is
-    // exactly the damage `unclear` exists to prevent.
-    if (!isHubName(n) || takenNames.has(n.toLowerCase())) return unclear(`no hub named “${n}”`);
+
+    // A NOTE THAT EXISTS BUT IS NOT A CLASSIFIABLE SCOPE is still somewhere a
+    // note can be contained by. `scope` marks a note whose structural purpose is
+    // to be an INDEX; it is not a licence to be contained by, and plenty of
+    // notes are neither indexes nor too small to gather things — an author, a
+    // record, a person. `[[Octavia Butler]]` is a memo and books belong under it.
+    //
+    // The two lists differ on purpose, and the difference is who is choosing.
+    // `liveScopes` is what the MODEL may pick unprompted: small, curated, and
+    // sent out of the machine on every call. This branch is what YOU may NAME in
+    // a reply: anything real in your vault. The guarantee that survives is the
+    // one that mattered — the name has to exist, so nothing is invented.
+    const existing = takenNames.get(n.toLowerCase());
+    if (existing) { if (!resolved.includes(existing)) resolved.push(existing); continue; }
+
+    // Nothing of that name anywhere. One such name is a creation request; more
+    // than one is a reply we have misread, and inventing two hubs off a
+    // misreading is exactly the damage `unclear` exists to prevent.
+    if (!isHubName(n)) return unclear(`no note named “${n}”, and it cannot be a hub name`);
     if (revised.newScope) return unclear("more than one new hub asked for");
     revised.newScope = n;
     revised.newScopeWhy = str(r.newScopeWhy, 300);

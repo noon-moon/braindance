@@ -424,7 +424,7 @@ const str = (v: unknown, max: number): string =>
  *  fields that don't check out. The split is deliberate — a bad scope still
  *  leaves a useful title, but a title or funnel we can't trust leaves nothing
  *  worth showing. */
-export function validate(raw: unknown, liveScopes: string[], takenNames: Set<string>): Suggestion | null {
+export function validate(raw: unknown, liveScopes: string[], takenNames: ReadonlyMap<string, string> | ReadonlySet<string>): Suggestion | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
 

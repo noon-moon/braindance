@@ -183,7 +183,13 @@ def collect():
                 "title": fn[:-3],
                 "kind": (fm_scalar(fm, "scope_kind") or "content").lower(),
                 "contains": fm_list(fm, "Contains"),
-                "purpose": first_purpose(body),
+                # A DECLARED description wins over any guess at one. Same
+                # precedence as blurbFor() in api/src/suggest.ts, because the
+                # two must not disagree about what a hub is for — this manifest
+                # is what an agent reads, and that blurb is what a model is
+                # told; a hub described two ways is described neither way.
+                "purpose": (fm_scalar(fm, "description") or fm_scalar(fm, "summary")
+                            or first_purpose(body)),
             })
     return scopes
 

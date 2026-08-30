@@ -39,6 +39,13 @@ writeFileSync(join(VAULT, "Readme.md"), "---\ntags: [memo]\n---\n\n# Readme\n");
 // books without being an index. `scope` marks structural purpose, not
 // eligibility to contain.
 writeFileSync(join(VAULT, "Octavia Butler.md"), "---\ntags: [memo]\n---\n\n# Octavia Butler\n");
+// A hub that leads with a Zettelkasten id before its prose — the shape nine of
+// the real vault's hubs have.
+writeFileSync(join(VAULT, "Zettel.md"),
+  "---\ntags: [scope, classifiable]\n---\n\n# Zettel\n\n202507111638\nStatus: #idea\n\nSongs are flat memos; pools stay loose.\n");
+// And one that declares what it is rather than leaving it to be guessed.
+writeFileSync(join(VAULT, "Declared.md"),
+  "---\ntags: [scope, classifiable]\ndescription: Only the things that go here, said once.\n---\n\n# Declared\n\nA long body nobody should be reading for this.\n");
 
 const { validate: validateRaw, isHubName, neutraliseFences } = await import("../src/suggest.js");
 const { knownPriorities } = await import("../src/tasknotes.js");
@@ -244,7 +251,8 @@ console.log("test: the egress allowlist is opt-in, under either spelling");
   // named in `Contained By` — and its name is never sent anywhere.
   check("a plain `scope` is NOT — a hub is not egress", !live.includes("Writers"));
   check("nor is a memo", !live.includes("Readme"));
-  check("the list is exactly the two marked hubs", live.length === 2);
+  check("…and nothing else — the list is exactly the marked hubs",
+    [...live].sort().join(",") === "Braindance,Declared,Home,Zettel");
 }
 
 console.log("test: names on disk keep the casing they were written with");
@@ -260,6 +268,24 @@ console.log("test: names on disk keep the casing they were written with");
   check("a note that is not a scope is still on disk, and still findable",
     taken.get("readme") === "Readme");
   check("something absent is absent", !taken.has("woodworking"));
+}
+
+console.log("test: what a hub tells a model it is for");
+{
+  const { scopeCatalogue } = await import("../src/suggest.js");
+  const blurb = (n: string): string => scopeCatalogue().find((s) => s.name === n)?.blurb ?? "";
+
+  // THE BUG THIS EXISTS FOR. `gen-topics.sh` skipped the inline metadata
+  // preamble and produced good text for these notes; `blurbFor` did not, so the
+  // manifest a person reads and the blurb a model reads disagreed — and only
+  // the readable one was ever looked at.
+  check("a Zettelkasten id is not a description", blurb("Zettel") !== "202507111638");
+  check("…nor is a `Status:` line", !blurb("Zettel").startsWith("Status:"));
+  check("…the prose underneath is", blurb("Zettel").startsWith("Songs are flat memos"));
+
+  // A declared description wins over any guess at one, in both consumers.
+  check("a declared `description` is preferred", blurb("Declared") === "Only the things that go here, said once.");
+  check("…over the body it would otherwise have guessed from", !blurb("Declared").includes("nobody should be reading"));
 }
 
 console.log(`\n${passed} checks passed`);

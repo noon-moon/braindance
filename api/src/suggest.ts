@@ -228,6 +228,13 @@ export function scopeCatalogue(): ScopeBlurb[] {
  *  carries one, else the first line of prose that isn't structure — the heading,
  *  the `Tags: [[…]]` scope link, a code fence or a list bullet all describe the
  *  note's shape rather than its subject. */
+/** Mirrors `META_LINE` in `ctx/tools/sys/gen-topics.sh`. Kept in step by hand,
+ *  and worth the duplication: one is Python in the vault tooling, the other TypeScript
+ *  in the api, and a shared module between them would be a dependency in the
+ *  wrong direction. If you change one, change the other. */
+const META_PREAMBLE =
+  /^\s*((created|updated|modified|status|tags|aliases|alias|date|author|source|link|url|type|rating|year|topic)\s*:|\d{6,}\s*$)/i;
+
 function blurbFor(name: string): string {
   const note = getNote(name);
   if (!note) return "";
@@ -237,6 +244,14 @@ function blurbFor(name: string): string {
     const l = line.trim();
     if (!l) continue;
     if (/^(#{1,6}\s|Tags:\s*\[\[|```|>|[-*+]\s|\||\d+\.\s)/.test(l)) continue;
+    // The inline metadata preamble some notes carry ABOVE their prose: a
+    // Zettelkasten id on its own line, or a `Created:`/`Status:` key. Skipping
+    // it is not cosmetic — nine of this vault's 43 classifiable hubs led with
+    // one, so the classifier was choosing between them on the strength of
+    // `Songwriting: 202507111638`. `gen-topics.sh` had always skipped these and
+    // produced good text for the very same notes; the two heuristics simply
+    // disagreed, and only the one a person reads was ever checked.
+    if (META_PREAMBLE.test(l)) continue;
     return firstLine(l, 160);
   }
   return "";

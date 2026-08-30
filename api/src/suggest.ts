@@ -10,7 +10,7 @@
 //      to act on. The worst a hostile note can do is get itself mislabelled.
 //   2. NOTHING THE MODEL SAYS IS TAKEN AT ITS WORD. `validate()` is the only
 //      door from model output into values anything acts on: a scope must be in
-//      the LIVE strictly-ingestable list, a funnel must resolve via funnelById,
+//      the LIVE strictly-classifiable list, a funnel must resolve via funnelById,
 //      a date must be a real day, a proposed hub must NOT already be a name on
 //      disk. The model cannot name a path, a filename, or a scope that does not
 //      exist, because none of those are things it can return — it returns a
@@ -46,7 +46,7 @@ export { RefusalError, TransientError, BudgetError };
 import { aiSuggestConfig } from "./config.js";
 import { FUNNELS, funnelById } from "./funnels.js";
 import { knownPriorities } from "./tasknotes.js";
-import { getIngestableScopesStrict, getNote, takenRootNames } from "./vault.js";
+import { getClassifiableScopesStrict, getNote, takenRootNames } from "./vault.js";
 
 /** One suggestion, AFTER validation — every field here has already been checked
  *  against the live vault. Rendering this is safe; rendering the model's raw
@@ -55,7 +55,7 @@ export interface Suggestion {
   title: string;
   /** A canonical funnel id (funnelById resolved it, aliases included). */
   funnel: string;
-  /** A live ingestable scope name, or null — never anything else. */
+  /** A live classifiable scope name, or null — never anything else. */
   scope: string | null;
   /** A hub the model thinks SHOULD exist and doesn't, or null.
    *
@@ -216,12 +216,12 @@ export function firstLine(body: string, max = 60): string {
  *
  *  STRICT on purpose. This list is an egress allowlist — every name in it, plus
  *  160 characters of the hub's own description, leaves the box — and the picker's
- *  accessor falls back to EVERY scope when nothing carries the `ingestable` tag.
+ *  accessor falls back to EVERY scope when nothing carries the `classifiable` tag.
  *  Reusing that here would mean one bulk frontmatter edit silently turns "the
  *  four hubs I marked" into "the whole vault's table of contents". Empty is a
  *  legitimate answer and the caller must treat it as "make no call". */
 export function scopeCatalogue(): ScopeBlurb[] {
-  return getIngestableScopesStrict().map((name) => ({ name, blurb: blurbFor(name) }));
+  return getClassifiableScopesStrict().map((name) => ({ name, blurb: blurbFor(name) }));
 }
 
 /** A scope note's one-liner: an explicit `description` in frontmatter if the note
@@ -310,9 +310,14 @@ export function classifySystemPrompt(scopes: ScopeBlurb[], today: string): strin
  *  can tell "this note will never work" from "try again later". */
 export async function suggestFor(noteText: string, scopes: ScopeBlurb[]): Promise<Suggestion> {
   // Fail CLOSED at the door. An empty catalogue means the vault marks nothing
-  // ingestable, which is a live instruction not to send anything anywhere — the
+  // classifiable, which is a live instruction not to send anything anywhere — the
   // worker checks this too, and this is the check that survives a new caller.
-  if (!scopes.length) throw new Error("no ingestable scopes — nothing to classify against");
+  // TRANSIENT, not a verdict. An empty allowlist is identical for every note in
+  // the queue — a vault that marked nothing, or a rename that landed on one side
+  // before the other. Blaming the note for it would spend one of its four lives
+  // per pass and bury the whole queue in four, for a condition no note caused and
+  // no retry-by-the-note can fix. Same judgement as a 4xx.
+  if (!scopes.length) throw new TransientError("no classifiable scopes — nothing to classify against", null);
 
   const { model } = aiSuggestConfig();
   // Neutralise the fence rather than delete it: keeping the words visible means a
@@ -412,7 +417,7 @@ const str = (v: unknown, max: number): string =>
  *  Called twice for every suggestion on purpose — once by the worker before the
  *  sidecar is written, once by the renderer against the CURRENT scope list. The
  *  second pass is the load-bearing one: a sidecar can outlive the vault state it
- *  was made against (a scope renamed, `ingestable` dropped), and a stored file is
+ *  was made against (a scope renamed, `classifiable` dropped), and a stored file is
  *  no more trusted than the response it came from.
  *
  *  Returns null when the suggestion is unusable as a whole; drops individual

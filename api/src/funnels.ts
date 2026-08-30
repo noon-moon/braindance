@@ -150,14 +150,15 @@ export const FUNNELS: Funnel[] = [
     // straight into their description, so a heading here would be the one thing
     // about a generated hub that didn't match a hand-written one.
     //
-    // `ingestable` stacks on the tag rather than replacing it (see the vault's
-    // `_meta/Tags.md`): it is what puts the new hub in the capture form's
-    // dropdown, and it is a checkbox rather than automatic because most hubs are
-    // places notes get filed INTO, not places you think at.
+    // `classifiable` stacks on the tag rather than replacing it (see the vault's
+    // `_meta/Tags.md`): it is the EGRESS ALLOWLIST — this hub's name and blurb
+    // are sent to a model on every classification. A checkbox rather than
+    // automatic, because most hubs should hold content and containment without
+    // ever leaving the machine.
     build: (i) => ({
       title: i.title,
       frontmatter: {
-        tags: i.ingestable ? ["scope", "ingestable"] : ["scope"],
+        tags: i.classifiable ? ["scope", "classifiable"] : ["scope"],
         ...(i.url ? { url: i.url } : {}),
         ...containment(i),
       },

@@ -24,9 +24,14 @@ import { join } from "node:path";
 // it was handed, so testing it needs a real (tiny) vault to read.
 const VAULT = mkdtempSync(join(tmpdir(), "bd-vault-"));
 process.env.VAULT_PATH = VAULT;
-for (const name of ["Home", "Braindance"]) {
-  writeFileSync(join(VAULT, `${name}.md`), `---\ntags: [scope, ingestable]\n---\n\n# ${name}\n`);
-}
+// One of each spelling on purpose. `ingestable` is the retired name, still read
+// for one migration because the tag lives in vault frontmatter and the notes and
+// the code sync separately — whichever lands first must not empty the allowlist.
+writeFileSync(join(VAULT, "Home.md"), "---\ntags: [scope, classifiable]\n---\n\n# Home\n");
+writeFileSync(join(VAULT, "Braindance.md"), "---\ntags: [scope, ingestable]\n---\n\n# Braindance\n");
+// A hub that is a scope and nothing more: content and containment, but its name
+// never leaves the machine. This is what most hubs should be.
+writeFileSync(join(VAULT, "Writers.md"), "---\ntags: [scope]\n---\n\n# Writers\n");
 // An ordinary note that is NOT a scope. A proposed hub has to be refused against
 // this too: it is a name already on disk, so minting it would truncate a note.
 writeFileSync(join(VAULT, "Readme.md"), "---\ntags: [memo]\n---\n\n# Readme\n");
@@ -40,7 +45,7 @@ const check = (label: string, cond: boolean) => {
   console.log(`  ✓ ${label}`);
   passed++;
 };
-// The live ingestable list these tests validate against.
+// The live classifiable list these tests validate against — NOT `Writers`.
 const SCOPES = ["Home", "Braindance"];
 
 /** Every root name already on disk in the scratch vault, lowercased — what the
@@ -98,7 +103,7 @@ console.log("test: validate — scope membership is checked against the LIVE lis
   check("matching is exact — a near-miss is not a scope",
     validate(ok({ scope: "home" }), SCOPES)!.scope === null);
   // validate() runs again on every read, which exists for exactly this: an
-  // answer produced while a hub was ingestable, used after the tag came off.
+  // answer produced while a hub was classifiable, used after the tag came off.
   check("a scope that has since left the live list is dropped on re-validation",
     validate(ok(), ["Braindance"])!.scope === null);
   check("an empty live list drops every scope", validate(ok(), [])!.scope === null);
@@ -221,6 +226,21 @@ console.log("test: the fence is neutralised in every spelling");
     !has("</captured-note>x</captured-note>"));
   check("the note's own words survive — a note ABOUT injection still reads as itself",
     neutraliseFences("see </captured-note> here").includes("captured-note"));
+}
+
+console.log("test: the egress allowlist is opt-in, under either spelling");
+{
+  const { getClassifiableScopesStrict } = await import("../src/vault.js");
+  const live = getClassifiableScopesStrict();
+
+  check("a hub tagged `classifiable` is in", live.includes("Home"));
+  check("…and one still tagged `ingestable` is too, for this migration", live.includes("Braindance"));
+
+  // THE POINT OF THE SPLIT. `Writers` is a real hub — it can hold content and be
+  // named in `Contained By` — and its name is never sent anywhere.
+  check("a plain `scope` is NOT — a hub is not egress", !live.includes("Writers"));
+  check("nor is a memo", !live.includes("Readme"));
+  check("the list is exactly the two marked hubs", live.length === 2);
 }
 
 console.log(`\n${passed} checks passed`);

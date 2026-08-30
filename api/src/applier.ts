@@ -69,9 +69,9 @@ export function fileNote(p: Proposal, captureBody: string): BuiltNote & { conten
 
 /** A brand-new hub, written the way the `scope` funnel writes one — the same
  *  build(), so a hub minted by the applier is byte-for-byte the shape of one
- *  typed by hand. NOT `ingestable`: that tag is what puts a hub in a capture
- *  picker, and a hub minted while filing one note is a destination, not
- *  somewhere you have thought at yet. */
+ *  typed by hand. NOT `classifiable`: that tag is the egress allowlist, and a
+ *  hub minted while filing one note has not earned a standing place in every
+ *  future request to a model. Add it by hand if it should. */
 export const mintHub = (name: string, why: string): string =>
   compose(funnelById("scope")!.build!({ title: name, body: why }));
 

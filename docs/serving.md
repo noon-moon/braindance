@@ -169,6 +169,16 @@ code here can check that claim, and none pretends to.
   `safe()` guarantees no model-derived string reaching a note body contains a
   newline, and a heading needs a line start. That is the entire boundary, it is
   one function, and `approval.test.ts` asserts it by name.
+- **Only named hubs leave the box.** `classifiable` is an egress allowlist: a
+  scope carries it only if you have agreed that its NAME and a line of its
+  description may be sent to a model on every classification. A plain `scope` is
+  a full hub — content, containment, backlinks — that never leaves the machine,
+  and that is what most of them should be. There is deliberately no fallback: if
+  nothing carries the tag the list is empty, because an allowlist that grows when
+  its tag goes missing is not an allowlist. (The tag was `ingestable` and meant
+  "offer this in the capture form's dropdown". That form was deleted with the
+  api and the tag silently changed jobs; the membership had been chosen to look
+  tidy in a phone picker, not as a data-egress policy.)
 - **The intent call never sees the capture.** It is the one call whose output has
   authority — it can delete a note — so the untrusted text is not in the request
   at all. Everything a reply plausibly changes is already in the proposal; a
@@ -176,7 +186,7 @@ code here can check that claim, and none pretends to.
   the classifier again with its own fencing.
 - **Nothing the model says is taken at its word.** `validate()` and
   `validateAction()` check every value against the live vault: a scope must be a
-  live ingestable hub, a proposed hub must not already be a name on disk, a date
+  live classifiable hub, a proposed hub must not already be a name on disk, a date
   must be a real day, a priority must be one TaskNotes actually defines. Anything
   ambiguous degrades to `unclear` — never to `file`.
 - **There is a ceiling that does not live in the vault.** Every other guard here

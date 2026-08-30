@@ -149,7 +149,9 @@ export const openaiHarness = (): Harness => {
     async classify(noteText: string, scopes: ScopeBlurb[]): Promise<Suggestion> {
       // Fail CLOSED at the door, exactly as suggestFor does: an empty catalogue
       // is a live instruction not to send anything anywhere.
-      if (!scopes.length) throw new Error("no ingestable scopes — nothing to classify against");
+      // Transient for the same reason the native harness says so: an empty
+      // allowlist is a vault condition, identical for every note.
+      if (!scopes.length) throw new TransientError("no classifiable scopes — nothing to classify against", null);
       const body = neutraliseFences(noteText).slice(0, MAX_NOTE_CHARS);
       const parsed = await call(
         classifySystemPrompt(scopes, new Date().toISOString().slice(0, 10)),

@@ -26,14 +26,23 @@ file it is in: on a capture, "classify this"; on a proposal, "act on my answer".
 
 | | |
 |---|---|
-| `##capture` | inert — not a tag to Obsidian, not a signal to us |
 | `#capture` | armed — a real Obsidian tag, and the signal to act |
 
-**Arming is deleting one character.** That is the whole point of the pair. A
-template can stamp the disarmed form into every new note without queueing
-anything; the note carries a visible reminder of what to do with it; and a note
-you are three words into still has two hashes, so nothing is ever read
-mid-writing. No quiescence window, no clock to get wrong.
+**You type it when the thought is finished**, and nothing else about a note
+matters to this loop until you do. No quiescence window, no clock to get wrong.
+
+There used to be a disarmed spelling, `##capture`, inert to Obsidian and to us,
+so arming was deleting one character and a template could stamp the safe form
+into every new note. It is gone: it was machinery for a habit nobody had, and
+the protection it offered survives for a better reason — a note is invisible
+until you type the word, and you type it when you are done. Old notes carrying
+the retired spelling still read as unarmed, which is the only thing it has to do.
+
+**Nothing here writes the marker on your behalf.** `markUnclear` used to disarm a
+note it was handing back; it now removes the marker, because the honest way to
+say "I could not read this" is to give the note back unarmed. The single
+exception is a spawned capture (below), which is armed precisely so it cannot sit
+in the vault unreviewed.
 
 Armed it is a real tag on purpose — Obsidian's own search and tag pane show you
 everything waiting, with no view to build.
@@ -41,6 +50,24 @@ everything waiting, with no view to build.
 The pair is for **captures**, which is where it earns its keep. A proposal stamps
 no marker at all: an answer is one line typed in one go, so you type `#capture`
 after it, and the note carries no machine text you did not put there.
+
+## Notes the loop was asked to create
+
+A reply can ask for another note — *"also add one for Parable of the Sower"* —
+and the answer is a **capture**, not a filed note. It is written armed, so the
+next pass classifies it, proposes a filing, and waits for you to answer that
+proposal like any other.
+
+That shape is the whole safety argument, and it is why there is no cap on how
+many a reply may ask for: each one is reviewed before anything is filed, so the
+review you already do is the review this needs. There is no second path to keep
+in step with the first, because there is no second path.
+
+It is the only model-authored prose that enters the vault, so it says so, in the
+body: *"Asked for while triaging [[X]]. Written by the classifier, not by you."*
+In the body rather than frontmatter deliberately — filing copies the body
+verbatim and drops the rest, so provenance in frontmatter would disappear exactly
+when it began to matter.
 
 ## Nothing files unattended
 

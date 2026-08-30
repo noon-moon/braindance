@@ -17,7 +17,7 @@ import { reviseProposal, fileNote, mintHub, findCaptures } from "./applier.js";
 import { renderTask, taskConfig } from "./tasknotes.js";
 import {
   parseProposal, readReply, renderProposal, triageRel, keyOf, TRIAGE_DIR,
-  markUnclear, alreadyAsked, isAnswered, stripMarker,
+  markUnclear, alreadyAsked, isAnswered, stripMarker, renderSpawn,
   parseFailure, renderFailure, renderNoRoute, nextFailure, markFailed, clearFailure, holdsCapture, isDue, MAX_ATTEMPTS, type Proposal,
 } from "./approval.js";
 import { TransientError, RefusalError, NoRouteError, harness, routeFor } from "./harness.js";
@@ -262,9 +262,22 @@ async function pass(dry: boolean, limit: number): Promise<void> {
                      body: stripMarker(body), createdISO: now })
       : fileNote(p, body).content;
 
+    // Written BEFORE the note is filed and the proposal removed, so a spawn that
+    // cannot be written stops the whole action rather than leaving the reply
+    // half-honoured with nothing left to retry from.
+    const spawned = (p.spawn ?? []).map((sp) => ({
+      rel: uniqueDest(sp.title || `${key} — note`, false),
+      content: renderSpawn(sp.title, sp.body, key),
+    }));
+    for (const sp of spawned) console.log(`   spawn → ${sp.rel}  (armed; triaged next pass)`);
     console.log(`   file  → ${dest}`);
     if (p.newScope) console.log(`   mint  → ${noteName(p.newScope.name)}.md`);
-    if (dry) { console.log(content.split("\n").map((l) => "   | " + l).join("\n")); continue; }
+    if (dry) {
+      for (const sp of spawned) console.log(sp.content.split("\n").map((l) => "   | " + l).join("\n"));
+      console.log(content.split("\n").map((l) => "   | " + l).join("\n"));
+      continue;
+    }
+    for (const sp of spawned) writeFileSync(abs(sp.rel), sp.content);
     if (p.newScope) writeFileSync(abs(`${noteName(p.newScope.name)}.md`), mintHub(p.newScope.name, p.newScope.why));
     mkdirSync(abs(dest.slice(0, dest.lastIndexOf("/"))), { recursive: true });
     writeFileSync(abs(dest), content);

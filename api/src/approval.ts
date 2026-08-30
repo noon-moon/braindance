@@ -68,19 +68,28 @@ const REPLY_HEADING = "## Your call";
  *  a proposal it means "act on my answer". There is no second word to remember
  *  and no wrong one to use.
  *
- *  ── ARMED AND DISARMED ──────────────────────────────────────────────────────
+ *  ── THERE IS NO DISARMED FORM ───────────────────────────────────────────────
  *
- *      ##capture   inert. Obsidian does not read it as a tag, and neither do we.
- *       #capture   armed. A real Obsidian tag, and the signal to act.
+ *  There used to be. `##capture` was inert — not a tag to Obsidian and not a
+ *  signal here — so arming was DELETING ONE CHARACTER, a template could stamp
+ *  the safe form into every new note, and a note you were three words into still
+ *  had two hashes.
  *
- *  Arming is DELETING ONE CHARACTER, which is the whole reason for the pair. A
- *  template can stamp the disarmed form into every new note without queueing
- *  anything, the note carries a visible reminder of what to do with it, and
- *  finishing a thought costs one keystroke on a phone rather than typing a word.
- *  Nothing is ever picked up mid-writing, because a note you are three words
- *  into still has two hashes.
+ *  It is gone because it was machinery for a habit nobody has. The marker is
+ *  typed by hand, when the thought is finished, which is the same moment the
+ *  deleted character would have been removed — so the pair bought a keystroke
+ *  and cost a second spelling to explain, to render, to strip, and to get wrong.
+ *  The protection it offered survives intact and for a better reason: a note is
+ *  invisible to this loop until you type the marker, and you type it when you
+ *  are done.
  *
- *  Armed, it is a real tag on purpose: Obsidian's own search and tag pane then
+ *  What follows from that, and is easy to miss: **nothing here may write the
+ *  marker on your behalf, and nothing may put a safety back on.** `markUnclear`
+ *  used to disarm; it now REMOVES the marker, because the honest way to say "I
+ *  could not read this" is to hand the note back unarmed and let the person type
+ *  the word again when they have answered.
+ *
+ *  Armed, it is a real Obsidian tag on purpose: its own search and tag pane then
  *  show you everything waiting, with no view to build. */
 export const MARKER = "capture";
 
@@ -96,9 +105,10 @@ function overProse(text: string, fn: (s: string) => string): string {
     .join("");
 }
 
-/** Armed? `#capture` in prose (never preceded by another hash — that is the
- *  disarmed form) or as a frontmatter tag, which is the same real tag by another
- *  spelling. Never inside code. */
+/** Armed? `#capture` in prose (never preceded by another hash — that is
+ *  the retired disarmed spelling, which old notes may still carry) or as a
+ *  frontmatter tag, which is the same real tag by another spelling. Never inside
+ *  code. */
 export function hasTag(text: string, name: string): boolean {
   let data: Record<string, unknown> = {};
   try {
@@ -141,14 +151,19 @@ export const PRIVATE = "private";
 
 export const isPrivate = (text: string): boolean => hasTag(text, PRIVATE);
 
-/** Put the safety back on: `#capture` → `##capture`, in prose only.
+/** Hand the note back UNARMED, by removing the marker rather than defusing it.
  *
- *  Used when the loop hands a note back to the person. Re-arming is then the
- *  same one keystroke it always was, and — the point — the next keystroke of a
- *  half-rewritten answer is not read as a finished one. */
-export const disarm = (text: string): string =>
+ *  This was `disarm`, and it wrote `#capture` → `##capture`. There is no
+ *  disarmed spelling any more (see `MARKER`), and inventing one here would be
+ *  the loop teaching a form it has stopped recognising.
+ *
+ *  Used when the loop returns a note to the person. Re-arming is then typing the
+ *  word, which is what arming always is now — and the point is unchanged: the
+ *  next keystroke of a half-rewritten answer is not read as a finished one. */
+export const unarm = (text: string): string =>
   overProse(text, (part) =>
-    part.replace(new RegExp(`(^|[^\\w/#-])#${MARKER}(?![\\w/-])`, "gu"), `$1##${MARKER}`));
+    part.replace(new RegExp(`(^|[ \\t])#${MARKER}(?![\\w/-])`, "gu"), ""))
+    .replace(/[ \t]+$/gm, "");
 
 /** Remove the marker entirely, armed or disarmed, taking the space BEFORE it
  *  rather than after — dropping the trailing one joins a mid-sentence removal to
@@ -337,6 +352,36 @@ export function parseFailure(text: string): Failure | null {
   };
 }
 
+/** A note the loop was asked to create, written as a CAPTURE.
+ *
+ *  The only model-authored prose that enters this vault, and it enters through
+ *  the front door: armed, so the next pass classifies it; proposed, so you see
+ *  what it wants to do with it; filed only when you answer. Every guarantee the
+ *  loop makes about a capture you typed applies unchanged, because this IS a
+ *  capture — there is no second path and nothing to keep in step.
+ *
+ *  Armed on purpose, which is the one place this loop writes the marker. The
+ *  marker means "finished", and a spawned note is finished the moment the reply
+ *  asking for it was: waiting for a hand to arm it would leave model text
+ *  sitting in the vault unreviewed, which is the opposite of what it is for.
+ *
+ *  It says where it came from, in the note, in prose. A note you did not type
+ *  must never be mistakable for one you did — and the provenance line is inside
+ *  the body deliberately, so it survives into the filed note rather than living
+ *  in frontmatter that filing would drop. */
+export function renderSpawn(title: string, body: string, fromKey: string): string {
+  return [
+    title ? `# ${safe(title)}` : "",
+    "",
+    body.trim(),
+    "",
+    `*Asked for while triaging [[${fromKey}]]. Written by the classifier, not by you — edit it before filing.*`,
+    "",
+    `#${MARKER}`,
+    "",
+  ].filter((l, i, a) => !(l === "" && a[i - 1] === "")).join("\n");
+}
+
 /** A capture's KEY — its basename, which names the triage note beside it. Not a
  *  timestamp: a capture is whatever Obsidian wrote, wherever "default location
  *  for new notes" points, and it may well be called `Building Effective Agents`. */
@@ -372,6 +417,11 @@ export interface Proposal {
    *  on the reference schema, and the legacy media/resource funnels already
    *  write it. This makes it reachable from the two funnels people actually use. */
   url: string | null;
+  /** Notes the reply asked to create alongside this one. Never persisted to the
+   *  proposal note — it exists only between reading an answer and acting on it,
+   *  because a spawn is a thing that HAPPENS once, not a property of a proposal
+   *  that could be replayed by a later pass. */
+  spawn?: { title: string; body: string }[];
   rationale: string;
 }
 
@@ -430,11 +480,8 @@ export function renderProposal(captureRel: string, p: Proposal): string {
     REPLY_HEADING,
     "",
     "",
-    // No marker stamped here, disarmed or otherwise. The pair earns its keep on
-    // a CAPTURE, which is written over minutes and must not be read mid-thought.
-    // An answer is one line typed in one go, and the person types the marker
-    // after it either way — so a pre-stamped one is machine text in a note you
-    // read on a phone, saving a keystroke nobody was spending.
+    // No marker stamped here. Nothing in this loop writes the marker on anyone's
+    // behalf — see `MARKER`. You type it when the answer is finished.
     "---",
     "",
     "### The capture",
@@ -543,10 +590,10 @@ export function markUnclear(text: string, question: string, reply: string): stri
     ? out.replace(/^bd_asked:.*$/m, `${K.asked}: ${fp}`)
     : out.replace(/^bd_state:.*$/m, (m) => `${m}\n${K.asked}: ${fp}`);
   out = out.replace(HEADING_LINE, `${REPLY_HEADING} — ${safe(question)} · re-arm the marker when you have`);
-  // The marker means "finished". Asking again makes that untrue, so the safety
-  // goes back on — otherwise the next keystroke of a corrected answer is read
-  // mid-edit, which is the whole thing the marker exists to prevent.
-  return disarm(out);
+  // The marker means "finished". Asking again makes that untrue, so it comes
+  // OFF — otherwise the next keystroke of a corrected answer is read mid-edit,
+  // which is the whole thing the marker exists to prevent.
+  return unarm(out);
 }
 
 /** The reply heading as a matcher — `markUnclear` and `markFailed` both write
@@ -575,11 +622,11 @@ const upsert = (text: string, key: string, value: string): string =>
  *
  *  ── WHY IT DOES NOT DISARM ──────────────────────────────────────────────────
  *
- *  `markUnclear` disarms, because there the answer WAS read and found wanting:
+ *  `markUnclear` unarms, because there the answer WAS read and found wanting:
  *  the person has to change it, and a half-rewritten one must not be re-read
  *  mid-edit. Here the answer was never read at all — the transport failed. It is
- *  still exactly as good as it was, and disarming would mean hand-re-arming
- *  every queued note after an outage clears. The marker means "I have finished
+ *  still exactly as good as it was, and unarming would mean re-typing the marker
+ *  on every queued note after an outage clears. The marker means "I have finished
  *  answering", and that is still true. */
 export function markFailed(text: string, f: Failure): string {
   let out = text.replace(/^bd_state:.*$/m, `${K.state}: ${f.dead ? "dead" : "failed"}`);

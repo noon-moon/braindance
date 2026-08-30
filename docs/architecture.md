@@ -80,8 +80,8 @@ you arm a marker  →  the agent proposes, in a note, in the vault
 
 Everything that makes this safe is in the shape, not in the model:
 
-- **The marker is armed by deleting a character** (`##capture` → `#capture`), so
-  a template can carry it disarmed and nothing is ever read mid-writing.
+- **The marker is typed by hand when a thought is finished**, so nothing is ever
+  read mid-writing, and nothing in the loop writes it on your behalf.
 - **Only the answer is an instruction.** The captured text is data, fenced; the
   reply region is bounded by a rule the model cannot forge (`safe()` guarantees
   no model-derived string reaching a note body contains a newline).

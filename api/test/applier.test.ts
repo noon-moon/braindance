@@ -28,9 +28,9 @@ console.log("test: what asks to be triaged");
   // frontmatter strips hashes — which is why a template uses the inline one.)
   check("a frontmatter tag counts", isCapture("---\ntags:\n  - capture\n---\n\nthing\n"));
 
-  // The whole point of the pair: a template can stamp the disarmed form into
+  // A RETIRED spelling, kept working: nothing writes it now, but notes made
   // every new note without queueing a single one.
-  check("the DISARMED form is invisible", !isCapture("a thought I have not finished\n\n##capture\n"));
+  check("the retired double-hash spelling is invisible", !isCapture("a thought I have not finished\n\n##capture\n"));
   check("an unmarked note is invisible", !isCapture("a thought I have not finished"));
   check("the boundary holds", !isCapture("thing #captured") && !isCapture("thing #capture-ideas"));
   check("prose containing the word is not a marker", !isCapture("I should capture this"));
@@ -59,7 +59,7 @@ console.log("test: finding them in a vault");
   check("an armed note at the root is found", found.includes("armed.md"));
   check("…and one a level down", found.includes("daily/Daily-2026-08-23.md"));
   check("an unmarked note is not", !found.includes("plain.md"));
-  check("a DISARMED note is not — the template case", !found.includes("disarmed.md"));
+  check("a note carrying only the retired spelling is not", !found.includes("disarmed.md"));
   // _ephemeral is 264 MB of scratch in the real vault; walking it is not an
   // option, and its contents are non-canonical by definition.
   check("underscore directories are never walked",

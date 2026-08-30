@@ -30,6 +30,7 @@ export function reviseProposal(p: Proposal, r: Revision): Proposal {
     due: r.due !== undefined ? r.due : p.due,
     priority: r.priority !== undefined ? r.priority : p.priority,
     url: r.url !== undefined ? r.url : p.url,
+    spawn: r.spawn ?? [],
   };
 }
 

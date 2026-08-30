@@ -30,9 +30,8 @@ the timer    classify what is armed → a proposal in _triage/
 Obsidian     read the proposal, answer in it, arm it → filed
 ```
 
-The marker is armed by **deleting a character** (`##capture` → `#capture`), so a
-template can carry it disarmed and a note you are three words into is invisible.
-Nothing files without an answer you armed by hand. Details:
+You type `#capture` when the thought is finished; until then the note is
+invisible to the loop. Nothing files without an answer you armed by hand. Details:
 [`docs/serving.md`](docs/serving.md).
 
 ## The rule

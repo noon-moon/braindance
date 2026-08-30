@@ -47,8 +47,8 @@ console.log("test: funnel registry");
     JSON.stringify(hub.frontmatter.Contains) === '["\\"[[Scales]]\\""]'
     && JSON.stringify(hub.frontmatter["Contained By"]) === '["\\"[[Music]]\\""]');
   check("…and no heading, like the vault's own hubs", !hub.body.includes("#"));
-  check("the ingestable box stacks a tag rather than replacing one",
-    JSON.stringify(funnelById("scope")!.build({ title: "X", ingestable: "1" }).frontmatter.tags) === '["scope","ingestable"]');
+  check("the classifiable box stacks a tag rather than replacing one",
+    JSON.stringify(funnelById("scope")!.build({ title: "X", classifiable: "1" }).frontmatter.tags) === '["scope","classifiable"]');
 }
 
 // The scope field stopped being a <select> when it went multi-valued, so this is

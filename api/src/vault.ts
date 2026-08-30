@@ -88,17 +88,39 @@ export function index(): Index {
  *  the collision check on the very next capture in the same pass. */
 export const invalidate = (): void => { cache = null; };
 
-/** The scopes explicitly marked `ingestable`, and NOTHING else. No fallback: an
- *  empty answer means the vault marked nothing, which is a real answer.
+/** THE EGRESS ALLOWLIST: the scope names this vault is willing to send to a
+ *  model, and nothing else.
  *
- *  This is the accessor for any caller where the list is an ALLOWLIST — chiefly
- *  suggest.ts, where the names (and a line of each hub's description) leave the
- *  box. An allowlist that grows when its tag goes missing is not an allowlist,
- *  so a bulk frontmatter edit that drops `ingestable` must shrink egress to
- *  nothing rather than silently widen it to every scope in the vault. */
-export const getIngestableScopesStrict = (): string[] =>
+ *  It was called `ingestable` and it meant "offer this hub in the capture form's
+ *  scope dropdown". That form was deleted with the api, and the tag silently
+ *  changed jobs without changing its name — its only consumer now is
+ *  `suggest.ts`, where these names AND a line of each hub's description leave
+ *  the box on every classification. A membership list chosen to look tidy in a
+ *  phone picker became a data-egress policy nobody had decided.
+ *
+ *  `classifiable` says what it now does: the classifier may name this hub, and
+ *  you have agreed that this hub's name is transmitted. `scope` is orthogonal —
+ *  a hub can hold content and containment while never leaving the machine, which
+ *  is what most of them should do.
+ *
+ *  NO FALLBACK, and that is the point. An empty answer means the vault marked
+ *  nothing, which is a real answer. An allowlist that grows when its tag goes
+ *  missing is not an allowlist, so a bulk frontmatter edit that drops the tag
+ *  must shrink egress to nothing rather than silently widen it to every scope.
+ *  (`_meta/Tags.md` claimed the opposite for as long as the picker existed. It
+ *  was wrong, and wrong in the direction that leaks.)
+ *
+ *  BOTH SPELLINGS ARE READ, for one migration only. The tag lives in vault
+ *  frontmatter, so code and notes move in separate repos on separate syncs, and
+ *  whichever lands first must not empty the allowlist in the window before the
+ *  other arrives. Drop `ingestable` here once no note carries it. */
+const CLASSIFIABLE = "classifiable";
+const CLASSIFIABLE_LEGACY = "ingestable";
+
+export const getClassifiableScopesStrict = (): string[] =>
   [...index().notes.values()]
-    .filter((n) => n.tags.includes("scope") && n.tags.includes("ingestable"))
+    .filter((n) => n.tags.includes("scope")
+      && (n.tags.includes(CLASSIFIABLE) || n.tags.includes(CLASSIFIABLE_LEGACY)))
     .map((n) => n.name)
     .sort();
 

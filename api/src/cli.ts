@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { VAULT } from "./config.js";
 import { scopeCatalogue, type Suggestion } from "./suggest.js";
 import { funnelById } from "./funnels.js";
-import { getIngestableScopesStrict, takenRootNames, invalidate } from "./vault.js";
+import { getClassifiableScopesStrict, takenRootNames, invalidate } from "./vault.js";
 import { slug, noteName } from "./notes.js";
 import { validateAction } from "./intent.js";
 import { reviseProposal, fileNote, mintHub, findCaptures } from "./applier.js";
@@ -200,7 +200,7 @@ async function pass(dry: boolean, limit: number): Promise<void> {
     }
 
     done += 1;
-    const scopes = getIngestableScopesStrict();
+    const scopes = getClassifiableScopesStrict();
     // The vault's day, not UTC's — "friday" has to be resolved against the day
     // the person is living in, and UTC is already tomorrow for half of every
     // evening in the Americas. Same trap as the receipt stamp.

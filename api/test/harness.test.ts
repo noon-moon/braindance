@@ -89,5 +89,21 @@ console.log("test: the registry");
     (e as Error).message.includes("polytoken") && (e as Error).message.includes("anthropic"));
 }
 
+console.log("test: an empty allowlist is a vault condition, never the note's fault");
+{
+  __resetLedgerForTests();
+  const h = await harness("anthropic");
+  // No network: `suggestFor` refuses before it builds a client.
+  const e = await caught(() => h.classify("a thought", []));
+  check("classifying against nothing fails", e !== null);
+  // THE JUDGEMENT. An empty allowlist looks identical for every note in the
+  // queue — a vault that marked nothing, or a tag rename that landed on one side
+  // before the other. Blaming the note spends one of its four lives per pass and
+  // buries the whole queue in four, for a condition no note caused.
+  check("…as a TRANSIENT failure, so it costs no note one of its four lives",
+    e instanceof TransientError);
+  check("…saying what is missing", (e as Error).message.includes("classifiable"));
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`\n${passed} checks passed`);

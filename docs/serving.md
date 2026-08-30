@@ -186,7 +186,7 @@ code here can check that claim, and none pretends to.
   the classifier again with its own fencing.
 - **Nothing the model says is taken at its word.** `validate()` and
   `validateAction()` check every value against the live vault: a scope must be a
-  live classifiable hub, a proposed hub must not already be a name on disk, a date
+  note that EXISTS, a proposed hub must not already be a name on disk, a date
   must be a real day, a priority must be one TaskNotes actually defines. Anything
   ambiguous degrades to `unclear` — never to `file`.
 - **There is a ceiling that does not live in the vault.** Every other guard here

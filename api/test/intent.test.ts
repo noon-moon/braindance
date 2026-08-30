@@ -20,7 +20,14 @@ const check = (label: string, cond: boolean) => {
 };
 
 const SCOPES = ["AI Orchestration", "Songwriting", "Music", "Phrases"];
-const TAKEN = new Set(["ai orchestration", "songwriting", "music", "phrases", "readme"]);
+// lowercase → the name as written, because a match usually becomes a wikilink.
+// `Octavia Butler` and `Readme` are notes that are NOT classifiable scopes: one
+// is a thing you file books under, the other is neither.
+const TAKEN = new Map([
+  ["ai orchestration", "AI Orchestration"], ["songwriting", "Songwriting"],
+  ["music", "Music"], ["phrases", "Phrases"], ["readme", "Readme"],
+  ["octavia butler", "Octavia Butler"],
+]);
 const V = (over: Record<string, unknown> = {}): Action =>
   validateAction({ action: "file", title: null, funnel: null, scope: null, newScope: null, newScopeWhy: null, due: null, priority: null, note: "", ...over }, SCOPES, TAKEN);
 
@@ -67,8 +74,14 @@ console.log("test: a hub the model named must EXIST, or be an explicit creation"
   // a misreading is exactly what `unclear` exists to prevent.
   check("two hubs that do not exist is unclear, not two new hubs",
     V({ scope: ["Woodworking", "Joinery"] }).kind === "unclear");
-  check("a name already taken by another note is unclear — creating it would overwrite",
-    V({ scope: ["Readme"] }).kind === "unclear");
+  // This used to be `unclear`, on the grounds that minting a hub called `Readme`
+  // would truncate the note of that name. The protection is now stronger and
+  // earlier: a name that EXISTS is never a creation request at all, so there is
+  // nothing to overwrite — it is a note to be contained by, which is what
+  // `scope`-is-only-an-index-marker means in practice.
+  check("naming a note that exists files into it rather than minting over it",
+    V({ scope: ["Readme"] }).kind === "file");
+  check("…and never proposes creating it", (V({ scope: ["Readme"] }) as any).revised.newScope === undefined);
   check("a name a hub filename cannot hold is unclear", V({ newScope: "Home/DIY" }).kind === "unclear");
   check("newScope naming a hub that exists is treated as filing into it",
     r(V({ newScope: "Music" })).scopes.join() === "Music");
@@ -143,6 +156,34 @@ console.log("test: notes the reply asks to create");
   check("a non-object entry asks again", sp(["just a string"]).kind === "unclear");
   check("an untitled one is fine — the body is what matters",
     (sp([{ title: "", body: "a thought" }]) as any).revised.spawn?.length === 1);
+}
+
+console.log("test: a reply may name any note, not only a classifiable scope");
+{
+  const sc = (scope: unknown): Action => V({ scope });
+
+  // `scope` marks a note whose structural purpose is to be an index. It is not
+  // a licence to be contained BY — an author is neither an index nor too small
+  // to gather books under.
+  check("a note that exists but is not a scope is a valid container",
+    (sc(["Octavia Butler"]) as any).revised.scopes?.[0] === "Octavia Butler");
+  check("…written with the casing the note has, so the wikilink resolves",
+    (sc(["octavia BUTLER"]) as any).revised.scopes?.[0] === "Octavia Butler");
+  check("mixed with a real scope, order is kept and the first is primary",
+    JSON.stringify((sc(["Songwriting", "Octavia Butler"]) as any).revised.scopes) === '["Songwriting","Octavia Butler"]');
+  check("a classifiable scope still resolves the same way",
+    (sc(["songwriting"]) as any).revised.scopes?.[0] === "Songwriting");
+  check("no duplicates, however it is named",
+    (sc(["Songwriting", "songwriting"]) as any).revised.scopes?.length === 1);
+
+  // THE GUARANTEE THAT SURVIVES: the name has to be real. What changed is which
+  // list counts as real — the model still only picks from `liveScopes`, but you
+  // may name anything in your vault.
+  check("a name that exists nowhere is still a creation request",
+    (sc(["Woodworking"]) as any).revised.newScope === "Woodworking");
+  check("…and two of them is a misreading, not two new hubs",
+    sc(["Woodworking", "Beekeeping"]).kind === "unclear");
+  check("a name no note can have is refused outright", sc(["[[nope]]"]).kind === "unclear");
 }
 
 console.log(`\n${passed} checks passed`);

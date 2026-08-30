@@ -145,15 +145,24 @@ export const noteExists = (name: string): boolean => index().notes.has(name);
  *
  *  The index is unioned in rather than replaced so a directory we can't read
  *  degrades to the old answer instead of declaring every name free. */
-export function takenRootNames(): Set<string> {
-  const taken = new Set<string>();
-  for (const name of index().notes.keys()) taken.add(name.toLowerCase());
+export function takenRootNames(): Map<string, string> {
+  // Keyed by lowercase so lookups are case-insensitive, VALUED by the name as
+  // written — because a caller that finds a match usually needs to write it into
+  // a `[[wikilink]]`, and Obsidian resolves those by basename. Returning only
+  // the lowercased form made this a membership test and nothing else, which was
+  // enough while the only question was "is this name already taken".
+  const taken = new Map<string, string>();
+  for (const name of index().notes.keys()) taken.set(name.toLowerCase(), name);
   try {
     for (const e of readdirSync(VAULT, { withFileTypes: true })) {
-      if (e.isFile() && e.name.toLowerCase().endsWith(".md")) taken.add(e.name.slice(0, -3).toLowerCase());
+      if (e.isFile() && e.name.toLowerCase().endsWith(".md")) {
+        const n = e.name.slice(0, -3);
+        if (!taken.has(n.toLowerCase())) taken.set(n.toLowerCase(), n);
+      }
     }
   } catch { /* unreadable vault dir — the index is all we have */ }
   return taken;
 }
+
 
 

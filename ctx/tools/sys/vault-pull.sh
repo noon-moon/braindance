@@ -44,6 +44,7 @@
 #
 # Usage:
 #   vault-pull.sh              # pull once (this is what the timer runs)
+#   BD_PULL_ANYWAY=1 vault-pull.sh   # pull even with Obsidian running (see below)
 #   vault-pull.sh --install    # install a launchd agent (macOS), default 15 min
 #   vault-pull.sh --install --interval 30
 #   vault-pull.sh --uninstall  # remove it
@@ -110,6 +111,53 @@ resolve_vault() {
   printf '%s\n' "${VAULT_PATH:-}"
 }
 
+# ── DEFER ONLY WHEN OBSIDIAN IS AUTO-COMMITTING ─────────────────────────────
+#
+# This tool changes files on disk. Obsidian holds the vault in memory and writes
+# its own copies back on its own schedule, and it does not reliably notice a bulk
+# change made underneath it. On its own that is survivable: the stale writes sit
+# as uncommitted local changes, this tool sees a dirty tree, holds back, and says
+# so.
+#
+# What makes it dangerous is obsidian-git's AUTO-COMMIT. Its order is commit,
+# then pull, then push — so a stale tree is captured in the commit before any
+# pull can correct it, and `pullBeforePush` cannot help. The staleness is then
+# pushed as though it were an edit.
+#
+# That happened. A 43-file frontmatter migration was reverted wholesale by a
+# `vault backup` commit that was a LINEAR DESCENDANT of the migration itself, and
+# it took `_meta/Topics.md` with it — a generated file nobody hand-edits, which
+# is what proves those writes were a cache flush and not anybody's editing.
+#
+# So the condition is not "is Obsidian running" and not "is obsidian-git
+# installed". It is precisely: IS SOMETHING GOING TO COMMIT WHATEVER IS ON DISK
+# WITHOUT LOOKING. Auto-commit off, and there is nothing to defer to.
+#
+# THE DEFAULT IS TO PULL. Deferring is only chosen on positive evidence, because
+# the two failures are not equal: pulling behind a tool that will overwrite it
+# costs a revert that git remembers, while not pulling costs silent staleness —
+# and silent staleness is the entire reason this script exists. Unreadable
+# settings, no python, an unfamiliar layout: all of those mean pull.
+obsidian_autocommits() {
+  local vault="$1" data
+  pgrep -x Obsidian >/dev/null 2>&1 || return 1
+  grep -q '"obsidian-git"' "$vault/.obsidian/community-plugins.json" 2>/dev/null || return 1
+  data="$vault/.obsidian/plugins/obsidian-git/data.json"
+  [ -r "$data" ] || return 1
+  # `autoSaveInterval` is minutes between automatic commits, 0 meaning never;
+  # `autoBackupAfterFileChange` commits on save instead. Either one is enough.
+  python3 - "$data" <<'PYEOF' 2>/dev/null
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(1)          # cannot tell -> pull
+interval = d.get("autoSaveInterval") or 0
+on_change = bool(d.get("autoBackupAfterFileChange"))
+raise SystemExit(0 if (interval and interval > 0) or on_change else 1)
+PYEOF
+}
+
 do_pull() {
   local vault
   vault="$(resolve_vault)"
@@ -120,6 +168,11 @@ do_pull() {
   if ! git -C "$vault" rev-parse --git-dir >/dev/null 2>&1; then
     note error "$vault is not a git checkout — nothing to pull"
     return 1
+  fi
+
+  if [ -z "${BD_PULL_ANYWAY:-}" ] && obsidian_autocommits "$vault"; then
+    note deferred "obsidian-git is auto-committing — it owns syncing; not pulling behind it"
+    return 0
   fi
 
   local branch

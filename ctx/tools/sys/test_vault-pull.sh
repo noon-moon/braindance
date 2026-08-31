@@ -112,5 +112,45 @@ out="$(VAULT_PATH="$TMP/plain" bash "$PULL" --pull 2>&1)"; rc=$?
 check "non-git dir exits 1" "$([ $rc -eq 1 ] && echo 0 || echo 1)"
 check "…and says so" "$(echo "$out" | grep -q 'not a git checkout' && echo 0 || echo 1)"
 
+
+echo "test: it defers only to a tool that will COMMIT what is on disk"
+# The mechanism this guards: obsidian-git commits, THEN pulls, then pushes. A
+# stale working tree is captured in the commit before any pull can correct it,
+# so `pullBeforePush` cannot help. That is how a 43-file migration was reverted
+# by a `vault backup` commit descending from the migration itself.
+#
+# Auto-commit off and there is nothing to defer to. The default is to PULL,
+# because the two failures are not equal: pulling behind a tool that overwrites
+# costs a revert git remembers, while not pulling costs silent staleness — the
+# very thing this script exists to prevent.
+eval "$(sed -n '/^obsidian_autocommits()/,/^}/p' "$PULL")"
+mkgit() {
+  local v; v="$(mktemp -d)"; mkdir -p "$v/.obsidian/plugins/obsidian-git"
+  printf '["obsidian-git"]' > "$v/.obsidian/community-plugins.json"
+  printf '%s' "$1" > "$v/.obsidian/plugins/obsidian-git/data.json"; echo "$v"
+}
+verdict() { obsidian_autocommits "$1" && echo defer || echo pull; }
+
+if pgrep -x Obsidian >/dev/null 2>&1; then
+  V="$(mkgit '{"autoSaveInterval":5}')"
+  check "auto-commit on a timer defers" "$([ "$(verdict "$V")" = defer ] && echo 0 || echo 1)"
+  V="$(mkgit '{"autoSaveInterval":0,"autoBackupAfterFileChange":true}')"
+  check "commit-on-change defers too" "$([ "$(verdict "$V")" = defer ] && echo 0 || echo 1)"
+  V="$(mkgit '{"autoSaveInterval":0}')"
+  check "auto-commit off pulls" "$([ "$(verdict "$V")" = pull ] && echo 0 || echo 1)"
+  # The live configuration at the time this was written: pushing every minute
+  # with pullBeforePush, but never committing. Nothing can launder staleness.
+  V="$(mkgit '{"autoSaveInterval":0,"autoPushInterval":1,"pullBeforePush":true}')"
+  check "push-only, no auto-commit, pulls" "$([ "$(verdict "$V")" = pull ] && echo 0 || echo 1)"
+  V="$(mkgit 'not json at all')"
+  check "unreadable settings pull — cannot tell means pull" "$([ "$(verdict "$V")" = pull ] && echo 0 || echo 1)"
+  V="$(mkgit '{"autoSaveInterval":5}')"; rm "$V/.obsidian/community-plugins.json"
+  check "plugin not enabled pulls" "$([ "$(verdict "$V")" = pull ] && echo 0 || echo 1)"
+  V="$(mkgit '{"autoSaveInterval":5}')"; rm "$V/.obsidian/plugins/obsidian-git/data.json"
+  check "no settings file pulls" "$([ "$(verdict "$V")" = pull ] && echo 0 || echo 1)"
+else
+  echo "  · skipped — Obsidian is not running, so the pgrep gate short-circuits every case"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

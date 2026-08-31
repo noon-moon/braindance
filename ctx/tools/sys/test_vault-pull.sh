@@ -101,8 +101,26 @@ check "HEAD did not move — no silent merge" "$([ "$(git -C "$DESK" rev-parse H
 check "no merge commit was created" "$([ -z "$(git -C "$DESK" log --merges --oneline)" ] && echo 0 || echo 1)"
 check "the local commit is still there" "$(git -C "$DESK" log --oneline | grep -q 'desk commit' && echo 0 || echo 1)"
 
-echo "test: it never pushes — publishing stays deliberate"
-check "origin still lacks the desk-only commit" "$(git -C "$ORIGIN" log --oneline --all | grep -q 'desk commit' && echo 1 || echo 0)"
+echo "test: it PUBLISHES commits you made, and only those"
+# This used to assert the opposite — "it never pushes, publishing stays
+# deliberate". The line was one step too far out: the deliberate act is the
+# COMMIT, and refusing to send one you had already made protected nothing while
+# stranding work on the desk.
+# The divergence above is still standing, and a diverged repo is deliberately
+# left alone — so clear it the way a person would before testing the push.
+git_q "$DESK" pull --rebase --quiet
+out="$(run)"; rc=$?
+check "a desk-only commit is published" "$(git -C "$ORIGIN" log --oneline --all | grep -q 'desk commit' && echo 0 || echo 1)"
+check "…and says so" "$(echo "$out" | grep -q 'published' && echo 0 || echo 1)"
+check "exits 0" "$([ $rc -eq 0 ] && echo 0 || echo 1)"
+
+echo "test: but it still never COMMITS — that is the whole line"
+printf 'a note nobody chose to publish\n' > "$DESK/uncommitted.md"
+out="$(run)"; rc=$?
+check "an uncommitted file is left uncommitted" "$(git -C "$DESK" status --porcelain | grep -q 'uncommitted.md' && echo 0 || echo 1)"
+check "…and never reaches the remote" "$(git -C "$ORIGIN" log --oneline --all -p 2>/dev/null | grep -q 'nobody chose to publish' && echo 1 || echo 0)"
+check "…and nothing was staged" "$(git -C "$DESK" diff --cached --quiet && echo 0 || echo 1)"
+rm -f "$DESK/uncommitted.md"
 
 echo "test: a missing or non-git vault fails loudly rather than silently"
 out="$(VAULT_PATH="$TMP/nope" bash "$PULL" --pull 2>&1)"; rc=$?

@@ -11,9 +11,9 @@ import { VAULT } from "./config.js";
 import { scopeCatalogue, type Suggestion } from "./suggest.js";
 import { funnelById } from "./funnels.js";
 import { getClassifiableScopesStrict, takenRootNames, invalidate } from "./vault.js";
-import { slug, noteName } from "./notes.js";
+import { noteName } from "./notes.js";
 import { validateAction } from "./intent.js";
-import { reviseProposal, fileNote, mintHub, findCaptures } from "./applier.js";
+import { reviseProposal, fileNote, mintHub, findCaptures, uniqueTaskDest, qualify } from "./applier.js";
 import { renderTask, taskConfig } from "./tasknotes.js";
 import {
   parseProposal, readReply, renderProposal, triageRel, keyOf, TRIAGE_DIR,
@@ -83,13 +83,26 @@ function remove(path: string): void {
   }
 }
 
-function uniqueDest(title: string, asTyped: boolean): string {
-  const base = asTyped ? noteName(title) : slug(title);
+/** Where a note goes. THE FILENAME IS THE TITLE — `docs/vault.md` states it as
+ *  an invariant, and this loop was quietly breaking it.
+ *
+ *  Memos used to be slugged, on the reasoning that a hub is addressed by its
+ *  filename while a memo is "found by its title and its link, and the filename
+ *  is just a legible handle". The second half does not hold in a flat vault:
+ *  Obsidian resolves `[[wikilinks]]` by basename, so `[[Blood Child]]` never
+ *  reaches `blood-child.md`. Every memo this loop filed was unlinkable by the
+ *  name it displays — `at-proto-llm-mcp-link.md` titled "AT Proto LLM MCP link".
+ *
+ *  So there is one rule now, and `noteName` is it: keep what a person typed and
+ *  drop only what a filename or a wikilink cannot hold. */
+function uniqueDest(title: string): string {
+  const base = noteName(title) || "Note";
   const taken = takenRootNames();
   let name = base;
-  for (let i = 2; taken.has(name.toLowerCase()); i++) name = `${base}-${i}`;
+  for (let i = 2; taken.has(name.toLowerCase()); i++) name = qualify(base, i);
   return `${name}.md`;
 }
+
 
 /** Classify one capture, or record why it could not be.
  *
@@ -254,9 +267,7 @@ async function pass(dry: boolean, limit: number): Promise<void> {
     // capture's prose rides in that note's body, so detail that used to need a
     // memo of its own no longer does.
     const isTask = p.kind === "todo";
-    const dest = isTask
-      ? `${taskConfig().folder}/${noteName(p.title)}.md`
-      : uniqueDest(p.title, p.kind === "scope");
+    const dest = isTask ? uniqueTaskDest(p.title) : uniqueDest(p.title);
     const content = isTask
       ? renderTask({ title: p.title, scopes: filedUnder, due: p.due, priority: p.priority,
                      body: stripMarker(body), createdISO: now })
@@ -266,7 +277,7 @@ async function pass(dry: boolean, limit: number): Promise<void> {
     // cannot be written stops the whole action rather than leaving the reply
     // half-honoured with nothing left to retry from.
     const spawned = (p.spawn ?? []).map((sp) => ({
-      rel: uniqueDest(sp.title || `${key} — note`, false),
+      rel: uniqueDest(sp.title || `${key} — note`),
       content: renderSpawn(sp.title, sp.body, key),
     }));
     for (const sp of spawned) console.log(`   spawn → ${sp.rel}  (armed; triaged next pass)`);

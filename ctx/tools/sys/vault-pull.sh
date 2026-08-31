@@ -10,15 +10,31 @@
 # droplet captures ended up stranded: a rebase conflict paused sync and nobody
 # was watching.) A timer that pulls for you removes the remembering.
 #
-# THIS TOOL ONLY EVER PULLS, AND ONLY WHEN IT IS SAFE.
+# THIS TOOL NEVER COMMITS, AND THAT IS THE WHOLE LINE.
 #
-# It never commits, never stages, never stashes, never resets, never pushes.
-# That is a deliberate limit, not an unfinished feature: an Obsidian vault
+# It never commits, never stages, never stashes, never resets. An Obsidian vault
 # always has uncommitted work in it — a half-written note, a moved file,
 # `.obsidian/workspace.json` churning every time you focus a pane. A tool that
 # ran `git add -A` on a timer would sweep that into commits you never chose to
 # make, and one that stashed could surprise you by moving your work out from
-# under the editor. Publishing your side stays a thing you do deliberately.
+# under the editor.
+#
+# IT DOES PUSH, and it used to refuse to, on the grounds that "publishing your
+# side stays a thing you do deliberately". That drew the line one step too far
+# out. The deliberate act is the COMMIT — choosing what goes — and once you have
+# made one, sending it is mechanical. Refusing to send it protected nothing and
+# stranded work on the desk, which is the failure this file's header already
+# describes: a month of droplet captures sat unmoved because a sync had paused
+# and nobody was watching.
+#
+# So: you commit, this publishes. Nothing you did not choose can leave, because
+# nothing you did not choose is ever committed. That guarantee is stronger than
+# the old one and costs nothing.
+#
+# (The name is now narrower than the job. Renaming means moving a launchd label
+# a running agent points at, and a botched rename fails silently — the one
+# outcome this script exists to prevent — so it is a deliberate migration, not a
+# tidy-up to fold into a behaviour change.)
 #
 # The pull is `--ff-only`. If the remote moved somewhere your history can't
 # fast-forward onto, that is a real divergence and it stops and says so rather
@@ -193,30 +209,45 @@ do_pull() {
     note noupstream "$branch has no upstream — skipping"
     return 2
   }
+  local ahead behind
   behind="$(git -C "$vault" rev-list --count "HEAD..$upstream" 2>/dev/null || echo 0)"
-  if [ "$behind" = "0" ]; then
-    note uptodate "up to date with $upstream"
-    return 0
-  fi
+  ahead="$(git -C "$vault" rev-list --count "$upstream..HEAD" 2>/dev/null || echo 0)"
 
   # Diverged is not something to resolve on a timer — merging or rebasing local
   # commits is a decision, and making it silently is how you get a merge you did
-  # not review. Report and leave it.
-  local ahead
-  ahead="$(git -C "$vault" rev-list --count "$upstream..HEAD" 2>/dev/null || echo 0)"
-  if [ "$ahead" != "0" ]; then
+  # not review. Report and leave it. Checked before either half runs: a push here
+  # would be rejected anyway, and a pull would be the merge nobody asked for.
+  if [ "$ahead" != "0" ] && [ "$behind" != "0" ]; then
     note diverged "DIVERGED: $ahead local commit(s), $behind remote — resolve by hand (not doing it on a timer)"
     return 2
   fi
 
-  if git -C "$vault" pull --ff-only --quiet 2>/dev/null; then
-    note ff "fast-forwarded $behind commit(s) to $(git -C "$vault" rev-parse --short HEAD)"
-    return 0
+  if [ "$behind" != "0" ]; then
+    if git -C "$vault" pull --ff-only --quiet 2>/dev/null; then
+      note ff "fast-forwarded $behind commit(s) to $(git -C "$vault" rev-parse --short HEAD)"
+      return 0
+    fi
+    # Almost always: an incoming file is one you have edited but not committed.
+    # git declined before touching anything, which is the correct outcome.
+    note held "held back $behind commit(s) — local edits overlap the incoming changes; commit or revert them and this clears itself"
+    return 2
   fi
-  # Almost always: an incoming file is one you have edited but not committed.
-  # git declined before touching anything, which is the correct outcome.
-  note held "held back $behind commit(s) — local edits overlap the incoming changes; commit or revert them and this clears itself"
-  return 2
+
+  # Ahead and not behind: commits you made, waiting. Publishing them is the
+  # mechanical half of a decision you already took.
+  if [ "$ahead" != "0" ]; then
+    if git -C "$vault" push --quiet 2>/dev/null; then
+      note pushed "published $ahead commit(s) to $upstream"
+      return 0
+    fi
+    # A remote that moved between the fetch and the push. Not an error worth
+    # shouting about: the next run sees it as `behind` and does the right thing.
+    note pushfailed "could not push $ahead commit(s) — the remote moved; the next run will pull first"
+    return 2
+  fi
+
+  note uptodate "up to date with $upstream"
+  return 0
 }
 
 install_agent() {

@@ -34,6 +34,8 @@ git -C "$OTHER" config user.email t@example.com; git -C "$OTHER" config user.nam
 printf 'one\n' > "$OTHER/note.md"; printf 'draft\n' > "$OTHER/wip.md"
 git_q "$OTHER" add note.md wip.md; git_q "$OTHER" commit -m init
 git_q "$OTHER" push origin HEAD:main
+printf '_ephemeral/\n' > "$OTHER/.gitignore"
+git_q "$OTHER" add .gitignore; git_q "$OTHER" commit -m "ignore scratch"; git_q "$OTHER" push origin HEAD:main
 git clone -q -b main "$ORIGIN" "$DESK"
 git -C "$DESK" config user.email t@example.com; git -C "$DESK" config user.name t
 
@@ -169,6 +171,43 @@ if pgrep -x Obsidian >/dev/null 2>&1; then
 else
   echo "  · skipped — Obsidian is not running, so the pgrep gate short-circuits every case"
 fi
+
+
+echo "test: a long hold is SAID, in the vault, where you are already looking"
+# Being held back is correct. Being held back silently is the failure: the desk
+# stops pulling and reports it only in a log nobody opens, so you walk away with
+# one uncommitted note and come back hours behind.
+NOTE="$DESK/_ephemeral/!BRAINDANCE SYNC HELD.md"
+mkdir -p "$DESK/_ephemeral"
+
+# Make it held, the way the tool actually meets it: the remote moves a file the
+# desk has edited and not committed, so git declines before touching anything.
+# `$OTHER` is behind by now (the desk published through the tool), so bring it
+# current or its push is silently rejected and nothing is ever held.
+git_q "$OTHER" pull --rebase --quiet origin main
+printf 'my unsaved thought again\n' >> "$DESK/wip.md"
+printf 'remote edit again\n' >> "$OTHER/wip.md"
+git_q "$OTHER" commit -am "remote touches wip again"; git_q "$OTHER" push origin HEAD:main
+
+export BD_HELD_WARN_MIN=999; run >/dev/null 2>&1
+check "a brief hold says nothing — that is just you typing" "$([ ! -f "$NOTE" ] && echo 0 || echo 1)"
+
+export BD_HELD_WARN_MIN=0; run >/dev/null 2>&1
+check "a long hold writes the note" "$([ -f "$NOTE" ] && echo 0 || echo 1)"
+check "…saying how far behind" "$(grep -q 'commit(s) waiting\|commit(s)\*\* waiting' "$NOTE" 2>/dev/null && echo 0 || echo 1)"
+check "…and what clears it" "$(grep -q 'Commit what you are working on, or revert it' "$NOTE" 2>/dev/null && echo 0 || echo 1)"
+
+# THE LOAD-BEARING PART: it can never be committed, so the script's guarantee —
+# nothing you did not choose is ever committed — holds without a caveat.
+check "it is gitignored, so it cannot ride out on your next commit" \
+  "$(git -C "$DESK" check-ignore -q '_ephemeral/!BRAINDANCE SYNC HELD.md' && echo 0 || echo 1)"
+check "…and git does not see it as a change" "$(git -C "$DESK" status --porcelain | grep -q 'BRAINDANCE SYNC HELD' && echo 1 || echo 0)"
+
+# It must not outlive the condition.
+git_q "$DESK" checkout -- wip.md
+export BD_HELD_WARN_MIN=0; run >/dev/null 2>&1
+check "the note is deleted once the hold clears" "$([ ! -f "$NOTE" ] && echo 0 || echo 1)"
+unset BD_HELD_WARN_MIN
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

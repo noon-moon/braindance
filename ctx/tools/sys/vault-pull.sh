@@ -174,6 +174,78 @@ raise SystemExit(0 if (interval and interval > 0) or on_change else 1)
 PYEOF
 }
 
+# ── THE ONE THING IT WRITES INTO THE VAULT ──────────────────────────────────
+#
+# Being held back is correct — an incoming file overlaps one you have edited and
+# git declined before touching anything. What is wrong is that it is SILENT: the
+# desk quietly stops pulling and says so only in a log nobody opens, so you can
+# walk away with one uncommitted note and come back to a desk hours behind.
+#
+# So a long hold gets said where you are already looking. Same instinct as the
+# applier's `_triage/BRAINDANCE PASS FAILING.md`: report a broken loop through
+# the vault, not the journal.
+#
+# IT GOES IN `_ephemeral/`, WHICH IS GITIGNORED, and that is the load-bearing
+# choice. This script's whole guarantee is that nothing you did not choose is
+# ever committed — a status file in `_triage/` would ride out on your next
+# commit, reach the box, and need deleting and committing again to clear. Here
+# it CANNOT be committed, so the guarantee holds without a caveat. It is also
+# honest about scope: a held desk is a desk-local condition, and the phone is
+# fine.
+#
+# A FIXED NAME, against the `_ephemeral` convention of complemented-timestamp
+# prefixes. That convention makes accumulating scratch sort newest-first; this
+# is a singular file that must be found and DELETED by name, and a new one per
+# tick would be the opposite of a status. The `!` sorts it above the digits.
+HELD_SINCE_FILE() { printf '%s/braindance-vault-pull.held-since' "$(state_dir)"; }
+held_note_path() { printf '%s/_ephemeral/!BRAINDANCE SYNC HELD.md' "$1"; }
+
+# Any outcome that is not `held` ends the streak, so the note never outlives the
+# condition. Called on every other path, including the ones that return early.
+clear_held() {
+  rm -f "$(HELD_SINCE_FILE)" 2>/dev/null || true
+  rm -f "$(held_note_path "$1")" 2>/dev/null || true
+}
+
+# Start or continue a held streak, and once it has run long enough, say so in
+# the vault. The threshold is not zero because a few minutes of holding is just
+# you typing — the failure worth reporting is the one you have forgotten about.
+mark_held() {
+  local vault="$1" behind="$2" since now mins threshold f
+  threshold="${BD_HELD_WARN_MIN:-30}"
+  now="$(date +%s)"
+  since="$(cat "$(HELD_SINCE_FILE)" 2>/dev/null || true)"
+  case "$since" in
+    ''|*[!0-9]*) since="$now"; mkdir -p "$(state_dir)" 2>/dev/null || true
+                 printf '%s\n' "$now" > "$(HELD_SINCE_FILE)" 2>/dev/null || true ;;
+  esac
+  mins=$(( (now - since) / 60 ))
+  [ "$mins" -lt "$threshold" ] && return 0
+
+  f="$(held_note_path "$vault")"
+  mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
+  cat > "$f" 2>/dev/null <<HELDEOF || return 0
+# The desk has stopped pulling
+
+It has been held back for **$mins minutes**, with **$behind commit(s)** waiting.
+
+Nothing is lost and nothing is broken. An incoming file overlaps one you have
+edited and not committed, so git declined rather than touch your work — which is
+the right answer. But it means this vault is $behind commit(s) behind the box,
+and anything you write against a stale note is written against a stale note.
+
+**Commit what you are working on, or revert it, and this clears itself.**
+
+\`\`\`console
+\$ git -C "$vault" status --short
+\`\`\`
+
+*Written by \`vault-pull.sh\`. Gitignored, desk-local, and deleted the moment a
+pull succeeds — if you are reading it, it is current.*
+HELDEOF
+  return 0
+}
+
 do_pull() {
   local vault
   vault="$(resolve_vault)"
@@ -224,11 +296,13 @@ do_pull() {
 
   if [ "$behind" != "0" ]; then
     if git -C "$vault" pull --ff-only --quiet 2>/dev/null; then
+      clear_held "$vault"
       note ff "fast-forwarded $behind commit(s) to $(git -C "$vault" rev-parse --short HEAD)"
       return 0
     fi
     # Almost always: an incoming file is one you have edited but not committed.
     # git declined before touching anything, which is the correct outcome.
+    mark_held "$vault" "$behind"
     note held "held back $behind commit(s) — local edits overlap the incoming changes; commit or revert them and this clears itself"
     return 2
   fi
@@ -237,6 +311,7 @@ do_pull() {
   # mechanical half of a decision you already took.
   if [ "$ahead" != "0" ]; then
     if git -C "$vault" push --quiet 2>/dev/null; then
+      clear_held "$vault"
       note pushed "published $ahead commit(s) to $upstream"
       return 0
     fi
@@ -246,6 +321,7 @@ do_pull() {
     return 2
   fi
 
+  clear_held "$vault"
   note uptodate "up to date with $upstream"
   return 0
 }

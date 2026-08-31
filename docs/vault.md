@@ -27,7 +27,7 @@ This is the short list with a **real enforcer** behind each item — code that b
 |---|---|
 | `tags: [scope]` on a hub note, optional `scope_kind: system`, `Contains` / `Contained By` links | `ctx/tools/sys/gen-topics.sh` builds the manifest from exactly these fields; the api's scope picker lists `scope`-tagged notes and hides `scope_kind: system` |
 | **The vault is flat** — notes sit at the vault root, not in a folder taxonomy | wikilink-by-basename resolution; the api's scope scan and the publish tool's index both walk it flat |
-| **Filename = note title** | `[[wikilink]]` resolution, and the publish tool's slugs |
+| **Filename = note title** | `[[wikilink]]` resolution, and the publish tool's slugs. The applier holds to it for every funnel: `noteName` keeps what you typed and drops only what a filename or a wikilink cannot hold. A name already in use is **qualified** — `Parable of the Sower (2)` — never slugged, and never silently reused: Obsidian resolves by basename wherever a file sits, so a task in `TaskNotes/Tasks/` named after a root note makes every link to that name ambiguous. |
 | `_ephemeral/`, `_meta/`, `_templates/` (underscore-prefixed) are skipped by scans | the api's task scan and the publish tool both exclude them |
 
 **Everything past that — which behavioural tags exist, what fields they carry, the task-line grammar — is defined by your vault's `_meta/Tags.md`**, and read by the api and the publish tool at runtime rather than declared here. Two consequences worth internalizing:

@@ -5,18 +5,21 @@
 // two rules for turning a title into a filename.
 export const stamp = (): string => new Date().toISOString().replace(/[:.]/g, "-");
 
+/** Not a filename any more — see `noteName`. Kept because the publish tool
+ *  derives site URLs from titles, where lowercasing and hyphens are correct. */
 export const slug = (s: string): string =>
   (s || "note").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "note";
 
-/** A filename for a note whose NAME IS ITS IDENTITY — a scope hub.
+/** THE filename rule, for every note this loop writes.
  *
- *  `slug` is right for a memo: the note is found by its title and its link, and
- *  the filename is just a legible handle. It is wrong for a hub, because a hub is
- *  addressed BY that filename — it is what `Contains: "[[Woodworking]]"` points
- *  at, what the pickers list, and what the generated Topics manifest prints. Slug
- *  a hub and you get `woodworking`, so every link a person writes by hand reads
- *  as the wrong name at best, and the vault's own hubs (`Bass Practice`, `Music`)
- *  stop matching the ones this app creates.
+ *  It used to be one of two: hubs kept their typed name, memos were slugged, on
+ *  the reasoning that a hub is addressed BY its filename while a memo is "found
+ *  by its title and its link, and the filename is just a legible handle".
+ *
+ *  The second half was wrong in a flat vault. Obsidian resolves `[[wikilinks]]`
+ *  by basename, so `[[Blood Child]]` never reaches `blood-child.md` — every
+ *  slugged memo was unlinkable by the name it displays, and `docs/vault.md` had
+ *  said "filename = note title" as an invariant the whole time.
  *
  *  So the typed name is kept, and only what a filename or a wikilink genuinely
  *  cannot hold is removed: the path separators, the wikilink alphabet

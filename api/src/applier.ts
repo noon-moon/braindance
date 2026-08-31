@@ -12,6 +12,10 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { compose, funnelById, type BuiltNote } from "./funnels.js";
 import { isArmed, stripMarker, type Proposal } from "./approval.js";
+import { noteName } from "./notes.js";
+import { taskConfig } from "./tasknotes.js";
+import { VAULT } from "./config.js";
+import { takenRootNames } from "./vault.js";
 import type { Revision } from "./intent.js";
 
 /** Apply the reply's diff to what was proposed. Absent keys mean "as proposed" —
@@ -106,4 +110,42 @@ export function findCaptures(vaultDir: string): string[] {
   };
   walk("", "");
   return out.sort();
+}
+
+/** Disambiguate a title by QUALIFYING it, not by mangling it.
+ *
+ *  The filename IS the title in this vault — `docs/vault.md` states it, and
+ *  wikilink-by-basename depends on it — so a second note of the same name needs
+ *  a name a person would also have written. `Octavia Butler (2)` reads as one;
+ *  `octavia-butler-2` reads as a machine's idea of one.
+ *
+ *  A number is the honest mechanical qualifier: this code cannot know what
+ *  actually distinguishes the two notes. Rename it to something meaningful when
+ *  you see it — that is a person's job and the parenthesis is an invitation. */
+export const qualify = (base: string, n: number): string => `${base} (${n})`;
+
+/** Where a task note goes, and NOT simply `folder/title.md`.
+ *
+ *  Obsidian resolves `[[wikilinks]]` by BASENAME, wherever the file sits. So a
+ *  task called `Octavia Butler` in `TaskNotes/Tasks/` does not merely sit beside
+ *  the author note of that name at the root — it makes every `[[Octavia Butler]]`
+ *  in the vault ambiguous, including the containment links a reply writes.
+ *
+ *  That happened. `uniqueDest` existed for exactly this and the task branch
+ *  never called it, because tasks live in a folder and the collision looked like
+ *  a path question. It is a basename question, and the folder is irrelevant. */
+export function uniqueTaskDest(title: string): string {
+  const folder = taskConfig().folder;
+  const base = noteName(title);
+  // Root notes AND the task folder itself: the two places a basename can
+  // already be spoken for by something this loop wrote or a person typed.
+  const taken = new Set([...takenRootNames().keys()]);
+  try {
+    for (const e of readdirSync(join(VAULT, folder), { withFileTypes: true })) {
+      if (e.isFile() && e.name.toLowerCase().endsWith(".md")) taken.add(e.name.slice(0, -3).toLowerCase());
+    }
+  } catch { /* no task folder yet — nothing is taken */ }
+  let name = base;
+  for (let i = 2; taken.has(name.toLowerCase()); i++) name = qualify(base, i);
+  return `${folder}/${name}.md`;
 }

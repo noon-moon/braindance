@@ -279,7 +279,13 @@ async function pass(dry: boolean, limit: number): Promise<void> {
     }
     for (const sp of spawned) writeFileSync(abs(sp.rel), sp.content);
     if (p.newScope) writeFileSync(abs(`${noteName(p.newScope.name)}.md`), mintHub(p.newScope.name, p.newScope.why));
-    mkdirSync(abs(dest.slice(0, dest.lastIndexOf("/"))), { recursive: true });
+    // ONLY when there is a directory to make. `lastIndexOf` returns -1 for a
+    // root-level note, and `slice(0, -1)` then drops the last character of the
+    // FILENAME — so every note filed at the vault root quietly created a
+    // directory beside it named `whatever.m`. Five of them were sitting in the
+    // live vault, one per note this loop has ever filed at the root.
+    const dir = dest.lastIndexOf("/");
+    if (dir > 0) mkdirSync(abs(dest.slice(0, dir)), { recursive: true });
     writeFileSync(abs(dest), content);
     remove(abs(parsed.captureRel));
     remove(abs(rel));

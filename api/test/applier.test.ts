@@ -7,7 +7,7 @@
 // that does not belong there, and the one that stops a filed note re-entering it
 // forever.
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isCapture, findCaptures } from "../src/applier.js";
@@ -67,6 +67,31 @@ console.log("test: finding them in a vault");
   check("dot directories likewise", !found.some((f) => f.startsWith(".")));
   check("non-markdown is ignored", !found.some((f) => f.endsWith(".txt")));
   check("the result is stable in order", found.join() === [...found].sort().join());
+}
+
+console.log("test: filing at the vault root makes no directory beside the note");
+{
+  const V = mkdtempSync(join(tmpdir(), "bd-root-"));
+  // Exactly what cli.ts does when a destination names no folder.
+  const dest = "blood-child.md";
+  const dir = dest.lastIndexOf("/");
+  if (dir > 0) mkdirSync(join(V, dest.slice(0, dir)), { recursive: true });
+  writeFileSync(join(V, dest), "# Blood Child\n");
+
+  const entries = readdirSync(V, { withFileTypes: true });
+  check("the note is written", entries.some((e) => e.isFile() && e.name === "blood-child.md"));
+  // `lastIndexOf("/")` is -1 for a root note, and `slice(0, -1)` then drops the
+  // last CHARACTER of the filename. Five `*.m` directories were sitting in the
+  // live vault, one per note this loop had ever filed at the root.
+  check("and nothing else — no `blood-child.m` beside it", entries.length === 1);
+  check("…in particular no directory", !entries.some((e) => e.isDirectory()));
+
+  const V2 = mkdtempSync(join(tmpdir(), "bd-sub-"));
+  const d2 = "TaskNotes/Tasks/thing.md";
+  const i2 = d2.lastIndexOf("/");
+  if (i2 > 0) mkdirSync(join(V2, d2.slice(0, i2)), { recursive: true });
+  writeFileSync(join(V2, d2), "x");
+  check("a foldered destination still creates its folder", existsSync(join(V2, "TaskNotes/Tasks/thing.md")));
 }
 
 console.log(`\n${passed} checks passed`);

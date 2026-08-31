@@ -82,7 +82,9 @@ proposal are deleted in the same commit as the filed note. An empty `_triage/`
 means nothing is pending.
 
 What lingers is deliberate: a proposal awaiting your answer, one marked
-`unclear` (with the question on its heading and your marker disarmed), one
+`unclear` (with the question on its heading and your marker removed — note that
+re-arming alone will not do: `bd_asked` fingerprints the answer just judged and
+skips an identical one, so the ANSWER has to change), one
 `failed` (with a retry time), and one `dead` — four failed attempts, given up,
 kept because it is the only record that a capture was abandoned. Deleting a
 failure note is how you say "try again".

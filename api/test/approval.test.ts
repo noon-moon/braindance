@@ -375,6 +375,14 @@ console.log("test: unclear asks again, once");
     readReply(asked) === "not sure yet");
   check("the question replaces the prompt on the heading line, not the section",
     /^## Your call — I could not tell/m.test(asked));
+  // THE INSTRUCTION MUST NAME THE TRIGGER. It used to say "re-arm the marker
+  // when you have", and a note re-armed without an edit is skipped by
+  // `alreadyAsked` — so following it exactly produced nothing, visibly.
+  check("…and says the ANSWER must change, not just the marker",
+    asked.includes("change your answer"));
+  check("…while still asking for the marker, which is what `finished` means",
+    /re-arm/.test(asked));
+  check("…and does not promise that re-arming alone will do", !/re-arm the marker when you have/.test(asked));
   check("the capture is still embedded", asked.includes("![["));
 
   // The thrift guarantee. Without it, an answer the model cannot read costs a

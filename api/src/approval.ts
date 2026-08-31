@@ -589,7 +589,16 @@ export function markUnclear(text: string, question: string, reply: string): stri
   out = /^bd_asked:/m.test(out)
     ? out.replace(/^bd_asked:.*$/m, `${K.asked}: ${fp}`)
     : out.replace(/^bd_state:.*$/m, (m) => `${m}\n${K.asked}: ${fp}`);
-  out = out.replace(HEADING_LINE, `${REPLY_HEADING} — ${safe(question)} · re-arm the marker when you have`);
+  // "re-arm the marker when you have" was a trap, and it caught the one person
+  // using this. Re-arming is NOT the trigger: `alreadyAsked` fingerprints the
+  // answer it just judged and skips an identical one, because re-reading the
+  // same words buys the same verdict for a model call. So a note re-armed
+  // without an edit sits there saying `already asked about this answer` in a log
+  // nobody reads, having done exactly what the note told them to.
+  //
+  // The instruction now names the thing that actually matters. Arming is still
+  // required — it is what "finished" means — but the ANSWER has to change.
+  out = out.replace(HEADING_LINE, `${REPLY_HEADING} — ${safe(question)} · change your answer, then re-arm — the same words are skipped`);
   // The marker means "finished". Asking again makes that untrue, so it comes
   // OFF — otherwise the next keystroke of a corrected answer is read mid-edit,
   // which is the whole thing the marker exists to prevent.
